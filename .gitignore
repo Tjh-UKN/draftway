@@ -4,6 +4,7 @@ dist/
 src-tauri/target/
 /artifacts/
 /src-tauri/gen/
+/public/excalidraw/fonts/
 *.log
 *.tsbuildinfo
 .env

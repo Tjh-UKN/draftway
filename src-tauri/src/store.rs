@@ -21,7 +21,7 @@ impl Store {
         fs::create_dir_all(root.join("backups")).map_err(error)?;
         let db=Connection::open(root.join("northstar.sqlite3")).map_err(error)?;
         let version:i64=db.query_row("PRAGMA user_version",[],|r|r.get(0)).map_err(error)?;
-        if version>4 {return Err("数据来自更新版本的北极星，请使用相应版本打开".into());}
+        if version>5 {return Err("数据来自更新版本的北极星，请使用相应版本打开".into());}
         db.busy_timeout(std::time::Duration::from_secs(5)).map_err(error)?;
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
           CREATE TABLE IF NOT EXISTS entities(id TEXT PRIMARY KEY, kind TEXT NOT NULL, data TEXT NOT NULL CHECK(json_valid(data)), version INTEGER NOT NULL, archived INTEGER NOT NULL DEFAULT 0, archive_root TEXT);
@@ -33,7 +33,7 @@ impl Store {
           CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);").map_err(error)?;
         db.execute("INSERT OR IGNORE INTO settings(id,data) VALUES(1,?1)",[serde_json::to_string(&Settings::default()).map_err(error)?]).map_err(error)?;
         let store=Self{db:Mutex::new(db),root};
-        if (1..4).contains(&version){crate::backup::create(&store,"before-upgrade-v0.4")?;}
+        if (1..5).contains(&version){crate::backup::create(&store,"before-upgrade-v0.5")?;}
         {let mut connection=store.db.lock().map_err(error)?;migrate_connection(&mut connection)?;}
         Ok(store)
     }
@@ -190,11 +190,11 @@ impl Store {
 }
 pub fn migrate_connection(db:&mut Connection)->Result<()> {
     let version:i64=db.query_row("PRAGMA user_version",[],|r|r.get(0)).map_err(error)?;
-    if version>4{return Err("数据版本不受支持".into());}
-    if version<4{
+    if version>5{return Err("数据版本不受支持".into());}
+    if version<5{
         let tx=db.transaction().map_err(error)?;
         for mut r in records(&tx)?{domain::normalize(&mut r);tx.execute("UPDATE entities SET data=?1 WHERE id=?2",params![serde_json::to_string(&r).map_err(error)?,domain::text(&r,"id")]).map_err(error)?;}
-        tx.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS journal_date ON entities(json_extract(data,'$.date')) WHERE kind='journal' AND archived=0; CREATE UNIQUE INDEX IF NOT EXISTS health_date ON entities(kind,json_extract(data,'$.date')) WHERE kind IN ('sleep','weight') AND archived=0; PRAGMA user_version=4;").map_err(error)?;
+        tx.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS journal_date ON entities(json_extract(data,'$.date')) WHERE kind='journal' AND archived=0; CREATE UNIQUE INDEX IF NOT EXISTS health_date ON entities(kind,json_extract(data,'$.date')) WHERE kind IN ('sleep','weight') AND archived=0; PRAGMA user_version=5;").map_err(error)?;
         tx.commit().map_err(error)?;
     }
     Ok(())
@@ -233,6 +233,17 @@ mod tests {
         let mut again=reopened;again["status"]=json!("done");store.save(again).unwrap();assert_eq!(store.load().unwrap().records.len(),2);
         drop(store);fs::remove_dir_all(root).unwrap();
     }
+    #[test] fn drawings_survive_upgrade_restart_backup_and_archive() {
+        let root=std::env::temp_dir().join(format!("northstar-drawings-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();
+        let old=store.save(record("task")).unwrap();store.db.lock().unwrap().execute_batch("PRAGMA user_version=4;").unwrap();drop(store);
+        let store=Store::open(root.clone()).unwrap();assert_eq!(store.load().unwrap().records[0],old);assert!(crate::backup::list(&store).unwrap().iter().any(|b|b.name.contains("before-upgrade-v0.5")));
+        let mut p=record("project");p["status"]=json!("active");let p=store.save(p).unwrap();
+        let mut drawing=record("drawing");drawing["projectId"]=p["id"].clone();drawing["scene"]=json!(serde_json::to_string(&json!({"type":"excalidraw","version":2,"elements":[{"id":"text1","type":"text","text":"图纸 · 中文文字"}],"appState":{"viewBackgroundColor":"#ffffff"},"files":{"image1":{"id":"image1","mimeType":"image/png","dataURL":"data:image/png;base64,aGVsbG8="}}})).unwrap());
+        let drawing=store.save(drawing).unwrap();let mut bad=drawing.clone();bad["scene"]=json!("{}");assert!(store.save(bad).is_err());
+        let backup=crate::backup::create(&store,"drawing-test").unwrap();store.archive(domain::text(&p,"id"),false).unwrap();assert!(store.load().unwrap().records.iter().find(|r|r["id"]==drawing["id"]).unwrap()["archived"]==true);
+        crate::backup::restore(&store,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();drop(store);
+        let store=Store::open(root.clone()).unwrap();assert_eq!(store.load().unwrap().records.iter().find(|r|r["id"]==drawing["id"]).unwrap(),&drawing);drop(store);fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn archive_preserves_individually_archived_children() {
         let root=std::env::temp_dir().join(format!("northstar-test-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();
         let mut p=record("project");p["status"]=json!("active");p["goalId"]=Value::Null;let p=store.save(p).unwrap();
@@ -260,7 +271,7 @@ mod tests {
         let mut legacy=store.load().unwrap().records[0].clone();let original_version=legacy["version"].clone();let original_time=legacy["updatedAt"].clone();for field in ["taskId","noteType","occurredOn"]{legacy.as_object_mut().unwrap().remove(field);}
         {let db=store.db.lock().unwrap();db.execute("UPDATE entities SET data=?1 WHERE id=?2",params![serde_json::to_string(&legacy).unwrap(),domain::text(&legacy,"id")]).unwrap();db.execute_batch("DROP INDEX journal_date; PRAGMA user_version=1;").unwrap();}
         drop(store);let store=Store::open(root.clone()).unwrap();let upgraded=store.load().unwrap().records[0].clone();assert_eq!(upgraded["id"],legacy["id"]);assert_eq!(upgraded["body"],legacy["body"]);assert_eq!(upgraded["version"],original_version);assert_eq!(upgraded["updatedAt"],original_time);assert_eq!(upgraded["noteType"],"note");assert_eq!(upgraded["archived"],true);
-        let backup=crate::backup::list(&store).unwrap().into_iter().find(|b|b.name.contains("before-upgrade-v0.4")).unwrap();crate::backup::restore(&store,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();assert_eq!(store.load().unwrap().records[0]["body"],legacy["body"]);assert_eq!(store.db.lock().unwrap().query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),4);
+        let backup=crate::backup::list(&store).unwrap().into_iter().find(|b|b.name.contains("before-upgrade-v0.5")).unwrap();crate::backup::restore(&store,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();assert_eq!(store.load().unwrap().records[0]["body"],legacy["body"]);assert_eq!(store.db.lock().unwrap().query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),5);
         drop(store);fs::remove_dir_all(root).unwrap();
     }
     #[test] fn habit_checkins_are_idempotent_guarded_and_backed_up(){
@@ -277,7 +288,7 @@ mod tests {
     }
     #[test] fn schema_two_upgrade_preserves_habitless_workspace(){
         let root=std::env::temp_dir().join(format!("northstar-schema-two-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();let old=store.save(record("task")).unwrap();store.db.lock().unwrap().execute_batch("PRAGMA user_version=2;").unwrap();drop(store);
-        let store=Store::open(root.clone()).unwrap();assert_eq!(store.load().unwrap().records[0],old);let backup=crate::backup::list(&store).unwrap().into_iter().find(|b|b.name.contains("before-upgrade-v0.4")).unwrap();crate::backup::restore(&store,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();assert_eq!(store.load().unwrap().records[0],old);assert_eq!(store.db.lock().unwrap().query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),4);drop(store);fs::remove_dir_all(root).unwrap();
+        let store=Store::open(root.clone()).unwrap();assert_eq!(store.load().unwrap().records[0],old);let backup=crate::backup::list(&store).unwrap().into_iter().find(|b|b.name.contains("before-upgrade-v0.5")).unwrap();crate::backup::restore(&store,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();assert_eq!(store.load().unwrap().records[0],old);assert_eq!(store.db.lock().unwrap().query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),5);drop(store);fs::remove_dir_all(root).unwrap();
     }
     #[test] fn health_records_validate_dates_values_duplicates_and_restore(){
         use chrono::TimeZone;
@@ -290,6 +301,6 @@ mod tests {
     }
     #[test] fn schema_three_upgrade_preserves_old_records_and_old_backups(){
         let root=std::env::temp_dir().join(format!("northstar-schema-three-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();let old=store.save(record("task")).unwrap();store.db.lock().unwrap().execute_batch("DROP INDEX health_date; PRAGMA user_version=3;").unwrap();drop(store);
-        let store=Store::open(root.clone()).unwrap();assert_eq!(store.load().unwrap().records[0],old);let backup=crate::backup::list(&store).unwrap().into_iter().find(|b|b.name.contains("before-upgrade-v0.4")).unwrap();crate::backup::restore(&store,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();assert_eq!(store.load().unwrap().records[0],old);assert_eq!(store.db.lock().unwrap().query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),4);drop(store);fs::remove_dir_all(root).unwrap();
+        let store=Store::open(root.clone()).unwrap();assert_eq!(store.load().unwrap().records[0],old);let backup=crate::backup::list(&store).unwrap().into_iter().find(|b|b.name.contains("before-upgrade-v0.5")).unwrap();crate::backup::restore(&store,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();assert_eq!(store.load().unwrap().records[0],old);assert_eq!(store.db.lock().unwrap().query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),5);drop(store);fs::remove_dir_all(root).unwrap();
     }
 }

@@ -49,6 +49,15 @@ pub fn validate(record: &Value) -> Result<(), String> {
     for field in ["dueAt","remindAt","completedAt","resolvedAt"] { if let Some(v)=record.get(field).and_then(Value::as_str) { DateTime::parse_from_rfc3339(v).map_err(|_|format!("{field} 时间无效"))?; } }
     for field in ["date","targetDate","occurredOn","startDate"] { if let Some(v)=record.get(field).and_then(Value::as_str) { chrono::NaiveDate::parse_from_str(v,"%Y-%m-%d").map_err(|_|"日期无效")?; } }
     match text(record,"kind") {
+        "drawing" => {
+            let raw=record.get("scene").and_then(Value::as_str).ok_or("画板内容格式无效")?;
+            if raw.len()>20_000_000{return Err("画板超过 20 MB".into());}
+            let scene:Value=serde_json::from_str(raw).map_err(|_|"画板 JSON 无效")?;
+            if scene["type"]!="excalidraw"||scene["version"]!=2||!scene["appState"].is_object()||!scene["files"].is_object(){return Err("画板内容格式无效".into());}
+            let elements=scene["elements"].as_array().ok_or("画板图形格式无效")?;
+            if elements.len()>20000||elements.iter().any(|e|!e.is_object()||!e["id"].is_string()||!e["type"].is_string()){return Err("画板图形无效或过多".into());}
+            for file in scene["files"].as_object().unwrap().values(){let url=text(file,"dataURL");if !file["id"].is_string()||!file["mimeType"].is_string()||!["png","jpeg","gif","webp","svg+xml"].iter().any(|mime|url.starts_with(&format!("data:image/{mime};base64,"))){return Err("画板图片需要内嵌在文件中".into());}}
+        },
         "goal" => if !["year","quarter","life"].contains(&text(record,"horizon")) { return Err("目标类型无效".into()); },
         "project" => if !["active","completed"].contains(&text(record,"status")) { return Err("项目状态无效".into()); },
         "task" => {

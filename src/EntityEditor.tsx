@@ -31,7 +31,7 @@ export default function EntityEditor({initial,onClose}:{initial:RecordItem;onClo
   {archived&&<Badge>已归档 · 只读</Badge>}
   {!archived&&record.kind==='task'&&initial.version>0&&<div className="context-capture"><button className="button" type="button" onClick={()=>ctx.capture('progress',initial as Task)}><FilePenLine size={15}/>记录进展</button><button className="button" type="button" onClick={()=>ctx.capture('issue',initial as Task)}><CircleAlert size={15}/>遇到问题</button><p>关联当前已保存的任务，草稿关闭后回到这里。</p></div>}
   <fieldset disabled={archived||ctx.busy} className="record-fields">
-   {initial.version===0&&<div className="type-picker">{(Object.keys(labels) as Kind[]).map(k=><button type="button" className={record.kind===k?'selected':''} key={k} onClick={()=>switchKind(k)}>{labels[k]}</button>)}</div>}
+   {initial.version===0&&<div className="type-picker">{(Object.keys(labels) as Kind[]).filter(k=>k!=='drawing').map(k=><button type="button" className={record.kind===k?'selected':''} key={k} onClick={()=>switchKind(k)}>{labels[k]}</button>)}</div>}
    <label className="field"><span>标题 <span className="required">*</span></span><input data-autofocus autoComplete="off" value={record.title} required maxLength={120} placeholder={record.kind==='issue'?'简要描述遇到的问题':record.kind==='task'?'下一步具体要做什么？':`给${labels[record.kind]}起一个名字`} onChange={e=>patch({title:e.target.value})}/></label>
    {'description'in record&&<label className="field"><span>说明</span><textarea rows={3} value={record.description} maxLength={20000} placeholder="背景、完成标准或下一步……" onChange={e=>patch({description:e.target.value})}/></label>}
    <div className="form-grid">

@@ -83,11 +83,11 @@ pub fn restore(store:&Store,source:&Path)->Result<()> {
         }
         let mut manifest=String::new();File::open(stage.join("manifest.json")).map_err(error)?.read_to_string(&mut manifest).map_err(error)?;
         let manifest:serde_json::Value=serde_json::from_str(&manifest).map_err(error)?;
-        if manifest["format"]!="northstar" || ![1,2,3,4].contains(&manifest["version"].as_i64().unwrap_or(0)) {return Err("备份格式或版本不受支持".into());}
+        if manifest["format"]!="northstar" || ![1,2,3,4,5].contains(&manifest["version"].as_i64().unwrap_or(0)) {return Err("备份格式或版本不受支持".into());}
         let mut check=Connection::open(stage.join("northstar.sqlite3")).map_err(error)?;
         let integrity:String=check.query_row("PRAGMA integrity_check",[],|r|r.get(0)).map_err(error)?;
         let version:i64=check.query_row("PRAGMA user_version",[],|r|r.get(0)).map_err(error)?;
-        if integrity!="ok" || ![1,2,3,4].contains(&version) {return Err("备份数据库无效".into());}
+        if integrity!="ok" || ![1,2,3,4,5].contains(&version) {return Err("备份数据库无效".into());}
         store::migrate_connection(&mut check)?;
         let all=store::records(&check)?;
         for item in &all {domain::validate(item)?;for (field,kind) in [("projectId","project"),("goalId","goal"),("taskId","task")] {if let Some(id)=domain::optional_id(item,field){if !all.iter().any(|r|domain::text(r,"id")==id&&domain::text(r,"kind")==kind){return Err("备份记录关联不完整".into());}}}

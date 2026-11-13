@@ -96,6 +96,12 @@ fn export_markdown(id:String,path:String,state:tauri::State<AppState>)->Result<(
 #[tauri::command]
 fn test_notification(app:tauri::AppHandle)->Result<()> {app.notification().builder().title("北极星 · 提醒测试").body("提醒服务已连接。托盘运行期间会继续检查任务和节点提醒。").show().map_err(error)}
 #[tauri::command]
+fn export_drawing_file(path:String,bytes:Vec<u8>)->Result<()> {
+    if PathBuf::from(&path).extension().and_then(|e|e.to_str()).is_none_or(|e|!["excalidraw","png","svg"].contains(&e.to_ascii_lowercase().as_str())){return Err("请选择 .excalidraw、.png 或 .svg 文件".into());}
+    if bytes.len()>50_000_000{return Err("导出文件超过 50 MB".into());}
+    fs::write(path,bytes).map_err(error)
+}
+#[tauri::command]
 fn quit_app(app:tauri::AppHandle,state:tauri::State<AppState>){state.quit.store(true,Ordering::SeqCst);app.exit(0);}
 
 fn reveal(app:&tauri::AppHandle){if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.unminimize();let _=w.set_focus();}}
@@ -159,6 +165,6 @@ pub fn run() {
                 if !state.quit.load(Ordering::SeqCst)&&state.store.load().map(|w|w.settings.close_to_tray).unwrap_or(false){api.prevent_close();let _=window.hide();}
             }
         })
-        .invoke_handler(tauri::generate_handler![load_workspace,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,open_external_url,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app])
+        .invoke_handler(tauri::generate_handler![load_workspace,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app])
         .run(tauri::generate_context!()).expect("北极星启动失败");
 }

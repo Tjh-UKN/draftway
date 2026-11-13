@@ -1,4 +1,4 @@
-export type Kind = 'goal' | 'project' | 'task' | 'milestone' | 'note' | 'issue' | 'journal' | 'habit' | 'sleep' | 'weight';
+export type Kind = 'goal' | 'project' | 'task' | 'milestone' | 'note' | 'issue' | 'journal' | 'habit' | 'sleep' | 'weight' | 'drawing';
 export type Status = 'todo' | 'doing' | 'done';
 export type Repeat = 'none' | 'daily' | 'weekly' | 'monthly';
 export interface Base { id: string; kind: Kind; title: string; createdAt: string; updatedAt: string; archived: boolean; version: number; }
@@ -15,13 +15,14 @@ export interface Habit extends Base {kind:'habit';description:string;startDate:s
 export interface Sleep extends Base {kind:'sleep';date:string;bedtime:string;wakeTime:string;awakeMinutes:number;quality:'unset'|'good'|'normal'|'poor';note:string;}
 export interface Weight extends Base {kind:'weight';date:string;kilograms:number;note:string;}
 export type HealthRecord=Sleep|Weight;
-export type RecordItem = Goal | Project | Task | Milestone | Note | Issue | Journal | Habit | Sleep | Weight;
+export interface Drawing extends Base {kind:'drawing';projectId:string|null;scene:string;}
+export type RecordItem = Goal | Project | Task | Milestone | Note | Issue | Journal | Habit | Sleep | Weight | Drawing;
 export interface Attachment { id: string; name: string; size: number; storedName: string; entityId: string | null; createdAt: string; }
 export interface Settings { userName: string; theme: 'dark' | 'light'; layout: 'overview' | 'focus'; closeToTray: boolean; autoStart: boolean; notifications: boolean; dailyBackup: boolean; }
 export interface Workspace { records: RecordItem[]; attachments: Attachment[]; settings: Settings; dataPath: string; }
 export interface BackupInfo { name: string; createdAt: string; size: number; }
 export const defaults: Settings = { userName: '同学', theme: 'dark', layout: 'overview', closeToTray: true, autoStart: false, notifications: true, dailyBackup: true };
-export const labels: Record<Kind, string> = { goal: '目标', project: '项目', task: '任务', milestone: '节点', note: '笔记', issue:'问题', journal:'工作记录',habit:'习惯',sleep:'睡眠',weight:'体重' };
+export const labels: Record<Kind, string> = { goal: '目标', project: '项目', task: '任务', milestone: '节点', note: '笔记', issue:'问题', journal:'工作记录',habit:'习惯',sleep:'睡眠',weight:'体重',drawing:'画板' };
 export const issueStatuses:Record<IssueStatus,string>={triage:'待排查',investigating:'处理中',verifying:'待验证',resolved:'已解决'};
 export const noteTypes:Record<NoteType,string>={note:'笔记',progress:'进展',review:'复盘'};
 export const uid = () => crypto.randomUUID();
@@ -31,6 +32,7 @@ export function makeRecord(kind: Kind): RecordItem {
   const now = new Date().toISOString();
   const base: Base = { id: uid(), kind, title: '', createdAt: now, updatedAt: now, archived: false, version: 0 };
   switch(kind) {
+    case 'drawing': return {...base,kind,title:'未命名画板',projectId:null,scene:'{"type":"excalidraw","version":2,"elements":[],"appState":{},"files":{}}'};
     case 'goal': return {...base,kind,description:'',horizon:'year',targetDate:null};
     case 'project': return {...base,kind,description:'',goalId:null,targetDate:null,status:'active'};
     case 'task': return {...base,kind,description:'',projectId:null,status:'todo',priority:'normal',dueAt:null,remindAt:null,repeat:'none',completedAt:null,tags:[]};
@@ -91,7 +93,7 @@ export function normalizeRecord(record:RecordItem):RecordItem {
   if(record.kind==='note')return {...record,taskId:record.taskId??null,noteType:record.noteType??'note',occurredOn:record.occurredOn??dateKey(new Date(record.createdAt))};
   return record;
 }
-export function recordText(record:RecordItem):string {return Object.values(record).flatMap(v=>typeof v==='string'?v:Array.isArray(v)?v:[]).join(' ');}
+export function recordText(record:RecordItem):string {if(record.kind==='drawing'){try{const scene=JSON.parse(record.scene);return `${record.title} ${scene.elements.filter((e:{isDeleted?:boolean})=>!e.isDeleted).map((e:{text?:string})=>e.text||'').join(' ')}`;}catch{return record.title;}}return Object.values(record).flatMap(v=>typeof v==='string'?v:Array.isArray(v)?v:[]).join(' ');}
 export function archiveClosure(records:RecordItem[],rootId:string):string[]{
   const ids=new Set([rootId]);let changed=true;
   while(changed){changed=false;for(const r of records){if(!ids.has(r.id)&&(('goalId'in r&&r.goalId&&ids.has(r.goalId))||('projectId'in r&&r.projectId&&ids.has(r.projectId))||('taskId'in r&&r.taskId&&ids.has(r.taskId)))){ids.add(r.id);changed=true;}}}

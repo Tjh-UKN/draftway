@@ -4,9 +4,19 @@
 
 ## 使用
 
-从 [GitHub Releases](https://github.com/Tjh-UKN/northstar-workbench/releases/latest) 下载最新 Windows 64 位版本：`Northstar-v0.4.0-setup.exe` 为安装版，`Northstar.exe` 为直接运行版。私有仓库需要登录获授权的 GitHub 账号后下载。
+从 [GitHub Releases](https://github.com/Tjh-UKN/northstar-workbench/releases/latest) 下载最新 Windows 64 位版本：`Northstar-v<版本号>-setup.exe` 为安装版，`Northstar.exe` 为直接运行版。私有仓库需要登录获授权的 GitHub 账号后下载。
 
-安装 `artifacts/北极星-0.4.0-安装程序.exe`。安装后从开始菜单打开 **Northstar**。也可以运行 `artifacts/北极星.exe`，它需要已安装的 Microsoft Edge WebView2 运行环境。
+安装 `artifacts/北极星-0.5.0-安装程序.exe`。安装后从开始菜单打开 **Northstar**。也可以运行 `artifacts/北极星.exe`，它需要已安装的 Microsoft Edge WebView2 运行环境。
+
+## v0.5：Excalidraw 自由画板
+
+1. 点击左侧 **自由画板 → 新建画板**。修改顶部名称，可选关联项目。
+2. 在画布顶部选择矩形、椭圆、箭头、文字、手绘或图片工具。空格拖动画布，Ctrl + 滚轮缩放；工具栏提示对应快捷键，支持撤销与重做。
+3. 停止操作约 1 秒后自动保存。看到“已保存到本机”即可放心；也可按 **Ctrl + S** 或点击“保存”。“返回画板”会先完成保存，保存失败时保留画布并显示原因。
+4. 顶部 **源文件** 导出可继续编辑的 `.excalidraw`；**PNG / SVG** 导出图片，用于分享和插入文档。左侧画板列表点“导入画板”可将标准 `.excalidraw` 或同格式 JSON 导入为一个新画板，不覆盖已有图纸。画布菜单中的“清空画布”会修改当前画板，可用撤销恢复。
+5. 可按项目筛选，也可搜索标题和图中文字。项目工作区也有“画板”标签；素材库随当前画板一起保存。归档后为只读，可在“归档”恢复。画板和内嵌图片进入现有 SQLite 与完整 ZIP 备份；升级前自动创建 `before-upgrade-v0.5` 保护备份，支持 v0.1–v0.4 备份恢复。
+
+绘图工具与中英文字体打包在本地，无需 Excalidraw 账号或联网。画板每份最多 20 MB / 20,000 个图形（图片占用计入）；较大的图纸可以拆为多个画板。当前是本地单人画板，不包含多人协作、云同步或精确 CAD 制图。图片导入会内嵌到画板；导出源文件可作为独立副本保存。
 
 ## v0.4：睡眠与体重
 
@@ -163,3 +173,5 @@ scripts/                  桌面构建及流程验证
 ```
 
 SQLite 使用带版本号和类型索引的实体表存储结构化 JSON，附件、设置、重复关联和送达日志独立保存。关联检查及写入规则集中在 Rust 服务层，界面不能直接执行 SQL。主窗口仅加载应用内资源，所有外部模型和数据源接入留到后续模块。
+
+自由画板使用开源 [Excalidraw](https://github.com/excalidraw/excalidraw)，组件与字体均本地打包。字体版权与许可见 `public/excalidraw-font-notices.txt`。

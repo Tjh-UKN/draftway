@@ -1,0 +1,28 @@
+const path=require('node:path');const fs=require('node:fs');const assert=require('node:assert/strict');const {spawn}=require('node:child_process');const {randomUUID}=require('node:crypto');
+let playwright;try{playwright=require('playwright');}catch{playwright=require(require.resolve('playwright',{paths:[path.join(process.env.USERPROFILE,'.cache/codex-runtimes/codex-primary-runtime/dependencies/node')]}));}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{
+ const root=process.cwd();const dataPath=path.join(root,'artifacts/qa-data',randomUUID());fs.mkdirSync(dataPath,{recursive:true});const exe=path.join(root,'src-tauri/target/debug/northstar.exe');const env={...process.env,NORTHSTAR_DATA_DIR:dataPath,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9239'};
+ let app,browser,page;let log='';const errors=[],csp=[],external=[];const launch=()=>{app=spawn(exe,[],{env,windowsHide:true,stdio:['ignore','pipe','pipe']});app.stdout.on('data',b=>log+=b);app.stderr.on('data',b=>log+=b);};
+ async function connect(){for(let i=0;i<50;i++){try{browser=await playwright.chromium.connectOverCDP('http://127.0.0.1:9239');page=browser.contexts()[0].pages()[0];await page.locator('.dashboard-intro h1').waitFor({timeout:1000});page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(/^https:\/\//.test(r.url())&&!r.url().includes('.localhost'))external.push(r.url());});page.on('console',msg=>{if(/Content Security Policy|Refused to|wasm.*blocked/i.test(msg.text())&&!msg.text().startsWith('Skipped glyph subsetting'))csp.push(msg.text());});return;}catch{await wait(500);}}throw new Error(log||'Native drawings connection failed');}
+ const invoke=(command,args={})=>page.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args});
+ const nav=name=>page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name,exact:true});
+ try{
+  launch();await connect();const initial=await invoke('load_workspace');assert.equal(path.resolve(initial.dataPath),path.resolve(dataPath));await nav('自由画板').click();await page.getByRole('button',{name:'新建画板',exact:true}).first().click();await page.locator('.excalidraw canvas.interactive').waitFor();await page.getByLabel('画板名称',{exact:true}).fill('原生中文图纸');
+  await page.locator('.excalidraw canvas.interactive').click({position:{x:600,y:350}});await page.keyboard.press('t');await page.mouse.click(650,400);await page.keyboard.insertText('自由绘图 · 中文字体');await page.keyboard.press('Escape');await page.getByRole('status').filter({hasText:'已保存到本机'}).waitFor();
+  let state=await invoke('load_workspace');const drawing=state.records.find(r=>r.kind==='drawing');assert.equal(drawing.title,'原生中文图纸');assert.ok(JSON.parse(drawing.scene).elements.some(e=>e.text==='自由绘图 · 中文字体'));
+  // Supply a deterministic save-dialog result while retaining the real Rust export command.
+  for(const [label,ext] of [['源文件','excalidraw'],['PNG','png'],['SVG','svg']]){
+   const target=path.join(dataPath,'drawing.'+ext);await page.evaluate(target=>{const original=window.fetch.bind(window);window.fetch=(input,init)=>{const url=decodeURIComponent(String(input));if(url.includes('ipc.localhost')&&url.endsWith('plugin:dialog|save'))return Promise.resolve(new Response(JSON.stringify(target),{headers:{'content-type':'application/json','Tauri-Response':'ok'}}));return original(input,init);};},target);
+   await page.getByRole('button',{name:label,exact:true}).click();for(let i=0;i<100&&!fs.existsSync(target);i++)await wait(100);assert.ok(fs.existsSync(target),`${ext} export failed: ${await page.locator('.drawing-editor-error').allTextContents()}`);assert.ok(fs.statSync(target).size>100);
+  }
+  // Excalidraw falls back to full embedded fonts when WebView CSP blocks its optional glyph subsetter.
+  assert.ok(fs.readFileSync(path.join(dataPath,'drawing.svg'),'utf8').includes('data:font/woff2;base64,'));assert.equal(JSON.parse(fs.readFileSync(path.join(dataPath,'drawing.excalidraw'),'utf8')).type,'excalidraw');
+  let denied=false;try{await invoke('export_drawing_file',{path:path.join(dataPath,'invalid.exe'),bytes:[1,2,3]});}catch{denied=true;}assert.ok(denied);
+  await page.getByRole('button',{name:'返回画板',exact:true}).click();await page.getByRole('dialog',{name:'Excalidraw 自由画板'}).waitFor({state:'hidden'});
+  const backup=await invoke('create_backup');state=await invoke('load_workspace');const stored=state.records.find(r=>r.id===drawing.id);await invoke('save_record',{record:{...stored,title:'改过的标题'}});await invoke('restore_backup',{name:backup.name,path:null});state=await invoke('load_workspace');assert.equal(state.records.find(r=>r.id===drawing.id).title,'原生中文图纸');
+  await invoke('quit_app').catch(()=>{});await wait(700);launch();await connect();state=await invoke('load_workspace');assert.equal(state.records.find(r=>r.id===drawing.id).scene,stored.scene);
+  await nav('自由画板').click();await page.getByRole('heading',{name:'原生中文图纸',exact:true}).click();await page.locator('.excalidraw canvas.interactive').waitFor();await page.getByRole('status').filter({hasText:'已保存到本机'}).waitFor();await page.screenshot({path:'artifacts/v0.5-Windows画板.png'});
+  assert.deepEqual(errors,[]);assert.deepEqual(csp,[]);assert.deepEqual(external,[]);console.log(JSON.stringify({passed:'native Chinese text and autosave, offline font loading, real source/PNG/SVG export, export validation, SQLite full backup/restore and process restart',dataPath,runtimeErrors:errors,cspViolations:csp,externalRequests:external.length}));await invoke('quit_app').catch(()=>{});
+ }finally{if(app&&app.exitCode===null)app.kill();}
+})().catch(e=>{console.error(e);process.exit(1);});

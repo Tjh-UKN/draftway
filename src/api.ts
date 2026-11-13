@@ -2,6 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { advanceRepeat, archiveClosure, dateKey, defaults, healthError, normalizeRecord, starter, uid, type Attachment, type BackupInfo, type Habit, type RecordItem, type Settings, type Task, type Workspace } from './domain';
+import {parseDrawingScene} from './drawings';
 
 export const desktop = isTauri();
 const database: Promise<IDBDatabase> = new Promise((resolve,reject)=>{
@@ -31,6 +32,7 @@ export async function saveRecord(item:RecordItem):Promise<RecordItem> {
     if(previous&&previous.version!==item.version)throw new Error('记录已更新，请重新打开后保存');
     const record={...normalizeRecord(item),title:item.title.trim(),version:item.version+1,updatedAt:new Date().toISOString()};
     if(previous?.archived)throw new Error('请先恢复归档记录');
+    if(record.kind==='drawing'){if(!record.title||record.title.length>120)throw new Error('画板名称需要 1–120 个字符');parseDrawingScene(record.scene);}
     if(record.kind==='sleep'||record.kind==='weight'){const error=healthError(record);if(error)throw new Error(error);if(all.some(r=>r.kind===record.kind&&!r.archived&&r.date===record.date&&r.id!==record.id))throw new Error('该日期已有同类健康记录，请编辑已有记录');}
     if(record.kind==='habit'){
       if(!record.startDate||record.startDate>dateKey())throw new Error('开始日期不能晚于今天');
@@ -124,4 +126,8 @@ export async function exportRecords(records:RecordItem[]) {
   if(desktop){const path=await saveDialog({defaultPath:`北极星记录-${new Date().toISOString().slice(0,10)}.json`,filters:[{name:'JSON 记录',extensions:['json']}]});if(path)await invoke('export_records',{path});return;}
   const blob=new Blob([JSON.stringify({format:'northstar-records',version:1,exportedAt:new Date().toISOString(),records},null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`北极星记录-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+export async function exportDrawingBlob(blob:Blob,name:string,extension:'excalidraw'|'png'|'svg'){
+ if(desktop){const path=await saveDialog({defaultPath:name,filters:[{name:'画板文件',extensions:[extension]}]});if(!path)return false;await invoke('export_drawing_file',{path,bytes:Array.from(new Uint8Array(await blob.arrayBuffer()))});return true;}
+ const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);return true;
 }
