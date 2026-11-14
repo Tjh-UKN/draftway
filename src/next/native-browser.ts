@@ -34,14 +34,14 @@ export function clipBrowserSlot(id: string, rect: {x: number; y: number; width: 
   const w = Math.min(width, rect.x + rect.width) - x; const h = Math.min(height, rect.y + rect.height) - y;
   return [x, y, w, h].every(Number.isFinite) && w >= 1 && h >= 1 ? {id, x, y, width: w, height: h} : null;
 }
-export function useNativeBrowserHost(state: WorkbenchState, change: ChangeState): NativeBrowserHost | null {
+export function useNativeBrowserHost(state: WorkbenchState, change: ChangeState, enabled = true): NativeBrowserHost | null {
   const current = useRef(state); current.current = state;
   const schedule = useRef<() => void>(() => {});
   const retry = useRef<() => void>(() => {});
   const [statuses, setStatuses] = useState<Record<string, BrowserStatus>>({});
   useEffect(() => {schedule.current();}, [state]);
   useEffect(() => {
-    if (!nativeBrowserEnabled) return;
+    if (!nativeBrowserEnabled || !enabled) return;
     let alive = true; let frame = 0; let busy = false; let dirty = false; let previous = '';
     const observed = new Set<Element>();
     function patch(id: string, update: BrowserStatus) {if (alive) setStatuses(all => {const next = {...all[id], ...update}; return JSON.stringify(next) === JSON.stringify(all[id]) ? all : {...all, [id]: next};});}
@@ -104,7 +104,7 @@ export function useNativeBrowserHost(state: WorkbenchState, change: ChangeState)
       void page.then(off => off()); void popup.then(off => off());
       void call('sync_browser_views', {snapshot: {tabs: browserTabs(current.current), slots: [], viewportWidth: innerWidth, viewportHeight: innerHeight}}).catch(() => {});
     };
-  }, [change]);
+  }, [change, enabled]);
   if (!nativeBrowserEnabled) return null;
   return {statuses, action(id, action) {if (action === 'reload' && !statuses[id]?.ready) {retry.current(); return;} void call('browser_action', {id, action}).catch(error => setStatuses(all => ({...all, [id]: {...all[id], ready: false, error: String(error)}})));}, external(url) {void call('open_external_url', {url}).catch(error => {for (const tab of browserTabs(current.current).filter(tab => tab.url === url)) setStatuses(all => ({...all, [tab.id]: {...all[tab.id], error: String(error)}}));});}};
 }

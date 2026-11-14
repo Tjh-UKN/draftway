@@ -4,6 +4,7 @@ mod backup;
 mod workspaces;
 mod native_browser;
 mod native_agents;
+mod workspace_state;
 use crate::store::{Store,Result,error};
 use serde_json::{json,Value};
 use std::{fs, path::PathBuf, sync::{Arc,atomic::{AtomicBool, Ordering}}};
@@ -12,6 +13,10 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
 struct AppState {store:Arc<Store>,quit:AtomicBool}
+#[tauri::command]
+async fn load_shell_state(state: tauri::State<'_, AppState>) -> Result<Option<Value>> {workspace_state::load(&state.store)}
+#[tauri::command]
+async fn save_shell_state(state: tauri::State<'_, AppState>, snapshot: Value) -> Result<()> {workspace_state::save(&state.store, &snapshot)}
 #[tauri::command]
 async fn agent_backends() -> Vec<native_agents::Backend> {native_agents::backends()}
 #[tauri::command]
@@ -188,7 +193,7 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
                 handler(invoke)

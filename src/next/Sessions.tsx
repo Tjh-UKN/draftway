@@ -42,7 +42,7 @@ export function SessionView({state, session, change, onNode, active = true}: {st
     <div className="transcript" aria-live="polite">
       {!session.messages.length && <Empty title="开始对话"/>}
       {session.messages.map(message => <article className={`message message-${message.role}`} key={message.id}><span className="message-role">{message.role === 'user' ? '你' : `${provider}${demo ? ' · 模拟回复' : ''}`}</span>{message.role === 'assistant' ? <MarkdownView value={message.text} onOpenLink={runtime ? url => {void invoke('open_external_url', {url});} : undefined}/> : <div>{message.text}</div>}</article>)}
-      {run?.state === 'running' && <div className="run-progress"><LoaderCircle size={15} className="spinning"/><span>正在回复…</span></div>}
+      {run?.state === 'running' && <div className="run-progress"><LoaderCircle size={15} className="spinning"/><span>{run.stopping ? '正在停止…' : '正在回复…'}</span></div>}
       {run?.state === 'needs_input' && demo && <div className="run-attention"><CircleAlert size={16}/><span>需要你的输入</span><button className="primary-button" disabled={!adapter} onClick={() => {const at = Date.now(); change(current => adapter!.resume(current, run.id, at));}}>继续模拟</button></div>}
       {!demo && session.requests?.map(request => <AgentRequestForm key={request.id} request={request} onRespond={answer => runtime?.respond(session.id, request.id, answer)}/>)}
       {(session.connectionError || run?.error) && <p className="agent-error" role="alert">{session.connectionError || run?.error}</p>}
@@ -51,7 +51,7 @@ export function SessionView({state, session, change, onNode, active = true}: {st
       <div ref={end}/>
     </div>
     <form className="session-composer" onSubmit={event => {event.preventDefault(); send();}}><textarea ref={composer} autoFocus={active} aria-label="会话消息" placeholder={busy ? '先写下下一步，草稿会保留' : '在这里输入消息…'} value={session.draft} maxLength={20000} disabled={demo ? !adapter : !runtime} onChange={event => {const draft = event.target.value; change(current => ({...current, sessions: current.sessions.map(s => s.id === session.id ? {...s, draft} : s)}));}} onKeyDown={event => {if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {event.preventDefault(); send();}}}/>
-      <div className="composer-toolbar chat-composer-actions">{busy ? <button type="button" className="icon-button stop-button" disabled={demo ? !adapter : !runtime} aria-label={demo ? '停止模拟' : '停止生成'} onClick={() => {if (demo) change(current => adapter!.cancel(current, run!.id)); else runtime?.stop(session.id);}}><Square size={14}/></button> : <button className="send-button" aria-label="发送消息" disabled={!session.draft.trim() || !canSend}><Send size={15}/></button>}</div>
+      <div className="composer-toolbar chat-composer-actions">{busy ? <button type="button" className="icon-button stop-button" disabled={(demo ? !adapter : !runtime) || run?.stopping} aria-label={demo ? '停止模拟' : '停止生成'} onClick={() => {if (demo) change(current => adapter!.cancel(current, run!.id)); else runtime?.stop(session.id);}}><Square size={14}/></button> : <button className="send-button" aria-label="发送消息" disabled={!session.draft.trim() || !canSend}><Send size={15}/></button>}</div>
 
     </form><p className="composer-footnote">{demo ? '模拟模式 · 尚未连接真实 Agent' : runtime ? session.nativeRevision ? '由本机执行器运行 · 记录保存在北极星' : '正在创建会话…' : '请在 Windows 版继续此会话'}</p>
   </div>;

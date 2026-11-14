@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, Plus, Search, Settings2, Terminal, X} from 'lucide-react';
-import {closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, sessionNodeIds, shellStorageKey, updateWorkspace, type AgentSession, type GraphState, type WorkbenchState, type Workspace} from './core';
+import {closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, sessionNodeIds, shellStorageKey, updateWorkspace, type AgentSession, type GraphState, type Workspace} from './core';
 import {reconcileSessions} from './adapters';
 import {GraphView, NodeGlyph, NodeInspector, NodeOverview} from './Graph';
 import {agentNames, integrations} from './integrations';
@@ -11,6 +11,7 @@ import {BrowserView, ReviewView} from './ToolViews';
 import {closeDockTab, focusedGroup, openDockTab, selectDockTab, type DockTab} from './docking';
 import {BackendPicker} from './BackendPicker';
 import {NodeMaterials} from './NodeMaterials';
+import {useWorkbenchPersistence} from './persistence';
 import {useNativeBrowserHost} from './native-browser';
 import {AgentRuntimeContext, useAgentRuntime, useNativeAgents} from './NativeAgents';
 import {Dialog, Empty, SpaceSymbol, Star} from './ui';
@@ -31,31 +32,20 @@ export default function Workbench() {
   const [dialog, setDialog] = useState<'workspace' | 'settings' | 'search' | 'link' | 'customize' | null>(null);
   const [newNodeId, setNewNodeId] = useState<string | null>(null);
   const [inbox, setInbox] = useState(false);
-  const [saveError, setSaveError] = useState(loaded.error);
-  const [saved, setSaved] = useState(false);
   const space = state.spaces.find(s => s.id === state.activeId)!;
   const selected = space.nodes.find(n => n.id === space.graph.selectedId);
   const sessions = state.sessions.filter(s => s.workspaceId === space.id);
   const unread = state.notices.filter(n => !n.read).length;
   const change: ChangeState = useCallback(update => setState(update), []);
-  const nativeBrowsers = useNativeBrowserHost(state, change);
-  const agents = useNativeAgents(state, change);
+  const persistence = useWorkbenchPersistence(state, change, loaded.error);
+  const nativeBrowsers = useNativeBrowserHost(state, change, persistence.ready);
+  const agents = useNativeAgents(state, change, persistence.ready);
   const updateSpace = (update: (space: Workspace) => Workspace) => change(s => updateWorkspace(s, space.id, update));
-  function save(value: WorkbenchState) {
-    if (loaded.error) return;
-    try {localStorage.setItem(shellStorageKey, JSON.stringify(value)); setSaveError(''); setSaved(true);} catch {setSaveError('保存失败：本地空间不足，当前修改仍保留在窗口中。'); setSaved(false);}
-  }
-  useEffect(() => {setSaved(false); const timer = setTimeout(() => save(state), 180); return () => clearTimeout(timer);}, [state]);
   useEffect(() => {
-    const flush = () => save(current.current);
-    const visibility = () => {if (document.visibilityState === 'hidden') flush();};
-    window.addEventListener('pagehide', flush); document.addEventListener('visibilitychange', visibility);
-    return () => {window.removeEventListener('pagehide', flush); document.removeEventListener('visibilitychange', visibility);};
-  }, []);
-  useEffect(() => {
+    if (!persistence.ready) return;
     const tick = () => change(s => reconcileSessions(s, Date.now()));
     tick(); const timer = setInterval(tick, 500); return () => clearInterval(timer);
-  }, [change]);
+  }, [change, persistence.ready]);
   function switchSpace(id: string) {change(s => ({...s, activeId: id})); setDialog(null); setNewNodeId(null); setInbox(false);}
   function openAgent(id: string) {
     change(s => {const next = openSession(s, id); return updateWorkspace(next, next.activeId, w => ({...w, sessionPanelOpen: false}));});
@@ -131,6 +121,7 @@ export default function Workbench() {
         </div>
       </NodeInspector>}
     </div>;
+  if (!persistence.ready) return <div className="workbench-loading">正在恢复工作区…</div>;
   return <AgentRuntimeContext.Provider value={agents}><div className="workbench-shell map-first-shell">
     <aside className="shell-sidebar" aria-label="主导航"><div className="sidebar-brand"><Star/><span>北极星</span></div>
       <nav className="global-navigation"><button onClick={() => setDialog('workspace')} disabled={state.spaces.length >= 20}><Plus size={17}/>新建工作区</button><button onClick={() => setDialog('search')}><Search size={17}/>搜索<kbd>Ctrl K</kbd></button></nav>
@@ -152,7 +143,7 @@ export default function Workbench() {
       {space.sessionPanelOpen && <aside className="workspace-session-panel" id="workspace-session-panel" aria-label="当前工作区会话"><header><h2>会话记录（{sessions.length}）</h2><button className="icon-button" aria-label="收起会话面板" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: false}))}><X size={16}/></button></header><p className="quiet-note">{space.name} · 关闭页签后仍可在这里重新打开</p><div className="workspace-session-list">{sessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!sessions.length && <Empty title="还没有会话"><p>点“＋”选择后端开始。</p></Empty>}</div></aside>}
 
     </div>
-    <footer className="shell-status"><span>{saveError ? <><CircleAlert size={12}/>{saveError}<button onClick={() => save(state)}>重试保存</button></> : <><span className="saved-dot"/>{saved ? '已保存到本机' : '正在保存'}</>}</span><span>Alt + 1…9 切换工作区 · Ctrl + Tab 切换最近页签</span></footer></div>
+    <footer className="shell-status"><span>{persistence.error ? <><CircleAlert size={12}/>{persistence.error}<button onClick={persistence.retry}>{persistence.readOnly ? '重试读取' : '重试保存'}</button></> : <><span className="saved-dot"/>{persistence.saved ? '已保存到本机' : '正在保存'}</>}</span><span>Alt + 1…9 切换工作区 · Ctrl + Tab 切换最近页签</span></footer></div>
     {inbox && <aside className="notification-panel" aria-label="通知中心"><header><h2>通知</h2><button className="text-button" onClick={() => change(s => ({...s, notices: s.notices.map(n => ({...n, read: true})), sessions: s.sessions.map(session => ({...session, unread: false}))}))}>全部已读</button><button className="icon-button" aria-label="关闭通知中心" onClick={() => setInbox(false)}><X size={16}/></button></header>{[...state.notices].reverse().map(n => <button key={n.id} className={`notice-row ${n.read ? '' : 'unread'}`} onClick={() => openAgent(n.sessionId)}><Bell size={15}/><span><strong>{n.title}</strong><small>{state.sessions.find(s => s.id === n.sessionId)?.title}</small></span><ChevronRight size={14}/></button>)}{!state.notices.length && <Empty title="这里暂时很安静"/>}</aside>}
     {dialog === 'workspace' && <WorkspaceDialog onClose={() => setDialog(null)} onCreate={name => {const next = createWorkspace(name, 'blank'); change(s => ({...s, activeId: next.id, spaces: [...s.spaces, next]})); setDialog(null);}}/>}
 

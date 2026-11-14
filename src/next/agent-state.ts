@@ -4,7 +4,7 @@ import {groups} from './docking';
 export interface NativeSession {
   id: string; workspaceId: string; nodeId: string | null; backend: NonNullable<AgentSession['agentId']>; title: string;
   cwd: string; sourceId: string | null; createdAt: number; revision: number; messages: Message[];
-  runs: {id: string; state: RunState; startedAt: number; finishedAt: number | null; error: string | null}[];
+  runs: {id: string; state: RunState; startedAt: number; finishedAt: number | null; error: string | null; cancelRequested?: boolean}[];
   requests: AgentRequest[]; error: string | null;
 }
 export function mergeNativeSession(state: WorkbenchState, native: NativeSession, foreground = true): WorkbenchState {
@@ -15,7 +15,7 @@ export function mergeNativeSession(state: WorkbenchState, native: NativeSession,
   const changed = native.runs.filter(run => ['succeeded', 'failed', 'needs_input'].includes(run.state) && state.runs.find(old => old.id === run.id)?.state !== run.state);
   const session: AgentSession = {...old, id: native.id, workspaceId: native.workspaceId, nodeId: old?.nodeId ?? native.nodeId, agentId: native.backend, integrationId: native.backend, title: native.title, messages: native.messages, draft: old?.draft || '', createdAt: native.createdAt, unread: !visible && (!!changed.length || !!old?.unread), cwd: native.cwd, sourceId: native.sourceId, nativeRevision: native.revision, requests: native.requests, connectionError: native.error || undefined};
   const runIds = new Set(native.runs.map(run => run.id));
-  const runs = [...state.runs.filter(run => !runIds.has(run.id)), ...native.runs.map(run => ({id: run.id, sessionId: native.id, state: run.state, startedAt: run.startedAt, dueAt: run.finishedAt || run.startedAt, error: run.error}))];
+  const runs = [...state.runs.filter(run => !runIds.has(run.id)), ...native.runs.map(run => ({id: run.id, sessionId: native.id, state: run.state, startedAt: run.startedAt, dueAt: run.finishedAt || run.startedAt, error: run.error, stopping: !!run.cancelRequested && run.state === 'running'}))];
   const notices = [...state.notices]; const artifacts = [...state.artifacts];
   for (const run of changed) {
     const id = `native-${run.id}-${run.state}`;

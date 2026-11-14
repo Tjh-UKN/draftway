@@ -39,7 +39,7 @@ fn wsl_path(path: &str) -> Result<String> {
     timed_output(command, 8).and_then(|bytes| String::from_utf8(bytes).ok()).map(|s| s.trim().to_string()).filter(|s| s.starts_with('/')).ok_or_else(|| "无法把工作目录转换为 WSL 路径".into())
 }
 impl Provider {
-    pub fn command(&self, cwd: &str, source: Option<&str>, session_root: &Path) -> Result<(Command, Option<String>)> {
+    pub fn command(&self, cwd: &str, source: Option<&str>, session_root: &Path) -> Result<(Command, Option<String>, Option<String>)> {
         let mut args: Vec<String> = Vec::new(); let mut planned = None;
         match self.backend.as_str() {
             "codex" => args.extend(["app-server", "--listen", "stdio://"].map(String::from)),
@@ -56,13 +56,14 @@ impl Provider {
             },
             _ => return Err("不支持的执行器".into()),
         }
+        let token = self.wsl.then(|| uuid::Uuid::new_v4().to_string());
         let mut command = if self.wsl {
             let mut command = Command::new("wsl.exe");
-            command.args(["--cd", &wsl_path(cwd)?, "--exec", "/bin/bash", "-ic", r#"exec "$@""#, "northstar"]).arg(&self.program).args(args); command
+            command.args(["--cd", &wsl_path(cwd)?, "--exec", "/usr/bin/setsid", "--wait", "/bin/bash", "-ic", r#"printf '__NORTHSTAR_PROCESS__:%s:%s:%s\n' "$WSL_DISTRO_NAME" "$(id -un)" "$$" >&2; export NORTHSTAR_SESSION_TOKEN="$1"; shift; exec "$@""#, "northstar", token.as_deref().unwrap()]).arg(&self.program).args(args); command
         } else {let mut command = Command::new(&self.program); command.current_dir(cwd).args(&self.prefix).args(args); command};
         command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         #[cfg(windows)] {use std::os::windows::process::CommandExt; command.creation_flags(0x08000000);}
-        Ok((command, planned))
+        Ok((command, planned, token))
     }
 }
 pub fn wire_request(backend: &str, id: u64, method: &str, params: Value) -> Value {
@@ -93,6 +94,8 @@ fn assistant(session: &mut AgentSession, value: &str, replace: bool) {
     if replace {message.text = value.into();} else {message.text.push_str(value);}
 }
 fn finish(session: &mut AgentSession, state: &str, error: Option<String>) {
+    let cancelled = session.runs.last().is_some_and(|run| run.cancel_requested);
+    let state = if cancelled {"cancelled"} else {state}; let error = if cancelled {None} else {error};
     if let Some(run) = session.runs.last_mut() {if run.state == "cancelled" {return;} run.state = state.into(); run.finished_at = Some(now()); run.error = error.clone();}
     session.error = error; session.requests.clear();
 }
@@ -188,6 +191,13 @@ mod tests {
         apply_event(&mut s, &json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hello"}}));
         apply_event(&mut s, &json!({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Hello"}],"stopReason":"stop"}}));
         assert_eq!(s.messages.len(), 1); apply_event(&mut s, &json!({"type":"agent_settled","aborted":true})); assert_eq!(s.runs[0].state, "cancelled");
+    }
+    #[test]
+    fn explicit_stop_is_cancelled_even_when_pi_reports_abort_as_a_provider_error() {
+        let mut s = session("pi"); s.runs[0].cancel_requested = true;
+        apply_event(&mut s, &json!({"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"Request aborted","content":[]}}));
+        apply_event(&mut s, &json!({"type":"agent_settled","aborted":false}));
+        assert_eq!(s.runs[0].state,"cancelled"); assert!(s.runs[0].error.is_none());
     }
     #[test]
     fn claude_final_response_replaces_stream_and_checks_result_status() {

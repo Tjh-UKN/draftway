@@ -2248,6 +2248,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "url",
  "uuid",
+ "windows",
  "zip",
 ]
 

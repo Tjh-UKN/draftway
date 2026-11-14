@@ -34,6 +34,7 @@ export interface Run {
   startedAt: number; dueAt: number;
   mapAction?: MapAction; targetNodeId?: string;
   error?: string | null;
+  stopping?: boolean;
 }
 export interface Artifact {id: string; sessionId: string; runId: string; title: string; text: string}
 export interface Notice {id: string; runId: string; workspaceId: string; sessionId: string; title: string; read: boolean; at: number}

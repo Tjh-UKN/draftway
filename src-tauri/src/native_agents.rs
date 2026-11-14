@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, ChildStdin}, sync::{Arc, Mutex, Weak, atomic::{AtomicU64, Ordering}, mpsc}, time::Duration};
 #[path = "agent_providers.rs"]
 mod providers;
+#[path = "agent_process.rs"]
+mod process;
 
 pub type Result<T> = std::result::Result<T, String>;
 pub type Sink = Arc<dyn Fn(&AgentSession) + Send + Sync>;
@@ -14,7 +16,7 @@ fn valid_id(id: &str) -> bool {!id.is_empty() && id.len() <= 100 && id.bytes().a
 pub struct Message {pub id: String, pub role: String, pub text: String, pub at: u64}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Run {pub id: String, pub state: String, pub started_at: u64, pub finished_at: Option<u64>, pub source_turn_id: Option<String>, pub error: Option<String>}
+pub struct Run {pub id: String, pub state: String, pub started_at: u64, pub finished_at: Option<u64>, pub source_turn_id: Option<String>, pub error: Option<String>, #[serde(default)] pub cancel_requested: bool}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Request {pub id: String, pub kind: String, pub title: String, pub payload: Value, pub source_id: Value}
@@ -30,8 +32,9 @@ pub struct Backend {pub id: String, pub available: bool, pub detail: String}
 struct Rpc {
     writer: Mutex<ChildStdin>, child: Mutex<Child>, pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>>, serial: AtomicU64,
     backend: String,
+    ownership: process::Ownership,
 }
-impl Drop for Rpc {fn drop(&mut self) {if let Ok(child) = self.child.get_mut() {let _ = child.kill(); let _ = child.wait();}}}
+impl Drop for Rpc {fn drop(&mut self) {self.ownership.group.stop(); if let Ok(child) = self.child.get_mut() {let _ = child.kill(); let _ = child.wait();}}}
 impl Rpc {
     fn write(&self, value: Value) -> Result<()> {
         let mut writer = self.writer.lock().map_err(|e| e.to_string())?;
@@ -61,7 +64,7 @@ impl AgentHost {
         for row in query.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())? {
             let mut session: AgentSession = serde_json::from_str(&row.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
             let mut interrupted = false;
-            for run in &mut session.runs {if ["running", "needs_input"].contains(&run.state.as_str()) {run.state = "failed".into(); run.error = Some("上次执行随宿主退出而中断，可继续此会话。".into()); run.finished_at = Some(now()); interrupted = true;}}
+            for run in &mut session.runs {if ["running", "needs_input"].contains(&run.state.as_str()) {run.state = if run.cancel_requested {"cancelled"} else {"failed"}.into(); run.error = (!run.cancel_requested).then(|| "上次执行随宿主退出而中断，可继续此会话。".into()); run.finished_at = Some(now()); interrupted = true;}}
             if interrupted {session.requests.clear(); session.revision += 1;}
             sessions.insert(session.id.clone(), session);
         }}
@@ -101,15 +104,17 @@ impl AgentHost {
         if let Some(runtime) = self.runtimes.lock().map_err(|e| e.to_string())?.get(id).cloned() {return Ok(runtime);}
         let session = self.session(id)?;
         let provider = providers::discover(&session.backend).ok_or("未找到执行器")?;
-        let (mut command, planned) = provider.command(&session.cwd, session.source_id.as_deref(), &self.root.join("provider-sessions"))?;
+        let (mut command, planned, token) = provider.command(&session.cwd, session.source_id.as_deref(), &self.root.join("provider-sessions"))?;
         let mut child = command.spawn().map_err(|e| format!("无法启动执行器：{e}"))?;
+        let ownership = match process::Ownership::attach(&child, token) {Ok(owner) => owner, Err(error) => {let _ = child.kill(); let _ = child.wait(); return Err(error);}};
         let writer = child.stdin.take().ok_or("无法连接执行器输入")?;
         let stdout = child.stdout.take().ok_or("无法连接执行器输出")?;
         let stderr = child.stderr.take().ok_or("无法连接执行器错误流")?;
         // Drain diagnostics, without retaining provider configuration or credentials.
-        std::thread::spawn(move || {for line in BufReader::new(stderr).lines() {if line.is_err() {break;}}});
+        let group = ownership.group.clone();
+        std::thread::spawn(move || {for line in BufReader::new(stderr).lines() {match line {Ok(line) => group.observe(&line), Err(_) => break,}}});
         let pending = Arc::new(Mutex::new(HashMap::<u64, mpsc::Sender<Value>>::new()));
-        let rpc = Arc::new(Rpc {writer: Mutex::new(writer), child: Mutex::new(child), pending: pending.clone(), serial: AtomicU64::new(1), backend: session.backend.clone()});
+        let rpc = Arc::new(Rpc {writer: Mutex::new(writer), child: Mutex::new(child), pending: pending.clone(), serial: AtomicU64::new(1), backend: session.backend.clone(), ownership});
         let owner = Arc::downgrade(self); let session_id = id.to_string();
         let backend = session.backend.clone();
         std::thread::spawn(move || read_protocol(stdout, pending, owner, session_id, backend));
@@ -140,14 +145,14 @@ impl AgentHost {
             if session.messages.is_empty() && session.title.starts_with("新的会话") {session.title = text.lines().next().unwrap_or(&text).chars().take(32).collect();}
             session.error = None;
             session.messages.push(Message {id: format!("{run_id}-user"), role: "user".into(), text: text.clone(), at: now()});
-            session.runs.push(Run {id: run_id.clone(), state: "running".into(), started_at: now(), finished_at: None, source_turn_id: None, error: None});
+            session.runs.push(Run {id: run_id.clone(), state: "running".into(), started_at: now(), finished_at: None, source_turn_id: None, error: None, cancel_requested: false});
         })?;
         if rejected {return Err("此会话仍有执行未结束，或执行标识重复".into());}
         let host = self.clone(); let id = id.to_string();
         std::thread::spawn(move || {
             let result = (|| {
                 let rpc = host.connect(&id)?; let session = host.session(&id)?;
-                if session.runs.last().is_none_or(|r| r.state != "running") {return Ok(());}
+                if session.runs.last().is_none_or(|r| r.state != "running" || r.cancel_requested) {return Ok(());}
                 let source = if session.backend == "codex" {
                     let result = rpc.request("turn/start", json!({"threadId":session.source_id,"input":[{"type":"text","text":text}]}))?;
                     result["turn"]["id"].as_str().ok_or("Codex 未返回执行标识")?.to_string()
@@ -158,16 +163,19 @@ impl AgentHost {
                     run_id.clone()
                 };
                 let after = host.update(&id, |s| {if let Some(run) = s.runs.iter_mut().find(|r| r.id == run_id) {run.source_turn_id = Some(source.clone());}})?;
-                if after.runs.last().is_some_and(|r| r.state == "cancelled") {interrupt(&rpc, &after, Some(&source))?;}
+                if after.runs.last().is_some_and(|r| r.state == "cancelled" || r.cancel_requested) {interrupt(&rpc, &after, Some(&source))?;}
                 Ok(())
             })();
             if let Err(error) = result {if host.session(&id).is_ok_and(|s| s.runs.last().is_none_or(|r| r.state != "cancelled")) {let _ = host.fail(&id, error);} host.runtimes.lock().unwrap().remove(&id);}
         }); Ok(snapshot)
     }
-    fn fail(&self, id: &str, error: String) -> Result<AgentSession> {self.update(id, |s| {s.error = Some(error.clone()); s.requests.clear(); if let Some(run) = s.runs.last_mut().filter(|r| ["running", "needs_input"].contains(&r.state.as_str())) {run.state = "failed".into(); run.finished_at = Some(now()); run.error = Some(error);}})}
+    fn fail(&self, id: &str, error: String) -> Result<AgentSession> {self.update(id, |s| {s.error = Some(error.clone()); s.requests.clear(); if let Some(run) = s.runs.last_mut().filter(|r| ["running", "needs_input"].contains(&r.state.as_str())) {run.state = if run.cancel_requested {"cancelled"} else {"failed"}.into(); run.finished_at = Some(now()); run.error = (!run.cancel_requested).then_some(error); if run.cancel_requested {s.error = None;}}})}
     pub fn stop(&self, id: &str) -> Result<AgentSession> {
         let session = self.session(id)?;
-        if let Some(run) = session.runs.last().filter(|r| ["running", "needs_input"].contains(&r.state.as_str())) {
+        if let Some(_) = session.runs.last().filter(|r| ["running", "needs_input"].contains(&r.state.as_str())) {
+            if session.runs.last().is_some_and(|r| r.cancel_requested) {return Ok(session);}
+            let session = self.update(id, |s| {if let Some(run) = s.runs.last_mut().filter(|r| ["running", "needs_input"].contains(&r.state.as_str())) {run.cancel_requested = true;}})?;
+            let Some(run) = session.runs.last().filter(|r| r.cancel_requested) else {return Ok(session);};
             let rpc = self.runtimes.lock().unwrap().get(id).cloned();
             let fallback = rpc.as_ref().is_some_and(|rpc| (session.backend != "codex" || run.source_turn_id.is_some()) && interrupt(rpc, &session, run.source_turn_id.as_deref()).is_err());
             let latest = self.session(id)?;
@@ -236,7 +244,7 @@ fn apply_codex_event(s: &mut AgentSession, method: &str, p: &Value) {
             if let Some(message) = s.messages.iter_mut().find(|m| m.id == key) {message.text = text;} else {s.messages.push(Message {id: key, role: "assistant".into(), text, at: now()});}
         },
         "turn/completed" => {
-            if let Some(run) = s.runs.last_mut() {if run.state == "cancelled" {return;} run.state = match p["turn"]["status"].as_str() {Some("completed") => "succeeded", Some("interrupted") => "cancelled", _ => "failed"}.into(); run.finished_at = Some(now()); run.error = p["turn"]["error"]["message"].as_str().map(String::from);}
+            if let Some(run) = s.runs.last_mut() {if run.state == "cancelled" {return;} run.state = if run.cancel_requested {"cancelled"} else {match p["turn"]["status"].as_str() {Some("completed") => "succeeded", Some("interrupted") => "cancelled", _ => "failed"}}.into(); run.finished_at = Some(now()); run.error = if run.cancel_requested {None} else {p["turn"]["error"]["message"].as_str().map(String::from)};}
             s.requests.clear();
         },
         "error" if p["willRetry"] != true => {s.error = p["error"]["message"].as_str().map(String::from);},
@@ -257,7 +265,7 @@ pub fn backends() -> Vec<Backend> {["codex", "claude", "pi"].into_iter().map(|id
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn record() -> AgentSession {AgentSession {id: "s".into(), workspace_id: "w".into(), node_id: None, backend: "codex".into(), title: "test".into(), cwd: String::new(), source_id: Some("thread".into()), created_at: 0, revision: 1, messages: vec![], requests: vec![], error: None, runs: vec![Run {id: "run".into(), state: "running".into(), started_at: 0, finished_at: None, source_turn_id: Some("turn".into()), error: None}]}}
+    fn record() -> AgentSession {AgentSession {id: "s".into(), workspace_id: "w".into(), node_id: None, backend: "codex".into(), title: "test".into(), cwd: String::new(), source_id: Some("thread".into()), created_at: 0, revision: 1, messages: vec![], requests: vec![], error: None, runs: vec![Run {id: "run".into(), state: "running".into(), started_at: 0, finished_at: None, source_turn_id: Some("turn".into()), error: None, cancel_requested: false}]}}
     #[test]
     fn streams_without_duplicate_final_messages_and_never_maps_failure_to_success() {
         let mut s = record();
@@ -295,7 +303,7 @@ mod tests {
         let mut command = std::process::Command::new(std::env::current_exe().unwrap()); command.arg("--help").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         #[cfg(windows)] {use std::os::windows::process::CommandExt; command.creation_flags(0x08000000);}
         let mut child = command.spawn().unwrap(); let writer = child.stdin.take().unwrap(); child.wait().unwrap();
-        host.runtimes.lock().unwrap().insert("s".into(), Arc::new(Rpc {writer: Mutex::new(writer), child: Mutex::new(child), pending: Arc::new(Mutex::new(HashMap::new())), serial: AtomicU64::new(1), backend: "codex".into()}));
+        host.runtimes.lock().unwrap().insert("s".into(), Arc::new(Rpc {writer: Mutex::new(writer), child: Mutex::new(child), pending: Arc::new(Mutex::new(HashMap::new())), serial: AtomicU64::new(1), backend: "codex".into(), ownership: process::Ownership::empty()}));
         assert_eq!(host.stop("s").unwrap().runs[0].state, "cancelled"); assert!(host.runtimes.lock().unwrap().is_empty()); assert_eq!(host.stop("s").unwrap().runs[0].state, "cancelled");
     }
 }
