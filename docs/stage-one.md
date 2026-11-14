@@ -1,6 +1,6 @@
 # 北极星第一阶段：地图与会话骨架
 
-状态：已实现本地前端骨架，入口 `/next.html`。Windows 原生网页容器已接入独立预览版；Codex 已接入真实会话宿主；Claude Code／Pi、原业务数据库迁移和 Review 后台观察继续开发。
+状态：已实现本地前端骨架，入口 `/next.html`。Windows 原生网页容器已接入独立预览版；Codex、Claude Code、Pi 适配器已实现，Codex 和 Pi 通过真实生命周期验证；原业务数据库迁移和 Review 后台观察继续开发。
 
 ## 工作区交互
 
@@ -103,8 +103,10 @@ Windows GUI 截图工具连续返回 capture timeout，鼠标点测、菜单遮�
 
 浏览器预览和旧 `demo-agent` 会话继续明确标注为模拟。Windows 版的新 Codex 会话调用本机 `codex app-server`，流式显示真实回复，保留来源线程标识，支持授权请求和停止。消息与执行记录保存到独立的 `agents/agent-sessions.sqlite3`。页签关闭不停止执行；宿主完全退出会终止本机执行，下次打开把未结束执行标为中断，并可在原来源线程继续。模型和推理配置沿用本机 CLI，权限请求交给用户回答。
 
-工作目录可在“自定工作区”选择，仅影响新会话；未指定时使用应用为该工作区创建的目录。创建时不增加表单。结果可以主动保留到地图，普通回复不自动产生节点。现有 Claude Code／Pi 菜单在真实适配器尚未接入时禁用，不回退为模拟成功。
+工作目录可在“自定工作区”选择，仅影响新会话；未指定时使用应用为该工作区创建的目录。创建时不增加表单。结果可以主动保留到地图，普通回复不自动产生节点。Claude Code／Pi 支持本机可执行文件、npm 安装的 Node 入口或 WSL 中的命令。发现结果仅表示执行器已安装，不证明账号可用。Pi 只在 agent_settled 后结束本轮；命令接收和 agent_end 不被误标为成功。Claude 使用 stream-json 控制协议，权限请求交给用户；现有服务订阅不可用时显示实际失败，不回退为模拟。
 
-`src-tauri/examples/agent_smoke.rs` 使用新建测试会话验证真实回复、SQLite 保存、杀掉宿主执行器后恢复同一来源线程续聊，以及中断运行；报告写到 `artifacts/agent-live.json`。
+`src-tauri/examples/agent_smoke.rs` 使用新建测试会话验证真实回复、SQLite 保存、杀掉宿主执行器后恢复同一来源线程续聊，以及中断运行；`npm run test:agent-live -- codex` 或 `-- pi` 可重跑，报告写到 `artifacts/agent-live-<backend>.json`。Claude 的相同运行检查被现有订阅状态阻挡，相关协议使用固定事件检查；未修改认证或订阅配置。
 
-继续接入 Claude Code／Pi，然后完成 Review 状态观察、系统通知、材料与 Git 审查、原业务整合；进度见 [核心组件交付](component-delivery.md)。
+协议参考：[Codex app-server](https://learn.chatgpt.com/docs/app-server)、[Claude 流式输入](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode)、[Pi RPC](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md)。
+
+继续完成 Review 状态观察、系统通知、材料与 Git 审查、原业务整合；进度见 [核心组件交付](component-delivery.md)。

@@ -22,7 +22,8 @@
     "test:workspaces": "node scripts/check-workspaces.cjs",
     "desktop:next": "node scripts/desktop.mjs dev --no-watch --config scripts/next-config.json",
     "desktop:next:build": "node scripts/desktop.mjs build --debug --no-bundle --config scripts/next-config.json",
-    "test:native-browser": "node scripts/native-browser-test.mjs"
+    "test:native-browser": "node scripts/native-browser-test.mjs",
+    "test:agent-live": "node scripts/agent-test.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",

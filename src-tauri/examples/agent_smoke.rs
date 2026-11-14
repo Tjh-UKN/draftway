@@ -16,7 +16,8 @@ fn wait(host: &AgentHost, session: &str) -> native_agents::Result<native_agents:
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::current_dir()?.join("artifacts").join(format!("agent-live-{}", uuid::Uuid::new_v4()));
     let host = AgentHost::open(root.clone(), Arc::new(|_| {}))?;
-    let session = host.create("smoke".into(), "smoke-workspace".into(), None, "codex".into(), "新的会话".into(), None)?;
+    let backend = std::env::var("NORTHSTAR_AGENT_BACKEND").unwrap_or_else(|_| "codex".into());
+    let session = host.create("smoke".into(), "smoke-workspace".into(), None, backend.clone(), "新的会话".into(), None)?;
     host.send(&session.id, "r1".into(), "Reply with exactly NORTHSTAR_OK. Do not use any tools.".into())?;
     let first = wait(&host, &session.id)?;
     if !first.messages.iter().any(|m| m.role == "assistant" && m.text.contains("NORTHSTAR_OK")) {return Err("Missing real first reply".into());}
@@ -31,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stopped = resumed.stop("smoke")?;
     if stopped.runs.last().is_none_or(|run| run.state != "cancelled") {return Err("Stop did not cancel the run".into());}
     resumed.shutdown();
-    let report = json!({"passed":["real Codex response", "durable transcript", "resume after host restart", "same provider thread", "interrupt running turn"],"sourceId":source,"dataPath":root,"messages":second.messages.len()});
-    std::fs::write("artifacts/agent-live.json", serde_json::to_vec_pretty(&report)?)?;
+    let report = json!({"backend":backend,"passed":["real provider response", "durable transcript", "resume after host restart", "same provider session", "interrupt running turn"],"sourceId":source,"dataPath":root,"messages":second.messages.len()});
+    std::fs::write(format!("artifacts/agent-live-{backend}.json"), serde_json::to_vec_pretty(&report)?)?;
     println!("{report}"); Ok(())
 }

@@ -15,7 +15,8 @@
 ## 阶段记录
 
 - 阶段 1 已推送：[ccddf33](https://github.com/Tjh-UKN/northstar-workbench/commit/ccddf33517518c4cb0a0ca80192650a1bf51e836)。
-- 阶段 2a：本机 Codex 真实会话、流式消息、授权请求、停止、来源会话恢复和独立 SQLite 日志。真实运行探针已验证实际回复、宿主重启后上下文续接、同一来源线程和运行中断。Claude Code、Pi 在 WSL 已发现，适配器继续实现。
+- 阶段 2a 已推送：[acee9e2](https://github.com/Tjh-UKN/northstar-workbench/commit/acee9e2b554f06592cd34c74841c2b3d567fd778)。本机 Codex 真实会话、流式消息、授权请求、停止、来源会话恢复和独立 SQLite 日志。真实运行探针已验证实际回复、宿主重启后上下文续接、同一来源线程和运行中断。Claude Code、Pi 在 WSL 已发现。
+- 阶段 2b：Claude stream-json 与 Pi RPC 适配完成；Pi 已通过真实回复、持久化、重启续聊、来源会话保留和中断 5 项实测。Claude 已启动并返回真实服务错误，现有配置的订阅不可用，尚未通过实际生成回归。协议解析、权限请求、Pi 重试/结束边界及中断注册竞态有 10 项单元检查；Codex 在多后端重构后再次通过 5 项真实生命周期验证。
 
 ## 已验证基线
 

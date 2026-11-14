@@ -14,8 +14,8 @@ export const integrations: readonly IntegrationDefinition[] = [
   {id: 'web', name: '网页工具', description: '保存网页入口，在独立页面操作原工具', capabilities: ['surface'], available: true},
   {id: 'demo-agent', name: '模拟 Agent', description: '仅验证会话、执行状态和通知流程', capabilities: ['session', 'run'], available: true},
   {id: 'codex', name: 'Codex', description: '本机 app-server，会话记录与执行分别保存', capabilities: ['session', 'run'], available: true},
-  {id: 'claude', name: 'Claude Code', description: '第二阶段接入本机 Agent', capabilities: ['session', 'run'], available: false},
-  {id: 'pi', name: 'Pi', description: '第二阶段接入本机 Agent', capabilities: ['session', 'run'], available: false},
+  {id: 'claude', name: 'Claude Code', description: '本机或 WSL，流式会话与权限请求', capabilities: ['session', 'run'], available: true},
+  {id: 'pi', name: 'Pi', description: '本机或 WSL，RPC 会话与扩展交互', capabilities: ['session', 'run'], available: true},
 ];
 export const agentNames = {codex: 'Codex', claude: 'Claude Code', pi: 'Pi'};
 
