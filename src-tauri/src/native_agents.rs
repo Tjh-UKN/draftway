@@ -29,6 +29,9 @@ pub struct AgentSession {
 }
 #[derive(Serialize)]
 pub struct Backend {pub id: String, pub available: bool, pub detail: String}
+#[derive(Clone)]
+pub struct WorkspaceTools {pub executable: PathBuf, pub root: PathBuf, pub definitions: Value}
+pub struct ToolConfig {pub command: String, pub args: Vec<String>, pub definitions: Value}
 struct Rpc {
     writer: Mutex<ChildStdin>, child: Mutex<Child>, pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>>, serial: AtomicU64,
     backend: String,
@@ -54,6 +57,7 @@ impl Rpc {
 pub struct AgentHost {
     root: PathBuf, db: Mutex<Connection>, sessions: Mutex<HashMap<String, AgentSession>>, runtimes: Mutex<HashMap<String, Arc<Rpc>>>, sink: Sink,
     checkpoints: Mutex<HashMap<String, (u64, u64)>>,
+    tools: Mutex<Option<WorkspaceTools>>,
 }
 impl AgentHost {
     pub fn open(root: PathBuf, sink: Sink) -> Result<Arc<Self>> {
@@ -69,7 +73,7 @@ impl AgentHost {
             if interrupted {session.requests.clear(); session.revision += 1;}
             sessions.insert(session.id.clone(), session);
         }}
-        let host = Arc::new(Self {root, db: Mutex::new(db), sessions: Mutex::new(sessions), runtimes: Mutex::new(HashMap::new()), sink, checkpoints: Mutex::new(HashMap::new())});
+        let host = Arc::new(Self {root, db: Mutex::new(db), sessions: Mutex::new(sessions), runtimes: Mutex::new(HashMap::new()), sink, checkpoints: Mutex::new(HashMap::new()), tools: Mutex::new(None)});
         for session in host.list()? {host.persist(&session)?;}
         Ok(host)
     }
@@ -78,6 +82,7 @@ impl AgentHost {
     }
     pub fn list(&self) -> Result<Vec<AgentSession>> {let mut all: Vec<_> = self.sessions.lock().map_err(|e| e.to_string())?.values().cloned().collect(); all.sort_by_key(|s| s.created_at); Ok(all)}
     pub fn session(&self, id: &str) -> Result<AgentSession> {self.sessions.lock().map_err(|e| e.to_string())?.get(id).cloned().ok_or_else(|| "会话不存在".into())}
+    pub fn configure_tools(&self, tools: WorkspaceTools) {if let Ok(mut config)=self.tools.lock(){*config=Some(tools);}}
     fn update(&self, id: &str, change: impl FnOnce(&mut AgentSession)) -> Result<AgentSession> {
         self.update_stream(id, false, change)
     }
@@ -109,7 +114,8 @@ impl AgentHost {
         if let Some(runtime) = self.runtimes.lock().map_err(|e| e.to_string())?.get(id).cloned() {return Ok(runtime);}
         let session = self.session(id)?;
         let provider = providers::discover(&session.backend).ok_or("未找到执行器")?;
-        let (mut command, planned, token) = provider.command(&session.cwd, session.source_id.as_deref(), &self.root.join("provider-sessions"))?;
+        let tools=self.tools.lock().map_err(|e|e.to_string())?.clone().map(|tools|ToolConfig{command:tools.executable.to_string_lossy().into(),args:vec!["--northstar-mcp".into(),tools.root.to_string_lossy().into(),id.into()],definitions:tools.definitions});
+        let (mut command, planned, token) = provider.command(&session.cwd, session.source_id.as_deref(), &self.root.join("provider-sessions"), tools.as_ref())?;
         let mut child = command.spawn().map_err(|e| format!("无法启动执行器：{e}"))?;
         let ownership = match process::Ownership::attach(&child, token) {Ok(owner) => owner, Err(error) => {let _ = child.kill(); let _ = child.wait(); return Err(error);}};
         let writer = child.stdin.take().ok_or("无法连接执行器输入")?;
@@ -129,6 +135,7 @@ impl AgentHost {
                 rpc.write(json!({"method":"initialized"}))?;
                 let method = if session.source_id.is_some() {"thread/resume"} else {"thread/start"};
                 let mut params = json!({"cwd":session.cwd,"approvalPolicy":"on-request","sandbox":"workspace-write"});
+                if let Some(tools)=&tools {params["config"]=json!({"mcp_servers":{"northstar":{"command":tools.command,"args":tools.args,"enabled":true,"startup_timeout_sec":15,"required":true}}});}
                 if let Some(source) = session.source_id {params["threadId"] = json!(source);}
                 rpc.request(method, params)?["thread"]["id"].as_str().ok_or("Codex 未返回来源会话标识")?.to_string()
             },
@@ -203,6 +210,7 @@ impl AgentHost {
         let result = match request.kind.as_str() {
             "approval" => {let decision = answer["decision"].as_str().filter(|s| ["accept", "decline", "cancel"].contains(s)).ok_or("请选择允许或拒绝")?; json!({"decision":decision})},
             "input" => {if !answer["answers"].is_object() {return Err("回答内容无效".into());} answer},
+            "elicitation" => {let action=answer["action"].as_str().filter(|action|["accept","decline","cancel"].contains(action)).ok_or("请选择允许或拒绝")?;if action=="accept" && !answer["content"].is_object(){return Err("表单内容无效".into());}json!({"action":action,"content":if action=="accept"{answer["content"].clone()}else{Value::Null}})},
             _ => return Err("请求类型暂不支持".into()),
         };
         rpc.write(if session.backend == "codex" {json!({"id":request.source_id,"result":result})} else {providers::response(&session.backend, request, result)?})?;
@@ -213,8 +221,8 @@ impl AgentHost {
         if let Ok(session) = self.session(id) {if session.backend != "codex" {if providers::relevant(&session.backend, value) {let stream = value["type"] == "stream_event" || value["type"] == "message_update"; let _ = self.update_stream(id, stream, |s| providers::apply_event(s, value));} return;}}
         let method = value["method"].as_str().unwrap_or(""); let p = &value["params"];
         if value.get("id").is_some() && value.get("method").is_some() {
-            let kind = if method.ends_with("requestApproval") {"approval"} else if method == "item/tool/requestUserInput" {"input"} else {"unsupported"};
-            let title = p["reason"].as_str().or(p["command"].as_str()).unwrap_or(method).chars().take(2000).collect();
+            let kind = if ["item/commandExecution/requestApproval","item/fileChange/requestApproval"].contains(&method) {"approval"} else if method=="mcpServer/elicitation/request" && p["mode"]=="form" {"elicitation"} else if method == "item/tool/requestUserInput" {"input"} else {"unsupported"};
+            let title = p["message"].as_str().or(p["reason"].as_str()).or(p["command"].as_str()).unwrap_or(method).chars().take(2000).collect();
             let _ = self.update(id, |s| {let request_id = value["id"].to_string(); if !s.requests.iter().any(|r| r.id == request_id) {s.requests.push(Request {id: request_id, kind: kind.into(), title, payload: p.clone(), source_id: value["id"].clone()});} if let Some(run) = s.runs.last_mut() {run.state = "needs_input".into();}}); return;
         }
         if ["item/agentMessage/delta", "item/completed", "turn/started", "turn/completed", "error"].contains(&method) {

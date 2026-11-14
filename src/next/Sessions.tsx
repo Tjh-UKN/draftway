@@ -59,6 +59,16 @@ export function SessionView({state, session, change, onNode, active = true}: {st
 }
 
 function AgentRequestForm({request, onRespond}: {request: AgentRequest; onRespond: (answer: unknown) => void}) {
+  if(request.kind==='elicitation')return <ElicitationForm request={request} onRespond={onRespond}/>;
+  return <InputRequestForm request={request} onRespond={onRespond}/>;
+}
+function ElicitationForm({request,onRespond}: {request:AgentRequest;onRespond:(answer:unknown)=>void}) {
+  const [content,setContent]=useState<Record<string,unknown>>({});
+  const schema=request.payload.requestedSchema as {properties?:Record<string,{type?:string;title?:string;enum?:string[]}>;required?:string[]}|undefined;
+  const properties=Object.entries(schema?.properties||{});const supported=properties.every(([,value])=>['string','boolean','number','integer'].includes(value.type||''));
+  return <section className="agent-request"><strong>工具请求</strong><p>{request.title}</p><form onSubmit={event=>{event.preventDefault();onRespond({action:'accept',content});}}>{supported && properties.map(([key,field])=><label className="field" key={key}>{field.title||key}{field.type==='boolean'?<input type="checkbox" checked={!!content[key]} onChange={e=>setContent(old=>({...old,[key]:e.target.checked}))}/>:field.enum?<select required={schema?.required?.includes(key)} value={String(content[key]||'')} onChange={e=>setContent(old=>({...old,[key]:e.target.value}))}><option value="">请选择</option>{field.enum.map(option=><option key={option}>{option}</option>)}</select>:<input type={field.type==='string'?'text':'number'} step={field.type==='integer'?'1':'any'} required={schema?.required?.includes(key)} onChange={e=>setContent(old=>({...old,[key]:field.type==='string'?e.target.value:Number(e.target.value)}))}/>}</label>)}<div className="agent-request-actions"><button className="primary-button" disabled={!supported}>允许本次</button><button type="button" className="outline-button" onClick={()=>onRespond({action:'decline',content:null})}>拒绝</button></div>{!supported && <p className="quiet-note">此表单格式暂不支持，可以拒绝或停止本轮。</p>}</form></section>;
+}
+function InputRequestForm({request, onRespond}: {request: AgentRequest; onRespond: (answer: unknown) => void}) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const questions = (Array.isArray(request.payload.questions) ? request.payload.questions : []) as {id: string; question: string; isSecret?: boolean; options?: {label: string; description?: string}[]}[];
   return <section className="agent-request"><strong>{request.kind === 'approval' ? '需要你的允许' : '需要你的输入'}</strong><p>{request.title}</p>{typeof request.payload.command === 'string' && <pre>{request.payload.command}</pre>}{typeof request.payload.cwd === 'string' && <small>{request.payload.cwd}</small>}

@@ -3,11 +3,15 @@ mod store;
 mod backup;
 mod workspaces;
 mod native_browser;
-mod native_agents;
+pub mod native_agents;
 mod workspace_state;
 mod review_service;
 mod background;
 mod resources;
+mod map_ops;
+mod workspace_tools;
+pub use workspace_tools::cli as workspace_tools_cli;
+pub use workspace_tools::definitions as workspace_tool_definitions;
 use crate::store::{Store,Result,error};
 use serde_json::{json,Value};
 use std::{fs, path::PathBuf, sync::{Arc,atomic::{AtomicBool, Ordering}}};
@@ -16,6 +20,8 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
 struct AppState {store:Arc<Store>,quit:AtomicBool}
+#[tauri::command]
+async fn graph_changes(state: tauri::State<'_, AppState>, after: u64) -> Result<Vec<map_ops::Operation>> {let db=state.store.db.lock().map_err(error)?;map_ops::changes(&db,after)}
 #[tauri::command]
 async fn background_snapshot(state: tauri::State<'_, Arc<background::Background>>) -> Result<background::State> {state.snapshot()}
 #[tauri::command]
@@ -211,6 +217,7 @@ pub fn run() {
             let background = background::Background::open(store.clone(), Arc::new(move |state| {let _ = background_app.emit_to("main","background-state",state);}), Arc::new(move |notice| send_workspace_notice(&delivery_app,notice)), Arc::new(move || foreground_app.get_webview("main").is_some_and(|view| view.window().is_visible().unwrap_or(false) && view.window().is_focused().unwrap_or(false)))).map_err(std::io::Error::other)?;
             let agent_app = app.handle().clone(); let agent_background = background.clone();
             let agents = native_agents::AgentHost::open(store.root.join("agents"), Arc::new(move |session| {let _ = agent_background.observe_agent(session); let _ = agent_app.emit_to("main", "agent-session", session);})).map_err(std::io::Error::other)?;
+            agents.configure_tools(native_agents::WorkspaceTools{executable:std::env::current_exe()?,root:store.root.clone(),definitions:workspace_tools::definitions()});
             for session in agents.list().map_err(std::io::Error::other)? {background.observe_agent(&session).map_err(std::io::Error::other)?;}
             app.manage(agents); app.manage(background.clone()); background.start();
             let show=MenuItem::with_id(app,"show","打开北极星",true,None::<&str>)?;
@@ -230,7 +237,7 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
                 handler(invoke)

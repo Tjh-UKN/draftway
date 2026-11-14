@@ -21,7 +21,9 @@
 - 阶段 3a 已推送：[6b3a1fe](https://github.com/Tjh-UKN/northstar-workbench/commit/6b3a1fe6a4508e0f05420700a0f861856651db56)。原生工作区快照、受管进程生命周期和明确取消意图已实现。84 项前端检查、31 项 Rust 检查及 Windows 构建通过；进程托管后 Codex 的 5 项真实生命周期检查通过，Pi 多轮与恢复通过后发现并修复中断归类竞态，专项真实取消检查通过。
 - 阶段 3b 已推送：[78d4bfb](https://github.com/Tjh-UKN/northstar-workbench/commit/78d4bfbea36bfdd55d33d3ebaa340ce6fb6b89e4)。后台通知日志、原生提醒点击路由、本机 Review 观察与只读报告页已实现。86 项前端检查、40 项 Rust 检查通过；真实本机 Review 的状态、列表、报告读取检查通过。流式消息合并为最多每 100ms 发布快照、每秒保存流检查点，状态转换和最终结果立即保存；异常断电可能丢失最后一秒尚未检查点的流片段。系统通知的视觉显示与点击仍待 Windows GUI 回归，通知中心和后台日志始终保留结果。
 
-- 阶段 4a：材料目录授权、文件/Obsidian 只读阅读、节点会话上下文快照及真实 Git 文件差异已实现。Codex 实际接收引用材料、重启保留上下文两项实测通过；材料范围、真实 Git 临时仓库和原功能回归检查通过。
+- 阶段 4a 已推送：[51f49a2](https://github.com/Tjh-UKN/northstar-workbench/commit/51f49a2186cff254e3fe6706233ded2416aefe24)。材料目录授权、文件/Obsidian 只读阅读、节点会话上下文快照及真实 Git 文件差异已实现。Codex 实际接收引用材料、重启保留上下文两项实测通过；材料范围、真实 Git 临时仓库和原功能回归检查通过。
+
+- 阶段 4b：标准 MCP 工作区工具、来源操作日志、并发合并和内容冲突保留已实现。88 项前端检查、45 项 Rust 检查通过；Codex 与 Pi 分别通过 4 项真实工具链路检查。Claude 实际生成仍受现有订阅限制。
 
 ## 已验证基线
 

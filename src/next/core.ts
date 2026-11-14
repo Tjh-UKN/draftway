@@ -47,6 +47,7 @@ export function reviewUrl(value: string): string | null {
 }
 export interface WorkbenchState {
   version: 2; activeId: string; spaces: Workspace[];
+  graphCursor?: number;
   sessions: AgentSession[]; runs: Run[]; artifacts: Artifact[]; notices: Notice[];
 }
 export const shellStorageKey = 'northstar-shell-v2';
@@ -233,6 +234,7 @@ export function parseWorkbench(value: unknown): WorkbenchState {
   const raw = value as WorkbenchState;
   const fail = () => {throw new Error('工作台数据无效，原始内容已保留。');};
   if (!raw || ![1, 2].includes(raw.version) || !Array.isArray(raw.sessions) || !Array.isArray(raw.runs) || !Array.isArray(raw.artifacts) || !Array.isArray(raw.notices)) return fail();
+  if (raw.graphCursor !== undefined && (!Number.isSafeInteger(raw.graphCursor) || raw.graphCursor < 0)) return fail();
   parseState({version: 2, activeId: raw.activeId, spaces: raw.spaces});
   const state: WorkbenchState = {...raw, version: 2, spaces: raw.spaces.map(space => {
     const activeTab = space.layout?.panes?.find(p => p.id === space.layout.activePaneId)?.activeId;

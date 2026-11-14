@@ -1,4 +1,4 @@
-use super::{AgentSession, Message, Request, Result, now};
+use super::{AgentSession, Message, Request, Result, ToolConfig, now};
 use serde_json::{json, Value};
 use std::{path::{Path, PathBuf}, process::{Command, Stdio}, time::{Duration, Instant}};
 
@@ -39,7 +39,7 @@ fn wsl_path(path: &str) -> Result<String> {
     timed_output(command, 8).and_then(|bytes| String::from_utf8(bytes).ok()).map(|s| s.trim().to_string()).filter(|s| s.starts_with('/')).ok_or_else(|| "无法把工作目录转换为 WSL 路径".into())
 }
 impl Provider {
-    pub fn command(&self, cwd: &str, source: Option<&str>, session_root: &Path) -> Result<(Command, Option<String>, Option<String>)> {
+    pub fn command(&self, cwd: &str, source: Option<&str>, session_root: &Path, tools: Option<&ToolConfig>) -> Result<(Command, Option<String>, Option<String>)> {
         let mut args: Vec<String> = Vec::new(); let mut planned = None;
         match self.backend.as_str() {
             "codex" => args.extend(["app-server", "--listen", "stdio://"].map(String::from)),
@@ -55,6 +55,12 @@ impl Provider {
                 args.extend(["--mode".into(), "rpc".into(), "--session".into(), file.clone()]); planned = Some(file);
             },
             _ => return Err("不支持的执行器".into()),
+        }
+        if let Some(tools)=tools {
+            let executable=if self.wsl {wsl_path(&tools.command)?}else{tools.command.clone()};
+            let server=json!({"command":executable,"args":tools.args});
+            if self.backend=="claude" {args.extend(["--mcp-config".into(),json!({"mcpServers":{"northstar":server}}).to_string()]);}
+            if self.backend=="pi" {std::fs::create_dir_all(session_root).map_err(|e|e.to_string())?;let path=session_root.join(format!("northstar-{}.ts",tools.args.last().ok_or("缺少工具会话范围")?));let code=include_str!("pi-workspace-tools.ts").replace("__NORTHSTAR_SERVER__",&server.to_string()).replace("__NORTHSTAR_TOOLS__",&tools.definitions.to_string());std::fs::write(&path,code).map_err(|e|e.to_string())?;let path=if self.wsl{wsl_path(&path.to_string_lossy())?}else{path.to_string_lossy().into_owned()};args.extend(["--extension".into(),path]);}
         }
         let token = self.wsl.then(|| uuid::Uuid::new_v4().to_string());
         let mut command = if self.wsl {
