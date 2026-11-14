@@ -4,6 +4,7 @@ import {Columns2, FileCode2, Globe, Layers, MessageSquare, Network, Plus, Rows2,
 import {latestRun, statusNames, type AgentSession, type WorkbenchState, type Workspace} from './core';
 import {closeEmptyGroup, groups, mergeDock, moveDockTab, resizeDock, splitDockGroup, type DockNode, type DockState, type DockTab, type Edge, type Split, type TabGroup} from './docking';
 import {agentNames} from './integrations';
+import {useAgentRuntime} from './NativeAgents';
 
 const dragType = 'application/x-northstar-tab';
 type CreateKind = 'browser' | 'review' | NonNullable<AgentSession['agentId']>;
@@ -73,6 +74,7 @@ function GroupView({group, dragging, onDrag, ...props}: Props & {group: TabGroup
   </section>;
 }
 function PaneMenu({onCreate, onSplit, onMerge, canSplit, canMerge}: {onCreate: (kind: CreateKind) => void; onSplit: (axis: Split['axis']) => void; onMerge: () => void; canSplit: boolean; canMerge: boolean}) {
+  const agents = useAgentRuntime();
   const [position, setPosition] = useState<{left: number; top: number} | null>(null);
   const trigger = useRef<HTMLButtonElement>(null); const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -86,5 +88,5 @@ function PaneMenu({onCreate, onSplit, onMerge, canSplit, canMerge}: {onCreate: (
   return <><button className="icon-button pane-create" ref={trigger} title="新标签页与分屏" aria-label="新标签页与分屏" aria-expanded={!!position} aria-haspopup="menu" onClick={() => {const r = trigger.current!.getBoundingClientRect(); setPosition(position ? null : {left: Math.max(8, Math.min(innerWidth - 216, r.left)), top: Math.max(8, Math.min(innerHeight - 345, r.bottom + 5))});}}><Plus size={16}/></button>{position && createPortal(<div className="backend-menu pane-menu" role="menu" aria-label="新建内容" ref={menu} style={{position: 'fixed', ...position, zIndex: 1000}} onKeyDown={event => {
     if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); setPosition(null); trigger.current?.focus(); return;}
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {event.preventDefault(); const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]; const index = items.indexOf(document.activeElement as HTMLButtonElement); items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();}
-  }}><button role="menuitem" onClick={() => choose(() => onCreate('browser'))}><Globe size={15}/><span>浏览器</span></button><button role="menuitem" onClick={() => choose(() => onCreate('review'))}><FileCode2 size={15}/><span>文件审查</span></button><div className="pane-menu-label">Agent 会话</div>{Object.entries(agentNames).map(([id, name]) => <button key={id} role="menuitem" onClick={() => choose(() => onCreate(id as CreateKind))}><Terminal size={15}/><span>{name}</span><small>模拟</small></button>)}<div className="pane-menu-divider"/><button role="menuitem" disabled={!canSplit} onClick={() => choose(() => onSplit('row'))}><Columns2 size={15}/><span>向右分屏</span></button><button role="menuitem" disabled={!canSplit} onClick={() => choose(() => onSplit('column'))}><Rows2 size={15}/><span>向下分屏</span></button>{canMerge && <button role="menuitem" onClick={() => choose(onMerge)}><Layers size={15}/><span>合并所有分区</span></button>}</div>, document.body)}</>;
+  }}><button role="menuitem" onClick={() => choose(() => onCreate('browser'))}><Globe size={15}/><span>浏览器</span></button><button role="menuitem" onClick={() => choose(() => onCreate('review'))}><FileCode2 size={15}/><span>文件审查</span></button><div className="pane-menu-label">Agent 会话</div>{Object.entries(agentNames).map(([id, name]) => <button key={id} role="menuitem" disabled={!!agents && !agents.backends.some(backend => backend.id === id && backend.available)} onClick={() => choose(() => onCreate(id as CreateKind))}><Terminal size={15}/><span>{name}</span><small>{agents ? agents.backends.some(backend => backend.id === id && backend.available) ? '本机' : '待接入' : '模拟'}</small></button>)}<div className="pane-menu-divider"/><button role="menuitem" disabled={!canSplit} onClick={() => choose(() => onSplit('row'))}><Columns2 size={15}/><span>向右分屏</span></button><button role="menuitem" disabled={!canSplit} onClick={() => choose(() => onSplit('column'))}><Rows2 size={15}/><span>向下分屏</span></button>{canMerge && <button role="menuitem" onClick={() => choose(onMerge)}><Layers size={15}/><span>合并所有分区</span></button>}</div>, document.body)}</>;
 }

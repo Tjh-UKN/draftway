@@ -3,8 +3,10 @@ import {createPortal} from 'react-dom';
 import {ChevronRight, Link, Plus, Terminal} from 'lucide-react';
 import type {AgentSession} from './core';
 import {agentNames} from './integrations';
+import {useAgentRuntime} from './NativeAgents';
 
 export function BackendPicker({label, text, onChoose, onOpen, onLink}: {label: string; text?: string; onChoose: (agent: AgentSession['agentId']) => void; onOpen: () => void; onLink?: () => void}) {
+  const agents = useAgentRuntime();
   const [position, setPosition] = useState<{left: number; top: number} | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -23,7 +25,7 @@ export function BackendPicker({label, text, onChoose, onOpen, onLink}: {label: s
   }}><Plus size={16}/>{text && <span>{text}</span>}</button>{position && createPortal(<div className="backend-menu" ref={menu} role="menu" aria-label="选择会话后端" style={{position: 'fixed', left: position.left, top: position.top, zIndex: 1000}} onKeyDown={event => {
     if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); setPosition(null); trigger.current?.focus(); return;}
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault(); const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]; const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    event.preventDefault(); const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]; const index = items.indexOf(document.activeElement as HTMLButtonElement);
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; items[next]?.focus();
-  }}>{Object.entries(agentNames).map(([id, name]) => <button key={id} role="menuitem" onClick={() => {setPosition(null); onChoose(id as AgentSession['agentId']);}}><Terminal size={16}/><span>{name}</span><ChevronRight size={13}/></button>)}{onLink && <button role="menuitem" onClick={() => {setPosition(null); onLink();}}><Link size={15}/><span>关联已有会话</span></button>}<span className="backend-menu-note">当前为模拟模式</span></div>, document.body)}</>;
+  }}>{Object.entries(agentNames).map(([id, name]) => <button key={id} role="menuitem" disabled={!!agents && !agents.backends.some(backend => backend.id === id && backend.available)} onClick={() => {setPosition(null); onChoose(id as AgentSession['agentId']);}}><Terminal size={16}/><span>{name}</span><ChevronRight size={13}/></button>)}{onLink && <button role="menuitem" onClick={() => {setPosition(null); onLink();}}><Link size={15}/><span>关联已有会话</span></button>}<span className="backend-menu-note">{agents ? '使用本机执行器' : '浏览器模拟模式'}</span></div>, document.body)}</>;
 }

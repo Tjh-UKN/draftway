@@ -3,6 +3,7 @@ mod store;
 mod backup;
 mod workspaces;
 mod native_browser;
+mod native_agents;
 use crate::store::{Store,Result,error};
 use serde_json::{json,Value};
 use std::{fs, path::PathBuf, sync::{Arc,atomic::{AtomicBool, Ordering}}};
@@ -11,6 +12,18 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
 struct AppState {store:Arc<Store>,quit:AtomicBool}
+#[tauri::command]
+async fn agent_backends() -> Vec<native_agents::Backend> {native_agents::backends()}
+#[tauri::command]
+async fn agent_list(state: tauri::State<'_, Arc<native_agents::AgentHost>>) -> Result<Vec<native_agents::AgentSession>> {state.list()}
+#[tauri::command]
+async fn agent_create(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, workspace_id: String, node_id: Option<String>, backend: String, title: String, cwd: Option<String>) -> Result<native_agents::AgentSession> {state.create(id, workspace_id, node_id, backend, title, cwd)}
+#[tauri::command]
+async fn agent_send(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, run_id: String, text: String) -> Result<native_agents::AgentSession> {state.inner().send(&id, run_id, text)}
+#[tauri::command]
+async fn agent_stop(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String) -> Result<native_agents::AgentSession> {state.stop(&id)}
+#[tauri::command]
+async fn agent_respond(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, request_id: String, answer: Value) -> Result<native_agents::AgentSession> {state.respond(&id, &request_id, answer)}
 #[tauri::command]
 fn load_workspace(state:tauri::State<AppState>)->Result<store::WorkbenchData>{state.store.load()}
 #[tauri::command]
@@ -156,6 +169,8 @@ pub fn run() {
             let store=Arc::new(Store::open(data.unwrap_or(app.path().app_data_dir()?)).map_err(std::io::Error::other)?);
             store.seed_if_new().map_err(std::io::Error::other)?;
             app.manage(AppState{store:store.clone(),quit:AtomicBool::new(false)});
+            let agent_app = app.handle().clone();
+            app.manage(native_agents::AgentHost::open(store.root.join("agents"), Arc::new(move |session| {let _ = agent_app.emit_to("main", "agent-session", session);})).map_err(std::io::Error::other)?);
             let show=MenuItem::with_id(app,"show","打开北极星",true,None::<&str>)?;
             let quick=MenuItem::with_id(app,"new","新建任务",true,None::<&str>)?;
             let quit=MenuItem::with_id(app,"quit","退出",true,None::<&str>)?;
@@ -173,11 +188,12 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
                 handler(invoke)
             }
         })
-        .run(tauri::generate_context!()).expect("北极星启动失败");
+        .build(tauri::generate_context!()).expect("北极星启动失败")
+        .run(|app, event| {if let tauri::RunEvent::Exit = event {app.state::<Arc<native_agents::AgentHost>>().shutdown();}});
 }

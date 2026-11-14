@@ -12,6 +12,7 @@ import {closeDockTab, focusedGroup, openDockTab, selectDockTab, type DockTab} fr
 import {BackendPicker} from './BackendPicker';
 import {NodeMaterials} from './NodeMaterials';
 import {useNativeBrowserHost} from './native-browser';
+import {AgentRuntimeContext, useAgentRuntime, useNativeAgents} from './NativeAgents';
 import {Dialog, Empty, SpaceSymbol, Star} from './ui';
 
 function loadWorkbench() {
@@ -38,6 +39,7 @@ export default function Workbench() {
   const unread = state.notices.filter(n => !n.read).length;
   const change: ChangeState = useCallback(update => setState(update), []);
   const nativeBrowsers = useNativeBrowserHost(state, change);
+  const agents = useNativeAgents(state, change);
   const updateSpace = (update: (space: Workspace) => Workspace) => change(s => updateWorkspace(s, space.id, update));
   function save(value: WorkbenchState) {
     if (loaded.error) return;
@@ -61,7 +63,8 @@ export default function Workbench() {
   }
   function startSession(agentId: AgentSession['agentId'], nodeId: string | null = null, groupId?: string) {
     const id = crypto.randomUUID(); const at = Date.now();
-    change(s => {const target = groupId ? updateWorkspace(s, space.id, w => ({...w, dock: {...w.dock, activeGroupId: groupId}})) : s; return updateWorkspace(createSession(target, space.id, nodeId, id, at, agentId), space.id, w => ({...w, sessionPanelOpen: false}));});
+    change(s => {const target = groupId ? updateWorkspace(s, space.id, w => ({...w, dock: {...w.dock, activeGroupId: groupId}})) : s; const next = updateWorkspace(createSession(target, space.id, nodeId, id, at, agentId), space.id, w => ({...w, sessionPanelOpen: false})); return agents ? {...next, sessions: next.sessions.map(session => session.id === id ? {...session, integrationId: agentId || 'codex', cwd: space.cwd} : session)} : next;});
+    if (agents) {const node = space.nodes.find(node => node.id === nodeId); agents.create({id, workspaceId: space.id, nodeId, backend: agentId || 'codex', title: node ? `${node.title} · 讨论` : '新的会话', cwd: space.cwd});}
     setInbox(false);
   }
   function changeGraph(graph: GraphState) {if (graph.selectedId !== newNodeId) setNewNodeId(null); updateSpace(s => ({...s, graph}));}
@@ -124,11 +127,11 @@ export default function Workbench() {
         <div className="inspector-scroll unified-node-details"><div className="node-content-summary"><NodeGlyph kind={selected.kind} size={19}/><p>{selected.body || '在这里留下想法、内容或完成条件。'}</p></div><details className="node-edit-section"><summary>编辑节点内容</summary><NodeOverview key={selected.id} node={selected} onChange={updateNode}/></details>
           <NodeMaterials key={selected.id} node={selected} onChange={updateNode}/>
           <section className="node-detail-section"><div className="detail-section-heading"><h3>关联会话（{nodeSessions.length}）</h3></div><BackendPicker text="新建会话" label={`在${selected.title}中新建会话`} onChoose={agent => startSession(agent, selected.id)} onOpen={() => {setInbox(false); updateSpace(w => ({...w, sessionPanelOpen: false}));}} onLink={() => setDialog('link')}/>{nodeSessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!nodeSessions.length && <p className="quiet-note">还没有关联会话</p>}</section>
-          <section className="node-detail-section"><div className="detail-section-heading"><h3>更新记录</h3></div><div className="node-timeline">{[...(selected.updates || [])].reverse().map(update => {const source = sessions.find(s => s.id === update.sessionId); return <div key={update.id}><strong>{update.text}</strong><small>{new Date(update.at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})} · {source ? `${agentNames[source.agentId || 'codex']}（模拟）` : '我'}</small>{source && <button className="text-button" onClick={() => openAgent(source.id)}>查看来源会话<ChevronRight size={12}/></button>}</div>;})}{!selected.updates?.length && <p className="quiet-note">执行结果与手动记录会留在这里</p>}</div><ProgressForm onSubmit={text => {const id = crypto.randomUUID(); const at = Date.now(); updateNode({...selected, updates: [...(selected.updates || []), {id, text, at}]});}}/></section>
+          <section className="node-detail-section"><div className="detail-section-heading"><h3>更新记录</h3></div><div className="node-timeline">{[...(selected.updates || [])].reverse().map(update => {const source = sessions.find(s => s.id === update.sessionId); return <div key={update.id}><strong>{update.text}</strong><small>{new Date(update.at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})} · {source ? `${agentNames[source.agentId || 'codex']}${source.integrationId === 'demo-agent' ? '（模拟）' : ''}` : '我'}</small>{source && <button className="text-button" onClick={() => openAgent(source.id)}>查看来源会话<ChevronRight size={12}/></button>}</div>;})}{!selected.updates?.length && <p className="quiet-note">执行结果与手动记录会留在这里</p>}</div><ProgressForm onSubmit={text => {const id = crypto.randomUUID(); const at = Date.now(); updateNode({...selected, updates: [...(selected.updates || []), {id, text, at}]});}}/></section>
         </div>
       </NodeInspector>}
     </div>;
-  return <div className="workbench-shell map-first-shell">
+  return <AgentRuntimeContext.Provider value={agents}><div className="workbench-shell map-first-shell">
     <aside className="shell-sidebar" aria-label="主导航"><div className="sidebar-brand"><Star/><span>北极星</span></div>
       <nav className="global-navigation"><button onClick={() => setDialog('workspace')} disabled={state.spaces.length >= 20}><Plus size={17}/>新建工作区</button><button onClick={() => setDialog('search')}><Search size={17}/>搜索<kbd>Ctrl K</kbd></button></nav>
       <div className="sidebar-label">工作区</div><nav className="workspace-list" aria-label="工作区">{state.spaces.map((item, index) => {
@@ -153,12 +156,12 @@ export default function Workbench() {
     {inbox && <aside className="notification-panel" aria-label="通知中心"><header><h2>通知</h2><button className="text-button" onClick={() => change(s => ({...s, notices: s.notices.map(n => ({...n, read: true})), sessions: s.sessions.map(session => ({...session, unread: false}))}))}>全部已读</button><button className="icon-button" aria-label="关闭通知中心" onClick={() => setInbox(false)}><X size={16}/></button></header>{[...state.notices].reverse().map(n => <button key={n.id} className={`notice-row ${n.read ? '' : 'unread'}`} onClick={() => openAgent(n.sessionId)}><Bell size={15}/><span><strong>{n.title}</strong><small>{state.sessions.find(s => s.id === n.sessionId)?.title}</small></span><ChevronRight size={14}/></button>)}{!state.notices.length && <Empty title="这里暂时很安静"/>}</aside>}
     {dialog === 'workspace' && <WorkspaceDialog onClose={() => setDialog(null)} onCreate={name => {const next = createWorkspace(name, 'blank'); change(s => ({...s, activeId: next.id, spaces: [...s.spaces, next]})); setDialog(null);}}/>}
 
-    {dialog === 'settings' && <Dialog title="接入与设置" onClose={() => setDialog(null)}><p className="muted">当前为骨架预览。可选择 Agent 并保存会话，执行仍由模拟器演示。</p><div className="integration-list">{integrations.filter(i => ['codex', 'claude', 'pi'].includes(i.id)).map(i => <div key={i.id}><Terminal size={16}/><span><strong>{i.name}</strong><small>{i.description}</small></span><span className="small-tag">待接入</span></div>)}</div><p className="quiet-note">原版业务数据未迁移。地图、会话和更新记录保存在本机；当前页面不提供系统后台托管。</p></Dialog>}
-    {dialog === 'customize' && <CustomizeDialog space={space} onClose={() => setDialog(null)} onSave={name => {updateSpace(w => ({...w, name})); setDialog(null);}} onPlace={(title, body, kind) => {const node: MindNode = {id: crypto.randomUUID(), parentId: space.nodes.find(n => !n.parentId)!.id, side: 1, kind, title, body, progress: 0, due: '', steps: []}; updateSpace(w => ({...w, nodes: [...w.nodes, node], graph: {...w.graph, selectedId: node.id, camera: null}})); change(s => selectWorkspaceTab(s, space.id)); setDialog(null);}}/>}
+    {dialog === 'settings' && <Dialog title="接入与设置" onClose={() => setDialog(null)}><p className="muted">{agents ? '使用本机已安装的执行器。会话、来源标识和执行记录由北极星保存。' : '浏览器模式使用模拟器；真实 Agent 请在 Windows 版中操作。'}</p><div className="integration-list">{integrations.filter(i => ['codex', 'claude', 'pi'].includes(i.id)).map(i => <div key={i.id}><Terminal size={16}/><span><strong>{i.name}</strong><small>{i.description}</small></span><span className="small-tag">{agents?.backends.find(backend => backend.id === i.id)?.available ? '已就绪' : '待接入'}</span></div>)}</div><p className="quiet-note">原版业务数据未迁移。地图、会话和更新记录保存在本机；当前页面不提供系统后台托管。</p></Dialog>}
+    {dialog === 'customize' && <CustomizeDialog space={space} onClose={() => setDialog(null)} onSave={(name, cwd) => {updateSpace(w => ({...w, name, cwd})); setDialog(null);}} onPlace={(title, body, kind) => {const node: MindNode = {id: crypto.randomUUID(), parentId: space.nodes.find(n => !n.parentId)!.id, side: 1, kind, title, body, progress: 0, due: '', steps: []}; updateSpace(w => ({...w, nodes: [...w.nodes, node], graph: {...w.graph, selectedId: node.id, camera: null}})); change(s => selectWorkspaceTab(s, space.id)); setDialog(null);}}/>}
     {dialog === 'search' && <SearchDialog space={space} onClose={() => setDialog(null)} onOpen={openNode}/>}
     {dialog === 'link' && selected && <Dialog title="关联工作区会话" onClose={() => setDialog(null)}><p className="muted">从当前工作区选择已有会话，关联到「{selected.title}」。</p>{sessions.filter(s => !sessionNodeIds(s).includes(selected.id)).map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => {change(s => ({...s, sessions: s.sessions.map(item => item.id === session.id ? {...item, linkedNodeIds: [...(item.linkedNodeIds || []), selected.id]} : item)})); setDialog(null);}}/>)}{!sessions.some(s => !sessionNodeIds(s).includes(selected.id)) && <p className="quiet-note">暂无其他会话。可在节点的“＋”中选择后端创建。</p>}</Dialog>}
 
-  </div>;
+  </div></AgentRuntimeContext.Provider>;
 }
 function WorkspaceDialog({onClose, onCreate}: {onClose: () => void; onCreate: (name: string) => void}) {
   const [name, setName] = useState('');
@@ -173,8 +176,9 @@ function SearchDialog({space, onClose, onOpen}: {space: Workspace; onClose: () =
   const [query, setQuery] = useState('');
   return <Dialog title="搜索当前工作区" onClose={onClose}><input className="search-field" autoFocus aria-label="搜索节点" placeholder="搜索节点与内容" value={query} onChange={event => setQuery(event.target.value)}/><div className="view-library">{space.nodes.filter(n => `${n.title} ${n.body}`.includes(query)).map(n => <button key={n.id} onClick={() => onOpen(n.id)}><NodeGlyph kind={n.kind} size={16}/><span>{n.title}</span><ChevronRight size={14}/></button>)}</div></Dialog>;
 }
-function CustomizeDialog({space, onClose, onSave, onPlace}: {space: Workspace; onClose: () => void; onSave: (name: string) => void; onPlace: (title: string, body: string, kind: 'document' | 'artifact') => void}) {
+function CustomizeDialog({space, onClose, onSave, onPlace}: {space: Workspace; onClose: () => void; onSave: (name: string, cwd?: string) => void; onPlace: (title: string, body: string, kind: 'document' | 'artifact') => void}) {
   const [name, setName] = useState(space.name);
+  const agents = useAgentRuntime(); const [cwd, setCwd] = useState(space.cwd || '');
   const retained = space.surfaces.filter(s => !['graph', 'tasks', 'session'].includes(s.integrationId));
-  return <Dialog title="自定工作区" onClose={onClose}><form onSubmit={event => {event.preventDefault(); if (name.trim()) onSave(name.trim());}}><label className="field">工作区名称<input autoFocus required maxLength={40} value={name} onChange={event => setName(event.target.value)}/></label>{!!retained.length && <><div className="section-label">原有视图内容已保留</div><div className="retained-content">{retained.map(s => <details key={s.id}><summary>{s.title}</summary><p>{s.text || s.url || '此组件的配置已保留，等待适配器接入。'}</p><button className="text-button" type="button" disabled={space.nodes.length >= 250} onClick={() => onPlace(s.title || '笔记', s.text || s.url || '', s.integrationId === 'note' ? 'document' : 'artifact')}>放到地图<Plus size={13}/></button></details>)}</div></>}<p className="quiet-note">地图节点与会话分别管理。分屏、页签顺序和当前会话随工作区保存。</p><footer><button className="primary-button" disabled={!name.trim()}>保存</button></footer></form></Dialog>;
+  return <Dialog title="自定工作区" onClose={onClose}><form onSubmit={event => {event.preventDefault(); if (name.trim()) onSave(name.trim(), cwd || undefined);}}><label className="field">工作区名称<input autoFocus required maxLength={40} value={name} onChange={event => setName(event.target.value)}/></label>{agents && <section className="workspace-directory"><span>新会话工作目录</span><p>{cwd || '默认工作区目录'}</p><button type="button" className="outline-button" onClick={() => {void agents.chooseDirectory().then(value => {if (value) setCwd(value);});}}>选择文件夹</button></section>}{!!retained.length && <><div className="section-label">原有视图内容已保留</div><div className="retained-content">{retained.map(s => <details key={s.id}><summary>{s.title}</summary><p>{s.text || s.url || '此组件的配置已保留，等待适配器接入。'}</p><button className="text-button" type="button" disabled={space.nodes.length >= 250} onClick={() => onPlace(s.title || '笔记', s.text || s.url || '', s.integrationId === 'note' ? 'document' : 'artifact')}>放到地图<Plus size={13}/></button></details>)}</div></>}<p className="quiet-note">地图节点与会话分别管理。分屏、页签顺序和当前会话随工作区保存。</p><footer><button className="primary-button" disabled={!name.trim()}>保存</button></footer></form></Dialog>;
 }

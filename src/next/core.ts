@@ -18,18 +18,22 @@ export interface Workspace extends Space {
   sessionWindow: {sessionId: string | null; rect: WidgetWindowRect; maximized: boolean};
   sessionTabs: {ids: string[]; activeId: string; recent: string[]};
   dock: DockState;
+  cwd?: string;
 }
 export interface Message {id: string; role: 'user' | 'assistant'; text: string; at: number}
 export interface AgentSession {
   id: string; workspaceId: string; nodeId: string | null; integrationId: string;
   title: string; messages: Message[]; draft: string; unread: boolean; createdAt: number;
   agentId?: 'codex' | 'claude' | 'pi'; linkedNodeIds?: string[];
+  cwd?: string; sourceId?: string | null; nativeRevision?: number; requests?: AgentRequest[]; connectionError?: string;
 }
+export interface AgentRequest {id: string; kind: string; title: string; payload: Record<string, unknown>; sourceId: unknown}
 export type MapAction = 'reply' | 'progress' | 'update' | 'artifact';
 export interface Run {
-  id: string; sessionId: string; state: RunState; outcome: DemoOutcome;
+  id: string; sessionId: string; state: RunState; outcome?: DemoOutcome;
   startedAt: number; dueAt: number;
   mapAction?: MapAction; targetNodeId?: string;
+  error?: string | null;
 }
 export interface Artifact {id: string; sessionId: string; runId: string; title: string; text: string}
 export interface Notice {id: string; runId: string; workspaceId: string; sessionId: string; title: string; read: boolean; at: number}
@@ -170,14 +174,15 @@ export function advanceDemoRuns(state: WorkbenchState, at: number): WorkbenchSta
   if (!due.length) return state;
   let next = state;
   for (const run of due) {
+    const outcome = run.outcome || 'failed';
     const session = next.sessions.find(s => s.id === run.sessionId)!;
-    const title = run.outcome === 'succeeded' ? '模拟执行完成' : run.outcome === 'needs_input' ? '模拟执行需要输入' : '模拟执行失败';
-    const reply = run.outcome === 'succeeded'
+    const title = outcome === 'succeeded' ? '模拟执行完成' : outcome === 'needs_input' ? '模拟执行需要输入' : '模拟执行失败';
+    const reply = outcome === 'succeeded'
       ? '模拟执行已完成，会话记录和结果已保存。\n\n这是骨架阶段的固定示例回复，没有启动真实 Agent，也没有读取或修改项目文件。需要保留时，可以把结果放到地图。'
-      : run.outcome === 'needs_input' ? '模拟 Agent 正在等待你的输入。点击“继续模拟”后会完成本轮。' : '模拟了适配器返回失败的情况。你可以发送新消息重新验证流程。';
-    next = {...next, runs: next.runs.map(r => r.id === run.id ? {...r, state: run.outcome} : r),
+      : outcome === 'needs_input' ? '模拟 Agent 正在等待你的输入。点击“继续模拟”后会完成本轮。' : '模拟了适配器返回失败的情况。你可以发送新消息重新验证流程。';
+    next = {...next, runs: next.runs.map(r => r.id === run.id ? {...r, state: outcome} : r),
       sessions: next.sessions.map(s => s.id === session.id ? {...s, unread: true, messages: [...s.messages, {id: `${run.id}-${run.outcome}`, role: 'assistant', text: reply, at}]} : s),
-      artifacts: run.outcome === 'succeeded' ? [...next.artifacts, {id: `${run.id}-artifact`, sessionId: session.id, runId: run.id, title: '骨架流程验证记录（模拟）', text: reply}] : next.artifacts,
+      artifacts: outcome === 'succeeded' ? [...next.artifacts, {id: `${run.id}-artifact`, sessionId: session.id, runId: run.id, title: '骨架流程验证记录（模拟）', text: reply}] : next.artifacts,
       notices: [...next.notices.filter(n => n.id !== `${run.id}-notice`), {id: `${run.id}-notice`, runId: run.id, workspaceId: session.workspaceId, sessionId: session.id, title, read: false, at}],
     };
     if (run.outcome === 'succeeded') next = applyRunMapChange(next, run.id, at);
@@ -198,7 +203,7 @@ export function placeArtifact(state: WorkbenchState, artifactId: string, at: num
   const next = updateWorkspace(state, session.workspaceId, space => {
     if (space.nodes.length >= 250 || space.nodes.some(n => n.sourceArtifactId === artifact.id)) return space;
     const parent = space.nodes.find(n => n.id === session.nodeId) || space.nodes.find(n => !n.parentId)!;
-    return {...space, nodes: [...space.nodes, {id: `artifact-${artifact.id}`, parentId: parent.id, side: parent.side, kind: 'artifact', title: artifact.title, body: artifact.text, progress: 0, due: '', steps: [], completed: false, sourceArtifactId: artifact.id, updates: [{id: `created-${artifact.id}`, text: '从会话保留产物（模拟结果）', at, sessionId: session.id}]}], graph: {...space.graph, collapsed: space.graph.collapsed.filter(id => id !== parent.id)}};
+    return {...space, nodes: [...space.nodes, {id: `artifact-${artifact.id}`, parentId: parent.id, side: parent.side, kind: 'artifact', title: artifact.title, body: artifact.text, progress: 0, due: '', steps: [], completed: false, sourceArtifactId: artifact.id, updates: [{id: `created-${artifact.id}`, text: session.integrationId === 'demo-agent' ? '从会话保留产物（模拟结果）' : '从会话保留产物', at, sessionId: session.id}]}], graph: {...space.graph, collapsed: space.graph.collapsed.filter(id => id !== parent.id)}};
   });
   return {...next, sessions: next.sessions.map(s => s.id === session.id ? {...s, linkedNodeIds: [...new Set([...(s.linkedNodeIds || []), nodeId])]} : s)};
 }
@@ -238,6 +243,7 @@ export function parseWorkbench(value: unknown): WorkbenchState {
     if (new Set(allTabs).size !== allTabs.length || allTabs.some(t => !space.surfaces.some(s => s.id === t))) return fail();
     for (const pane of space.layout.panes) if (!Array.isArray(pane.tabs) || (pane.tabs.length ? !pane.tabs.includes(pane.activeId) : pane.activeId !== '')) return fail();
     for (const surface of space.surfaces) if (typeof surface.integrationId !== 'string' || typeof surface.title !== 'string' || (surface.text !== undefined && typeof surface.text !== 'string') || (surface.url !== undefined && typeof surface.url !== 'string') || (surface.integrationId === 'session' && !state.sessions.some(s => s.id === surface.resourceId && s.workspaceId === space.id))) return fail();
+    if (space.cwd !== undefined && typeof space.cwd !== 'string') return fail();
     const graph = space.graph;
     const window = space.sessionWindow;
     const tabs = space.sessionTabs;
@@ -247,12 +253,13 @@ export function parseWorkbench(value: unknown): WorkbenchState {
   }
   for (const session of state.sessions) {
     const space = state.spaces.find(s => s.id === session.workspaceId);
+    if ((session.cwd !== undefined && typeof session.cwd !== 'string') || (session.sourceId != null && typeof session.sourceId !== 'string') || (session.nativeRevision !== undefined && (!Number.isInteger(session.nativeRevision) || session.nativeRevision < 1)) || (session.connectionError !== undefined && typeof session.connectionError !== 'string') || (session.requests !== undefined && (!Array.isArray(session.requests) || session.requests.some(request => !request || typeof request.id !== 'string' || typeof request.kind !== 'string' || typeof request.title !== 'string' || !request.payload || typeof request.payload !== 'object')))) return fail();
     if (!space || (session.nodeId !== null && !space.nodes.some(n => n.id === session.nodeId)) || typeof session.integrationId !== 'string' || typeof session.title !== 'string' || typeof session.draft !== 'string' || typeof session.unread !== 'boolean' || !Number.isFinite(session.createdAt) || !Array.isArray(session.messages) || !unique(session.messages) || session.messages.some(m => !['user', 'assistant'].includes(m.role) || typeof m.text !== 'string' || !Number.isFinite(m.at))) return fail();
     if ((session.agentId !== undefined && !['codex', 'claude', 'pi'].includes(session.agentId)) || (session.linkedNodeIds !== undefined && (!Array.isArray(session.linkedNodeIds) || session.linkedNodeIds.some(id => !space.nodes.some(n => n.id === id))))) return fail();
   }
   for (const run of state.runs) {
     const session = state.sessions.find(s => s.id === run.sessionId);
-    if (!session || !Object.hasOwn(statusNames, run.state) || run.state === ('idle' as string) || !['succeeded', 'needs_input', 'failed'].includes(run.outcome) || !Number.isFinite(run.startedAt) || !Number.isFinite(run.dueAt) || (run.mapAction !== undefined && !['reply', 'progress', 'update', 'artifact'].includes(run.mapAction)) || (run.targetNodeId !== undefined && !state.spaces.find(w => w.id === session.workspaceId)?.nodes.some(n => n.id === run.targetNodeId))) return fail();
+    if ((run.error != null && typeof run.error !== 'string') || !session || !Object.hasOwn(statusNames, run.state) || run.state === ('idle' as string) || (run.outcome !== undefined ? !['succeeded', 'needs_input', 'failed'].includes(run.outcome) : session.integrationId === 'demo-agent') || !Number.isFinite(run.startedAt) || !Number.isFinite(run.dueAt) || (run.mapAction !== undefined && !['reply', 'progress', 'update', 'artifact'].includes(run.mapAction)) || (run.targetNodeId !== undefined && !state.spaces.find(w => w.id === session.workspaceId)?.nodes.some(n => n.id === run.targetNodeId))) return fail();
   }
   for (const session of state.sessions) if (state.runs.filter(r => r.sessionId === session.id && ['running', 'needs_input'].includes(r.state)).length > 1) return fail();
   for (const artifact of state.artifacts) if (!state.runs.some(r => r.id === artifact.runId && r.sessionId === artifact.sessionId) || typeof artifact.title !== 'string' || typeof artifact.text !== 'string') return fail();
