@@ -53,6 +53,7 @@ impl Rpc {
 }
 pub struct AgentHost {
     root: PathBuf, db: Mutex<Connection>, sessions: Mutex<HashMap<String, AgentSession>>, runtimes: Mutex<HashMap<String, Arc<Rpc>>>, sink: Sink,
+    checkpoints: Mutex<HashMap<String, (u64, u64)>>,
 }
 impl AgentHost {
     pub fn open(root: PathBuf, sink: Sink) -> Result<Arc<Self>> {
@@ -68,7 +69,7 @@ impl AgentHost {
             if interrupted {session.requests.clear(); session.revision += 1;}
             sessions.insert(session.id.clone(), session);
         }}
-        let host = Arc::new(Self {root, db: Mutex::new(db), sessions: Mutex::new(sessions), runtimes: Mutex::new(HashMap::new()), sink});
+        let host = Arc::new(Self {root, db: Mutex::new(db), sessions: Mutex::new(sessions), runtimes: Mutex::new(HashMap::new()), sink, checkpoints: Mutex::new(HashMap::new())});
         for session in host.list()? {host.persist(&session)?;}
         Ok(host)
     }
@@ -78,15 +79,19 @@ impl AgentHost {
     pub fn list(&self) -> Result<Vec<AgentSession>> {let mut all: Vec<_> = self.sessions.lock().map_err(|e| e.to_string())?.values().cloned().collect(); all.sort_by_key(|s| s.created_at); Ok(all)}
     pub fn session(&self, id: &str) -> Result<AgentSession> {self.sessions.lock().map_err(|e| e.to_string())?.get(id).cloned().ok_or_else(|| "会话不存在".into())}
     fn update(&self, id: &str, change: impl FnOnce(&mut AgentSession)) -> Result<AgentSession> {
+        self.update_stream(id, false, change)
+    }
+    fn update_stream(&self, id: &str, stream: bool, change: impl FnOnce(&mut AgentSession)) -> Result<AgentSession> {
+        let (save, publish) = {let mut clocks = self.checkpoints.lock().map_err(|e|e.to_string())?; let clock = clocks.entry(id.into()).or_default(); let at = now(); let save = !stream || at.saturating_sub(clock.0) >= 1000; let publish = !stream || at.saturating_sub(clock.1) >= 100; if save {clock.0=at;} if publish {clock.1=at;} (save,publish)};
         let (snapshot, saved) = {
             let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
             let session = sessions.get_mut(id).ok_or("会话不存在")?; change(session); session.revision += 1;
-            let saved = self.persist(session);
+            let saved = if save {self.persist(session)} else {Ok(())};
             if let Err(error) = &saved {session.error = Some(format!("执行记录保存失败：{error}")); session.requests.clear(); if let Some(run) = session.runs.last_mut() {run.state = "failed".into(); run.finished_at = Some(now()); run.error = session.error.clone();}}
             (session.clone(), saved)
         };
         if saved.is_err() {self.runtimes.lock().unwrap().remove(id);}
-        (self.sink)(&snapshot); saved?; Ok(snapshot)
+        if publish || saved.is_err() {(self.sink)(&snapshot);} saved?; Ok(snapshot)
     }
     pub fn create(&self, id: String, workspace_id: String, node_id: Option<String>, backend: String, title: String, cwd: Option<String>) -> Result<AgentSession> {
         if !valid_id(&id) || !valid_id(&workspace_id) || node_id.as_ref().is_some_and(|id| !valid_id(id)) {return Err("会话归属标识无效".into());}
@@ -201,7 +206,7 @@ impl AgentHost {
     }
     pub fn shutdown(&self) {if let Ok(mut runtimes) = self.runtimes.lock() {runtimes.clear();}}
     fn event(&self, id: &str, value: &Value) {
-        if let Ok(session) = self.session(id) {if session.backend != "codex" {if providers::relevant(&session.backend, value) {let _ = self.update(id, |s| providers::apply_event(s, value));} return;}}
+        if let Ok(session) = self.session(id) {if session.backend != "codex" {if providers::relevant(&session.backend, value) {let stream = value["type"] == "stream_event" || value["type"] == "message_update"; let _ = self.update_stream(id, stream, |s| providers::apply_event(s, value));} return;}}
         let method = value["method"].as_str().unwrap_or(""); let p = &value["params"];
         if value.get("id").is_some() && value.get("method").is_some() {
             let kind = if method.ends_with("requestApproval") {"approval"} else if method == "item/tool/requestUserInput" {"input"} else {"unsupported"};
@@ -209,7 +214,7 @@ impl AgentHost {
             let _ = self.update(id, |s| {let request_id = value["id"].to_string(); if !s.requests.iter().any(|r| r.id == request_id) {s.requests.push(Request {id: request_id, kind: kind.into(), title, payload: p.clone(), source_id: value["id"].clone()});} if let Some(run) = s.runs.last_mut() {run.state = "needs_input".into();}}); return;
         }
         if ["item/agentMessage/delta", "item/completed", "turn/started", "turn/completed", "error"].contains(&method) {
-            let _ = self.update(id, |s| apply_codex_event(s, method, p));
+            let _ = self.update_stream(id, method == "item/agentMessage/delta", |s| apply_codex_event(s, method, p));
         }
     }
 }
@@ -287,6 +292,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("northstar-agent-test-{}", uuid::Uuid::new_v4()));
         let host = AgentHost::open(dir.clone(), Arc::new(|_| {})).unwrap(); let mut s = record(); s.messages.push(Message {id: "m".into(), role: "user".into(), text: "keep".into(), at: 0}); host.persist(&s).unwrap(); drop(host);
         let restored = AgentHost::open(dir, Arc::new(|_| {})).unwrap().session("s").unwrap(); assert_eq!(restored.runs[0].state, "failed"); assert_eq!(restored.messages[0].text, "keep"); assert!(restored.source_id.is_some());
+    }
+    #[test]
+    fn stream_is_coalesced_but_terminal_update_flushes_every_delta() {
+        let dir = std::env::temp_dir().join(format!("northstar-stream-test-{}",uuid::Uuid::new_v4()));
+        let count=Arc::new(AtomicU64::new(0));let calls=count.clone();let host=AgentHost::open(dir.clone(),Arc::new(move |_| {calls.fetch_add(1,Ordering::SeqCst);})).unwrap();
+        host.sessions.lock().unwrap().insert("s".into(),record());
+        for _ in 0..100 {host.update_stream("s",true,|s|apply_codex_event(s,"item/agentMessage/delta",&json!({"threadId":"thread","itemId":"a","delta":"x"}))).unwrap();}
+        assert!(count.load(Ordering::SeqCst)<100);
+        host.update("s",|s|s.runs[0].state="succeeded".into()).unwrap();
+        let restored=AgentHost::open(dir,Arc::new(|_|{})).unwrap().session("s").unwrap();assert_eq!(restored.messages[0].text.len(),100);assert_eq!(restored.runs[0].state,"succeeded");
     }
     #[test]
     fn failed_persistence_is_reported_and_never_published_as_success() {

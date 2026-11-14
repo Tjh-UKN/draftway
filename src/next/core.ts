@@ -19,6 +19,7 @@ export interface Workspace extends Space {
   sessionTabs: {ids: string[]; activeId: string; recent: string[]};
   dock: DockState;
   cwd?: string;
+  review?: {url: string} | null;
 }
 export interface Message {id: string; role: 'user' | 'assistant'; text: string; at: number}
 export interface AgentSession {
@@ -37,7 +38,11 @@ export interface Run {
   stopping?: boolean;
 }
 export interface Artifact {id: string; sessionId: string; runId: string; title: string; text: string}
-export interface Notice {id: string; runId: string; workspaceId: string; sessionId: string; title: string; read: boolean; at: number}
+export type NoticeTarget = {kind: 'session'; sessionId: string} | {kind: 'report'; url: string; file: string} | {kind: 'workspace'};
+export interface Notice {id: string; runId?: string; workspaceId: string; sessionId?: string; target?: NoticeTarget; title: string; body?: string; read: boolean; at: number}
+export function reviewUrl(value: string): string | null {
+  try {const url = new URL(value.trim()); return url.protocol === 'http:' && /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])$/.test(url.hostname) && !url.username && !url.password && !url.search && !url.hash && url.pathname === '/' ? url.href : null;} catch {return null;}
+}
 export interface WorkbenchState {
   version: 2; activeId: string; spaces: Workspace[];
   sessions: AgentSession[]; runs: Run[]; artifacts: Artifact[]; notices: Notice[];
@@ -53,7 +58,7 @@ export function workspaceFrom(space: Space): Workspace {
     title: {map: '思维导图', events: '任务', notes: '笔记', web: '网页工具'}[kind],
     ...(kind === 'notes' ? {text: space.notes} : {}), ...(kind === 'web' ? {url: space.website} : {}),
   }));
-  return {...space, surfaces, layout: {panes: [{id: 'main', tabs: surfaces.map(s => s.id), activeId: surfaces[0].id}], activePaneId: 'main', ratio: .5}, graph: {selectedId: null, focusId: null, collapsed: [], camera: null}, sessionPanelOpen: false, sessionWindow: defaultSessionWindow(), sessionTabs: {ids: [], activeId: 'workspace', recent: ['workspace']}, dock: initialDock()};
+  return {...space, review: space.website === 'http://127.0.0.1:8765/' ? {url: space.website} : null, surfaces, layout: {panes: [{id: 'main', tabs: surfaces.map(s => s.id), activeId: surfaces[0].id}], activePaneId: 'main', ratio: .5}, graph: {selectedId: null, focusId: null, collapsed: [], camera: null}, sessionPanelOpen: false, sessionWindow: defaultSessionWindow(), sessionTabs: {ids: [], activeId: 'workspace', recent: ['workspace']}, dock: initialDock()};
 }
 export function createWorkspace(name: string, preset: 'blank' | 'project' | 'web') {return workspaceFrom(newSpace(name, preset));}
 export function initialWorkbench(legacy: DesignState = seedState()): WorkbenchState {
@@ -232,7 +237,7 @@ export function parseWorkbench(value: unknown): WorkbenchState {
     const legacySession = space.surfaces?.find(s => s.id === activeTab && s.integrationId === 'session')?.resourceId;
     const window = space.sessionWindow ?? {...defaultSessionWindow(), sessionId: legacySession || null};
     const sessionTabs = space.sessionTabs ?? {ids: window.sessionId ? [window.sessionId] : [], activeId: window.sessionId || 'workspace', recent: window.sessionId ? ['workspace', window.sessionId] : ['workspace']};
-    return {...space, graph: {...space.graph, ...((raw.version as number) === 1 ? {camera: null} : {})}, sessionPanelOpen: space.sessionPanelOpen ?? false, sessionWindow: window, sessionTabs, dock: space.dock ?? initialDock(sessionTabs.ids, sessionTabs.activeId, sessionTabs.recent)};
+    return {...space, review: space.review === undefined && space.website === 'http://127.0.0.1:8765/' ? {url: space.website} : space.review ?? null, graph: {...space.graph, ...((raw.version as number) === 1 ? {camera: null} : {})}, sessionPanelOpen: space.sessionPanelOpen ?? false, sessionWindow: window, sessionTabs, dock: space.dock ?? initialDock(sessionTabs.ids, sessionTabs.activeId, sessionTabs.recent)};
   })};
   parseState({version: 2, activeId: state.activeId, spaces: state.spaces});
   const unique = (items: {id: string}[]) => items.every(i => i && typeof i.id === 'string' && i.id.length > 0) && new Set(items.map(i => i.id)).size === items.length;
@@ -245,6 +250,7 @@ export function parseWorkbench(value: unknown): WorkbenchState {
     for (const pane of space.layout.panes) if (!Array.isArray(pane.tabs) || (pane.tabs.length ? !pane.tabs.includes(pane.activeId) : pane.activeId !== '')) return fail();
     for (const surface of space.surfaces) if (typeof surface.integrationId !== 'string' || typeof surface.title !== 'string' || (surface.text !== undefined && typeof surface.text !== 'string') || (surface.url !== undefined && typeof surface.url !== 'string') || (surface.integrationId === 'session' && !state.sessions.some(s => s.id === surface.resourceId && s.workspaceId === space.id))) return fail();
     if (space.cwd !== undefined && typeof space.cwd !== 'string') return fail();
+    if (space.review != null && (typeof space.review.url !== 'string' || !reviewUrl(space.review.url))) return fail();
     const graph = space.graph;
     const window = space.sessionWindow;
     const tabs = space.sessionTabs;
@@ -264,6 +270,10 @@ export function parseWorkbench(value: unknown): WorkbenchState {
   }
   for (const session of state.sessions) if (state.runs.filter(r => r.sessionId === session.id && ['running', 'needs_input'].includes(r.state)).length > 1) return fail();
   for (const artifact of state.artifacts) if (!state.runs.some(r => r.id === artifact.runId && r.sessionId === artifact.sessionId) || typeof artifact.title !== 'string' || typeof artifact.text !== 'string') return fail();
-  for (const notice of state.notices) if (!state.sessions.some(s => s.id === notice.sessionId && s.workspaceId === notice.workspaceId) || !state.runs.some(r => r.id === notice.runId && r.sessionId === notice.sessionId) || typeof notice.title !== 'string' || typeof notice.read !== 'boolean' || !Number.isFinite(notice.at)) return fail();
+  for (const notice of state.notices) {
+    if (!state.spaces.some(s => s.id === notice.workspaceId) || typeof notice.title !== 'string' || typeof notice.read !== 'boolean' || !Number.isFinite(notice.at) || (notice.body !== undefined && typeof notice.body !== 'string')) return fail();
+    if (notice.target) {const target = notice.target; if (target.kind === 'session') {if (typeof target.sessionId !== 'string') return fail();} else if (target.kind === 'report') {if (typeof target.url !== 'string' || !reviewUrl(target.url) || typeof target.file !== 'string' || !/^round-[\w.-]+\.json$/.test(target.file) || target.file.includes('..')) return fail();} else if (target.kind !== 'workspace') return fail();}
+    else if (!state.sessions.some(s => s.id === notice.sessionId && s.workspaceId === notice.workspaceId) || !state.runs.some(r => r.id === notice.runId && r.sessionId === notice.sessionId)) return fail();
+  }
   return state;
 }

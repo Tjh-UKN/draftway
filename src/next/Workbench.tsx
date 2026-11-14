@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, Plus, Search, Settings2, Terminal, X} from 'lucide-react';
-import {closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, sessionNodeIds, shellStorageKey, updateWorkspace, type AgentSession, type GraphState, type Workspace} from './core';
+import {closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, reviewUrl, sessionNodeIds, shellStorageKey, updateWorkspace, type AgentSession, type GraphState, type Notice, type Workspace} from './core';
 import {reconcileSessions} from './adapters';
 import {GraphView, NodeGlyph, NodeInspector, NodeOverview} from './Graph';
 import {agentNames, integrations} from './integrations';
@@ -14,6 +14,8 @@ import {NodeMaterials} from './NodeMaterials';
 import {useWorkbenchPersistence} from './persistence';
 import {useNativeBrowserHost} from './native-browser';
 import {AgentRuntimeContext, useAgentRuntime, useNativeAgents} from './NativeAgents';
+import {useNativeBackground} from './NativeBackground';
+import {ReportView} from './ReportView';
 import {Dialog, Empty, SpaceSymbol, Star} from './ui';
 
 function loadWorkbench() {
@@ -40,6 +42,7 @@ export default function Workbench() {
   const persistence = useWorkbenchPersistence(state, change, loaded.error);
   const nativeBrowsers = useNativeBrowserHost(state, change, persistence.ready);
   const agents = useNativeAgents(state, change, persistence.ready);
+  const background = useNativeBackground(state, change, persistence.ready, openNotice);
   const updateSpace = (update: (space: Workspace) => Workspace) => change(s => updateWorkspace(s, space.id, update));
   useEffect(() => {
     if (!persistence.ready) return;
@@ -51,6 +54,18 @@ export default function Workbench() {
     change(s => {const next = openSession(s, id); return updateWorkspace(next, next.activeId, w => ({...w, sessionPanelOpen: false}));});
     setInbox(false); setDialog(null);
   }
+  function openReport(workspaceId: string, url: string, file: string) {
+    change(s => ({...updateWorkspace(s, workspaceId, w => ({...w, dock: openDockTab(w.dock, {id: `report:${url}:${file}`, kind: 'report', title: 'PR 检视报告', url, file})})), activeId: workspaceId}));
+    setInbox(false); setDialog(null);
+  }
+  function openNotice(notice: Notice) {
+    if (!current.current.spaces.some(w => w.id === notice.workspaceId)) return;
+    change(s => ({...s, notices: s.notices.map(n => n.id === notice.id ? {...n, read: true} : n)}));
+    const target = notice.target || (notice.sessionId ? {kind: 'session' as const, sessionId: notice.sessionId} : {kind: 'workspace' as const});
+    if (target.kind === 'report') openReport(notice.workspaceId, target.url, target.file);
+    else if (target.kind === 'session') openAgent(target.sessionId);
+    else switchSpace(notice.workspaceId);
+  }
   function startSession(agentId: AgentSession['agentId'], nodeId: string | null = null, groupId?: string) {
     const id = crypto.randomUUID(); const at = Date.now();
     change(s => {const target = groupId ? updateWorkspace(s, space.id, w => ({...w, dock: {...w.dock, activeGroupId: groupId}})) : s; const next = updateWorkspace(createSession(target, space.id, nodeId, id, at, agentId), space.id, w => ({...w, sessionPanelOpen: false})); return agents ? {...next, sessions: next.sessions.map(session => session.id === id ? {...session, integrationId: agentId || 'codex', cwd: space.cwd} : session)} : next;});
@@ -59,6 +74,7 @@ export default function Workbench() {
   }
   function changeGraph(graph: GraphState) {if (graph.selectedId !== newNodeId) setNewNodeId(null); updateSpace(s => ({...s, graph}));}
   function openNode(id: string) {
+    if (!space.nodes.some(node => node.id === id)) return;
     setNewNodeId(null);
     change(s => selectWorkspaceTab(s, space.id));
     updateSpace(s => ({...s, graph: {...s.graph, selectedId: id, focusId: null, collapsed: [], camera: null}}));
@@ -127,8 +143,8 @@ export default function Workbench() {
       <nav className="global-navigation"><button onClick={() => setDialog('workspace')} disabled={state.spaces.length >= 20}><Plus size={17}/>新建工作区</button><button onClick={() => setDialog('search')}><Search size={17}/>搜索<kbd>Ctrl K</kbd></button></nav>
       <div className="sidebar-label">工作区</div><nav className="workspace-list" aria-label="工作区">{state.spaces.map((item, index) => {
         const count = state.notices.filter(n => n.workspaceId === item.id && !n.read).length;
-        const running = state.runs.some(r => r.state === 'running' && state.sessions.some(s => s.id === r.sessionId && s.workspaceId === item.id));
-        return <button key={item.id} className={item.id === space.id ? 'active' : ''} aria-current={item.id === space.id ? 'page' : undefined} title={`${item.name}${index < 9 ? ` · Alt+${index + 1}` : ''}`} onClick={() => switchSpace(item.id)}><SpaceSymbol space={item}/><span>{item.name}</span>{count ? <span className="count-badge dark">{count}</span> : running ? <span className="running-dot" aria-label="有模拟任务运行中"/> : null}</button>;
+        const running = state.runs.some(r => r.state === 'running' && state.sessions.some(s => s.id === r.sessionId && s.workspaceId === item.id)) || !!(item.review && background.reviews[item.id]?.runningCount);
+        return <button key={item.id} className={item.id === space.id ? 'active' : ''} aria-current={item.id === space.id ? 'page' : undefined} title={`${item.name}${index < 9 ? ` · Alt+${index + 1}` : ''}`} onClick={() => switchSpace(item.id)}><SpaceSymbol space={item}/><span>{item.name}</span>{count ? <span className="count-badge dark">{count}</span> : running ? <span className="running-dot" aria-label="有任务运行中"/> : null}</button>;
       })}</nav><div className="sidebar-bottom"><span><span className="profile-avatar">我</span>个人空间</span><button onClick={() => setDialog('settings')}><Settings2 size={16}/>接入与设置</button><a href="/" target="_blank" rel="noreferrer"><ExternalLink size={14}/>原版北极星</a></div>
     </aside>
     <div className="shell-body"><header className="workspace-heading dock-workspace-heading"><div className="workspace-title-row"><h1>{space.name}</h1><div className="workspace-actions"><button className={`session-panel-toggle ${space.sessionPanelOpen ? 'active' : ''}`} aria-expanded={space.sessionPanelOpen} aria-controls="workspace-session-panel" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: !w.sessionPanelOpen}))}>会话记录（{sessions.length}）<ChevronDown size={14}/>{sessions.some(s => s.unread) && <i className="unread-dot"/>}</button><span className="vertical-divider"/><button className="icon-button bell-button" aria-label={`通知${unread ? `，${unread}条未读` : ''}`} aria-expanded={inbox} onClick={() => setInbox(v => !v)}><Bell size={18}/>{!!unread && <span>{unread}</span>}</button><button className="text-button" onClick={() => setDialog('customize')}><Settings2 size={16}/><span>自定工作区</span></button></div></div></header>
@@ -137,6 +153,7 @@ export default function Workbench() {
         if (tab.kind === 'map') return mapView;
         if (tab.kind === 'browser') return <BrowserView tab={tab} active={active} onChange={updateTab} native={nativeBrowsers}/>;
         if (tab.kind === 'review') return <ReviewView tab={tab} onChange={updateTab}/>;
+        if (tab.kind === 'report') return <ReportView workspaceId={space.id} tab={tab} onDashboard={() => updateSpace(w => ({...w, dock: openDockTab(w.dock, {id: `dashboard:${tab.url}`, kind: 'browser', title: 'PR 检视看板', url: tab.url})}))}/>;
         const session = state.sessions.find(s => s.id === tab.sessionId)!;
         return <SessionView state={state} session={session} active={active} change={change} onNode={id => {const nodeId = id || session.nodeId; if (nodeId) openNode(nodeId);}}/>;
       }}/>
@@ -144,11 +161,11 @@ export default function Workbench() {
 
     </div>
     <footer className="shell-status"><span>{persistence.error ? <><CircleAlert size={12}/>{persistence.error}<button onClick={persistence.retry}>{persistence.readOnly ? '重试读取' : '重试保存'}</button></> : <><span className="saved-dot"/>{persistence.saved ? '已保存到本机' : '正在保存'}</>}</span><span>Alt + 1…9 切换工作区 · Ctrl + Tab 切换最近页签</span></footer></div>
-    {inbox && <aside className="notification-panel" aria-label="通知中心"><header><h2>通知</h2><button className="text-button" onClick={() => change(s => ({...s, notices: s.notices.map(n => ({...n, read: true})), sessions: s.sessions.map(session => ({...session, unread: false}))}))}>全部已读</button><button className="icon-button" aria-label="关闭通知中心" onClick={() => setInbox(false)}><X size={16}/></button></header>{[...state.notices].reverse().map(n => <button key={n.id} className={`notice-row ${n.read ? '' : 'unread'}`} onClick={() => openAgent(n.sessionId)}><Bell size={15}/><span><strong>{n.title}</strong><small>{state.sessions.find(s => s.id === n.sessionId)?.title}</small></span><ChevronRight size={14}/></button>)}{!state.notices.length && <Empty title="这里暂时很安静"/>}</aside>}
+    {inbox && <aside className="notification-panel" aria-label="通知中心"><header><h2>通知</h2><button className="text-button" onClick={() => change(s => ({...s, notices: s.notices.map(n => ({...n, read: true})), sessions: s.sessions.map(session => ({...session, unread: false}))}))}>全部已读</button><button className="icon-button" aria-label="关闭通知中心" onClick={() => setInbox(false)}><X size={16}/></button></header>{background.error && <p className="tool-error" role="alert">{background.error}</p>}{state.spaces.filter(w => w.review).map(w => {const status = background.reviews[w.id]; return <div className="review-status" key={w.id}><strong>{w.name}</strong><small>{!status ? agents ? '正在连接检视服务' : '请在 Windows 版跟踪状态' : !status.connected ? `连接中断 · ${status.error}` : status.error || `${status.runningCount} 个 PR 处理中${status.paused ? ' · 已暂停调度' : ''}`}</small>{status?.historyGap && <small>离线期间可能有遗漏，请查看原看板。</small>}{status?.reports.slice(0, 5).map(report => <button className="text-button" key={report.file} onClick={() => openReport(w.id, status.url, report.file)}>{report.prs.map(n => `#${n}`).join('、') || '检视报告'} · {report.state === 'running' ? '进行中' : report.state === 'succeeded' ? '已完成' : report.state === 'failed' ? '失败' : '状态待确认'}<ChevronRight size={12}/></button>)}</div>;})}{[...state.notices].reverse().map(n => <button key={n.id} className={`notice-row ${n.read ? '' : 'unread'}`} onClick={() => openNotice(n)}><Bell size={15}/><span><strong>{n.title}</strong><small>{n.body || state.sessions.find(s => s.id === n.sessionId)?.title || state.spaces.find(w => w.id === n.workspaceId)?.name}</small></span><ChevronRight size={14}/></button>)}{!state.notices.length && <Empty title="这里暂时很安静"/>}</aside>}
     {dialog === 'workspace' && <WorkspaceDialog onClose={() => setDialog(null)} onCreate={name => {const next = createWorkspace(name, 'blank'); change(s => ({...s, activeId: next.id, spaces: [...s.spaces, next]})); setDialog(null);}}/>}
 
-    {dialog === 'settings' && <Dialog title="接入与设置" onClose={() => setDialog(null)}><p className="muted">{agents ? '使用本机已安装的执行器。会话、来源标识和执行记录由北极星保存。' : '浏览器模式使用模拟器；真实 Agent 请在 Windows 版中操作。'}</p><div className="integration-list">{integrations.filter(i => ['codex', 'claude', 'pi'].includes(i.id)).map(i => <div key={i.id}><Terminal size={16}/><span><strong>{i.name}</strong><small>{i.description}</small></span><span className="small-tag">{agents?.backends.find(backend => backend.id === i.id)?.available ? '已发现' : '未发现'}</span></div>)}</div><p className="quiet-note">原版业务数据未迁移。地图、会话和更新记录保存在本机；当前页面不提供系统后台托管。</p></Dialog>}
-    {dialog === 'customize' && <CustomizeDialog space={space} onClose={() => setDialog(null)} onSave={(name, cwd) => {updateSpace(w => ({...w, name, cwd})); setDialog(null);}} onPlace={(title, body, kind) => {const node: MindNode = {id: crypto.randomUUID(), parentId: space.nodes.find(n => !n.parentId)!.id, side: 1, kind, title, body, progress: 0, due: '', steps: []}; updateSpace(w => ({...w, nodes: [...w.nodes, node], graph: {...w.graph, selectedId: node.id, camera: null}})); change(s => selectWorkspaceTab(s, space.id)); setDialog(null);}}/>}
+    {dialog === 'settings' && <Dialog title="接入与设置" onClose={() => setDialog(null)}><p className="muted">{agents ? '使用本机已安装的执行器。会话、来源标识和执行记录由北极星保存。' : '浏览器模式使用模拟器；真实 Agent 请在 Windows 版中操作。'}</p><div className="integration-list">{integrations.filter(i => ['codex', 'claude', 'pi'].includes(i.id)).map(i => <div key={i.id}><Terminal size={16}/><span><strong>{i.name}</strong><small>{i.description}</small></span><span className="small-tag">{agents?.backends.find(backend => backend.id === i.id)?.available ? '已发现' : '未发现'}</span></div>)}</div><p className="quiet-note">地图、会话和更新记录保存在本机。Windows 版收起或切换工作区后继续执行；退出北极星会停止本机执行器。</p></Dialog>}
+    {dialog === 'customize' && <CustomizeDialog space={space} onClose={() => setDialog(null)} onSave={(name, cwd, review) => {updateSpace(w => ({...w, name, cwd, review})); setDialog(null);}} onPlace={(title, body, kind) => {const node: MindNode = {id: crypto.randomUUID(), parentId: space.nodes.find(n => !n.parentId)!.id, side: 1, kind, title, body, progress: 0, due: '', steps: []}; updateSpace(w => ({...w, nodes: [...w.nodes, node], graph: {...w.graph, selectedId: node.id, camera: null}})); change(s => selectWorkspaceTab(s, space.id)); setDialog(null);}}/>}
     {dialog === 'search' && <SearchDialog space={space} onClose={() => setDialog(null)} onOpen={openNode}/>}
     {dialog === 'link' && selected && <Dialog title="关联工作区会话" onClose={() => setDialog(null)}><p className="muted">从当前工作区选择已有会话，关联到「{selected.title}」。</p>{sessions.filter(s => !sessionNodeIds(s).includes(selected.id)).map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => {change(s => ({...s, sessions: s.sessions.map(item => item.id === session.id ? {...item, linkedNodeIds: [...(item.linkedNodeIds || []), selected.id]} : item)})); setDialog(null);}}/>)}{!sessions.some(s => !sessionNodeIds(s).includes(selected.id)) && <p className="quiet-note">暂无其他会话。可在节点的“＋”中选择后端创建。</p>}</Dialog>}
 
@@ -167,9 +184,11 @@ function SearchDialog({space, onClose, onOpen}: {space: Workspace; onClose: () =
   const [query, setQuery] = useState('');
   return <Dialog title="搜索当前工作区" onClose={onClose}><input className="search-field" autoFocus aria-label="搜索节点" placeholder="搜索节点与内容" value={query} onChange={event => setQuery(event.target.value)}/><div className="view-library">{space.nodes.filter(n => `${n.title} ${n.body}`.includes(query)).map(n => <button key={n.id} onClick={() => onOpen(n.id)}><NodeGlyph kind={n.kind} size={16}/><span>{n.title}</span><ChevronRight size={14}/></button>)}</div></Dialog>;
 }
-function CustomizeDialog({space, onClose, onSave, onPlace}: {space: Workspace; onClose: () => void; onSave: (name: string, cwd?: string) => void; onPlace: (title: string, body: string, kind: 'document' | 'artifact') => void}) {
+function CustomizeDialog({space, onClose, onSave, onPlace}: {space: Workspace; onClose: () => void; onSave: (name: string, cwd?: string, review?: Workspace['review']) => void; onPlace: (title: string, body: string, kind: 'document' | 'artifact') => void}) {
   const [name, setName] = useState(space.name);
   const agents = useAgentRuntime(); const [cwd, setCwd] = useState(space.cwd || '');
+  const [reviewEnabled, setReviewEnabled] = useState(!!space.review); const [reviewAddress, setReviewAddress] = useState(space.review?.url || 'http://127.0.0.1:8765/');
+  const validReview = reviewUrl(reviewAddress);
   const retained = space.surfaces.filter(s => !['graph', 'tasks', 'session'].includes(s.integrationId));
-  return <Dialog title="自定工作区" onClose={onClose}><form onSubmit={event => {event.preventDefault(); if (name.trim()) onSave(name.trim(), cwd || undefined);}}><label className="field">工作区名称<input autoFocus required maxLength={40} value={name} onChange={event => setName(event.target.value)}/></label>{agents && <section className="workspace-directory"><span>新会话工作目录</span><p>{cwd || '默认工作区目录'}</p><button type="button" className="outline-button" onClick={() => {void agents.chooseDirectory().then(value => {if (value) setCwd(value);});}}>选择文件夹</button></section>}{!!retained.length && <><div className="section-label">原有视图内容已保留</div><div className="retained-content">{retained.map(s => <details key={s.id}><summary>{s.title}</summary><p>{s.text || s.url || '此组件的配置已保留，等待适配器接入。'}</p><button className="text-button" type="button" disabled={space.nodes.length >= 250} onClick={() => onPlace(s.title || '笔记', s.text || s.url || '', s.integrationId === 'note' ? 'document' : 'artifact')}>放到地图<Plus size={13}/></button></details>)}</div></>}<p className="quiet-note">地图节点与会话分别管理。分屏、页签顺序和当前会话随工作区保存。</p><footer><button className="primary-button" disabled={!name.trim()}>保存</button></footer></form></Dialog>;
+  return <Dialog title="自定工作区" onClose={onClose}><form onSubmit={event => {event.preventDefault(); if (name.trim() && (!reviewEnabled || validReview)) onSave(name.trim(), cwd || undefined, reviewEnabled ? {url: validReview!} : null);}}><label className="field">工作区名称<input autoFocus required maxLength={40} value={name} onChange={event => setName(event.target.value)}/></label>{agents && <section className="workspace-directory"><span>新会话工作目录</span><p>{cwd || '默认工作区目录'}</p><button type="button" className="outline-button" onClick={() => {void agents.chooseDirectory().then(value => {if (value) setCwd(value);});}}>选择文件夹</button></section>}<section className="workspace-directory"><label><input type="checkbox" checked={reviewEnabled} onChange={e => setReviewEnabled(e.target.checked)}/> 跟踪本机 PR 检视</label>{reviewEnabled && <label className="field">服务地址<input aria-label="检视服务地址" value={reviewAddress} onChange={e => setReviewAddress(e.target.value)}/>{!validReview && <small role="alert">请输入本机 HTTP 地址，例如 http://127.0.0.1:8765/</small>}</label>}<p className="quiet-note">只读跟踪运行和报告，结果在通知中心查看。</p></section>{!!retained.length && <><div className="section-label">原有视图内容已保留</div><div className="retained-content">{retained.map(s => <details key={s.id}><summary>{s.title}</summary><p>{s.text || s.url || '此组件的配置已保留，等待适配器接入。'}</p><button className="text-button" type="button" disabled={space.nodes.length >= 250} onClick={() => onPlace(s.title || '笔记', s.text || s.url || '', s.integrationId === 'note' ? 'document' : 'artifact')}>放到地图<Plus size={13}/></button></details>)}</div></>}<p className="quiet-note">地图节点与会话分别管理。分屏、页签顺序和当前会话随工作区保存。</p><footer><button className="primary-button" disabled={!name.trim() || (reviewEnabled && !validReview)}>保存</button></footer></form></Dialog>;
 }

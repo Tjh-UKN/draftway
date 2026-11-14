@@ -19,14 +19,15 @@ export function useNativeAgents(_state: WorkbenchState, change: ChangeState, ena
   const native = typeof window !== 'undefined' && isTauri();
   const [backends, setBackends] = useState<BackendState[]>([]); const [error, setError] = useState('');
   const alive = useRef(true);
-  function accept(session: NativeSession) {if (alive.current) change(old => mergeNativeSession(old, session, document.visibilityState === 'visible'));}
+  function accept(session: NativeSession) {if (alive.current) change(old => mergeNativeSession(old, session, document.visibilityState === 'visible' && document.hasFocus(), false));}
   function failure(id: string, error: unknown) {if (alive.current) change(old => ({...old, sessions: old.sessions.map(session => session.id === id ? {...session, connectionError: String(error)} : session)}));}
   useEffect(() => {
     if (!native || !enabled) return; alive.current = true;
     const listener = listen<NativeSession>('agent-session', ({payload}) => accept(payload));
     void invoke<BackendState[]>('agent_backends').then(value => {if (alive.current) setBackends(value);}).catch(error => {if (alive.current) setError(String(error));});
-    void invoke<NativeSession[]>('agent_list').then(sessions => {for (const session of sessions) accept(session);}).catch(error => {if (alive.current) setError(String(error));});
-    return () => {alive.current = false; void listener.then(off => off()).catch(() => {});};
+    const refresh = () => {void invoke<NativeSession[]>('agent_list').then(sessions => {for (const session of sessions) accept(session);}).catch(error => {if (alive.current) setError(String(error));});};
+    void listener.then(refresh).catch(error => {if (alive.current) setError(String(error));}); window.addEventListener('focus', refresh);
+    return () => {alive.current = false; window.removeEventListener('focus', refresh); void listener.then(off => off()).catch(() => {});};
   }, [native, enabled]);
   if (!native) return null;
   return {backends, error, create(args) {void invoke<NativeSession>('agent_create', {...args, cwd: args.cwd || null}).then(accept).catch(error => failure(args.id, error));},

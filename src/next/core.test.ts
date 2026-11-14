@@ -26,7 +26,7 @@ describe('workspace shell records and lifecycle', () => {
     expect(state.notices[0]).toMatchObject({workspaceId: 'design', sessionId: 'session-1', read: false});
     expect(state.spaces[0].nodes).toEqual(nodeBefore);
     expect(advanceDemoRuns(state, 10000)).toBe(state);
-    state = openSession(state, state.notices[0].sessionId);
+    state = openSession(state, state.notices[0].sessionId!);
     expect(state.activeId).toBe('design');
     expect(state.spaces[0].sessionTabs.activeId).toBe('session-1');
     expect(state.notices[0].read).toBe(true);

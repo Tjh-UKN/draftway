@@ -5,6 +5,8 @@ mod workspaces;
 mod native_browser;
 mod native_agents;
 mod workspace_state;
+mod review_service;
+mod background;
 use crate::store::{Store,Result,error};
 use serde_json::{json,Value};
 use std::{fs, path::PathBuf, sync::{Arc,atomic::{AtomicBool, Ordering}}};
@@ -13,6 +15,12 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
 struct AppState {store:Arc<Store>,quit:AtomicBool}
+#[tauri::command]
+async fn background_snapshot(state: tauri::State<'_, Arc<background::Background>>) -> Result<background::State> {state.snapshot()}
+#[tauri::command]
+async fn background_read(state: tauri::State<'_, Arc<background::Background>>, ids: Vec<String>) -> Result<()> {state.mark_read(&ids)}
+#[tauri::command]
+async fn review_report(state: tauri::State<'_, Arc<background::Background>>, workspace_id: String, file: String, url: String) -> Result<Value> {state.report(&workspace_id,&file,&url)}
 #[tauri::command]
 async fn load_shell_state(state: tauri::State<'_, AppState>) -> Result<Option<Value>> {workspace_state::load(&state.store)}
 #[tauri::command]
@@ -128,6 +136,13 @@ fn export_drawing_file(path:String,bytes:Vec<u8>)->Result<()> {
 #[tauri::command]
 fn quit_app(app:tauri::AppHandle,state:tauri::State<AppState>){state.quit.store(true,Ordering::SeqCst);app.exit(0);}
 
+fn send_workspace_notice(app: &tauri::AppHandle, notice: &background::Notice) -> Result<()> {
+    #[cfg(windows)] {
+        let target_app=app.clone(); let id=notice.id.clone();
+        tauri_winrt_notification::Toast::new(&app.config().identifier).title(&format!("北极星 · {}",notice.title)).text1(&notice.body).on_activated(move |_| {reveal(&target_app); let _=target_app.emit_to("main","notice-activate",id.clone()); Ok(())}).show().map_err(error)
+    }
+    #[cfg(not(windows))] {app.notification().builder().title(&notice.title).body(&notice.body).show().map_err(error)}
+}
 fn reveal(app:&tauri::AppHandle){if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.unminimize();let _=w.set_focus();}}
 fn start_services(app:tauri::AppHandle,store:Arc<Store>) {
     std::thread::spawn(move||{
@@ -174,8 +189,14 @@ pub fn run() {
             let store=Arc::new(Store::open(data.unwrap_or(app.path().app_data_dir()?)).map_err(std::io::Error::other)?);
             store.seed_if_new().map_err(std::io::Error::other)?;
             app.manage(AppState{store:store.clone(),quit:AtomicBool::new(false)});
-            let agent_app = app.handle().clone();
-            app.manage(native_agents::AgentHost::open(store.root.join("agents"), Arc::new(move |session| {let _ = agent_app.emit_to("main", "agent-session", session);})).map_err(std::io::Error::other)?);
+            let background_app = app.handle().clone();
+            let delivery_app = app.handle().clone();
+            let foreground_app = app.handle().clone();
+            let background = background::Background::open(store.clone(), Arc::new(move |state| {let _ = background_app.emit_to("main","background-state",state);}), Arc::new(move |notice| send_workspace_notice(&delivery_app,notice)), Arc::new(move || foreground_app.get_webview("main").is_some_and(|view| view.window().is_visible().unwrap_or(false) && view.window().is_focused().unwrap_or(false)))).map_err(std::io::Error::other)?;
+            let agent_app = app.handle().clone(); let agent_background = background.clone();
+            let agents = native_agents::AgentHost::open(store.root.join("agents"), Arc::new(move |session| {let _ = agent_background.observe_agent(session); let _ = agent_app.emit_to("main", "agent-session", session);})).map_err(std::io::Error::other)?;
+            for session in agents.list().map_err(std::io::Error::other)? {background.observe_agent(&session).map_err(std::io::Error::other)?;}
+            app.manage(agents); app.manage(background.clone()); background.start();
             let show=MenuItem::with_id(app,"show","打开北极星",true,None::<&str>)?;
             let quick=MenuItem::with_id(app,"new","新建任务",true,None::<&str>)?;
             let quit=MenuItem::with_id(app,"quit","退出",true,None::<&str>)?;
@@ -193,12 +214,12 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
                 handler(invoke)
             }
         })
         .build(tauri::generate_context!()).expect("北极星启动失败")
-        .run(|app, event| {if let tauri::RunEvent::Exit = event {app.state::<Arc<native_agents::AgentHost>>().shutdown();}});
+        .run(|app, event| {if let tauri::RunEvent::Exit = event {app.state::<Arc<background::Background>>().stop(); app.state::<Arc<native_agents::AgentHost>>().shutdown();}});
 }

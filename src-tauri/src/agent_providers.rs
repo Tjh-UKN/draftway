@@ -101,8 +101,8 @@ fn finish(session: &mut AgentSession, state: &str, error: Option<String>) {
 }
 pub fn relevant(backend: &str, value: &Value) -> bool {
     match backend {
-        "claude" => ["system", "assistant", "result", "stream_event", "control_request"].contains(&value["type"].as_str().unwrap_or("")),
-        "pi" => ["agent_start", "agent_end", "agent_settled", "message_update", "message_end", "extension_ui_request"].contains(&value["type"].as_str().unwrap_or("")),
+        "claude" => if value["type"] == "stream_event" {value["parent_tool_use_id"].is_null() && value["event"]["delta"]["type"] == "text_delta"} else {["system", "assistant", "result", "control_request"].contains(&value["type"].as_str().unwrap_or(""))},
+        "pi" => if value["type"] == "message_update" {value["assistantMessageEvent"]["type"] == "text_delta"} else {["agent_start", "agent_end", "agent_settled", "message_end", "extension_ui_request"].contains(&value["type"].as_str().unwrap_or(""))},
         _ => false,
     }
 }

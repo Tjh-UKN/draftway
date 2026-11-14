@@ -7,7 +7,7 @@ export interface NativeSession {
   runs: {id: string; state: RunState; startedAt: number; finishedAt: number | null; error: string | null; cancelRequested?: boolean}[];
   requests: AgentRequest[]; error: string | null;
 }
-export function mergeNativeSession(state: WorkbenchState, native: NativeSession, foreground = true): WorkbenchState {
+export function mergeNativeSession(state: WorkbenchState, native: NativeSession, foreground = true, notify = true): WorkbenchState {
   const space = state.spaces.find(space => space.id === native.workspaceId);
   const old = state.sessions.find(session => session.id === native.id);
   if (!space || (old && old.workspaceId !== native.workspaceId) || (old?.nativeRevision || 0) >= native.revision) return state;
@@ -19,7 +19,7 @@ export function mergeNativeSession(state: WorkbenchState, native: NativeSession,
   const notices = [...state.notices]; const artifacts = [...state.artifacts];
   for (const run of changed) {
     const id = `native-${run.id}-${run.state}`;
-    if (!visible && !notices.some(notice => notice.id === id)) notices.push({id, runId: run.id, workspaceId: native.workspaceId, sessionId: native.id, title: run.state === 'succeeded' ? '执行完成' : run.state === 'needs_input' ? '需要你的输入' : '执行失败', read: false, at: run.finishedAt || Date.now()});
+    if (notify && !visible && !notices.some(notice => notice.id === id)) notices.push({id, runId: run.id, workspaceId: native.workspaceId, sessionId: native.id, title: run.state === 'succeeded' ? '执行完成' : run.state === 'needs_input' ? '需要你的输入' : '执行失败', read: false, at: run.finishedAt || Date.now()});
   }
   for (const run of native.runs.filter(run => run.state === 'succeeded')) {
     const id = `native-${run.id}-artifact`;
