@@ -1,3 +1,3 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-export default defineConfig({ plugins: [react()], clearScreen: false, server: { host: '127.0.0.1', port: 1420, strictPort: true, watch: { ignored: ['**/.tools/**','**/src-tauri/**','**/artifacts/**'] } }, envPrefix: ['VITE_', 'TAURI_ENV_'], build: { target: 'es2022', rollupOptions:{output:{manualChunks:{markdown:['react-markdown','remark-gfm','remark-breaks'],react:['react','react-dom']}}} } });
+export default defineConfig({ plugins: [react()], clearScreen: false, server: { host: '127.0.0.1', port: 1420, strictPort: true, watch: { ignored: ['**/.tools/**','**/src-tauri/**','**/artifacts/**'] } }, envPrefix: ['VITE_', 'TAURI_ENV_'], build: { target: 'es2022', rollupOptions:{input:['index.html','next.html'],output:{manualChunks:{markdown:['react-markdown','remark-gfm','remark-breaks'],react:['react','react-dom']}}} } });

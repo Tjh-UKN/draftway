@@ -1,6 +1,8 @@
 mod domain;
 mod store;
 mod backup;
+mod workspaces;
+mod native_browser;
 use crate::store::{Store,Result,error};
 use serde_json::{json,Value};
 use std::{fs, path::PathBuf, sync::{Arc,atomic::{AtomicBool, Ordering}}};
@@ -10,7 +12,9 @@ use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
 struct AppState {store:Arc<Store>,quit:AtomicBool}
 #[tauri::command]
-fn load_workspace(state:tauri::State<AppState>)->Result<store::Workspace>{state.store.load()}
+fn load_workspace(state:tauri::State<AppState>)->Result<store::WorkbenchData>{state.store.load()}
+#[tauri::command]
+fn save_workspace_layout(layout:Value,state:tauri::State<AppState>)->Result<()>{state.store.put_workspace_layout(&layout)}
 #[tauri::command]
 fn save_record(record:Value,state:tauri::State<AppState>)->Result<Value>{state.store.save(record)}
 #[tauri::command]
@@ -87,6 +91,8 @@ fn open_data_folder(state:tauri::State<AppState>)->Result<()> {open::that(&state
 #[tauri::command]
 fn open_external_url(url:String)->Result<()> {open::that(domain::external_url(&url)?).map_err(error)}
 #[tauri::command]
+fn open_web_workspace(url:String)->Result<()> {open::that(domain::edge_workspace_url(&url)?).map_err(error)}
+#[tauri::command]
 fn export_markdown(id:String,path:String,state:tauri::State<AppState>)->Result<()> {
     if PathBuf::from(&path).extension().and_then(|e|e.to_str()).is_none_or(|e|!e.eq_ignore_ascii_case("md")){return Err("请选择 .md 文件".into());}
     let db=state.store.db.lock().map_err(error)?;let record=store::get(&db,&id)?.ok_or("笔记不存在")?;
@@ -139,6 +145,7 @@ fn start_services(app:tauri::AppHandle,store:Arc<Store>) {
 }
 pub fn run() {
     tauri::Builder::default()
+        .manage(native_browser::Browsers::default())
         .plugin(tauri_plugin_single_instance::init(|app,args,_|{if args.iter().any(|a|a=="--quit"){app.state::<AppState>().quit.store(true,Ordering::SeqCst);app.exit(0);}else{reveal(app);}}))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -165,6 +172,12 @@ pub fn run() {
                 if !state.quit.load(Ordering::SeqCst)&&state.store.load().map(|w|w.settings.close_to_tray).unwrap_or(false){api.prevent_close();let _=window.hide();}
             }
         })
-        .invoke_handler(tauri::generate_handler![load_workspace,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app])
+        .invoke_handler({
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history];
+            move |invoke| {
+                if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
+                handler(invoke)
+            }
+        })
         .run(tauri::generate_context!()).expect("北极星启动失败");
 }

@@ -11,7 +11,7 @@ pub struct Store { pub db: Mutex<Connection>, pub root: PathBuf }
 pub struct Attachment { pub id:String, pub name:String, pub size:u64, pub stored_name:String, pub entity_id:Option<String>, pub created_at:String }
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
-pub struct Workspace { pub records:Vec<Value>, pub attachments:Vec<Attachment>, pub settings:Settings, pub data_path:String }
+pub struct WorkbenchData { pub records:Vec<Value>, pub attachments:Vec<Attachment>, pub settings:Settings, pub data_path:String, pub workspace_layout:Option<Value> }
 pub type Result<T> = std::result::Result<T, String>;
 pub fn error(e:impl std::fmt::Display)->String {e.to_string()}
 
@@ -54,9 +54,16 @@ impl Store {
         }
         tx.execute("INSERT INTO metadata(key,value) VALUES('initialized','true')",[]).map_err(error)?;tx.commit().map_err(error)
     }
-    pub fn load(&self)->Result<Workspace> {
+    pub fn load(&self)->Result<WorkbenchData> {
         let db=self.db.lock().map_err(error)?;
-        Ok(Workspace{records:records(&db)?,attachments:attachments(&db)?,settings:settings(&db)?,data_path:self.root.to_string_lossy().into()})
+        let layout:Option<String>=db.query_row("SELECT value FROM metadata WHERE key='workspace_layout'",[],|row|row.get(0)).optional().map_err(error)?;
+        Ok(WorkbenchData{records:records(&db)?,attachments:attachments(&db)?,settings:settings(&db)?,data_path:self.root.to_string_lossy().into(),workspace_layout:layout.map(|layout|serde_json::from_str(&layout).map_err(error)).transpose()?})
+    }
+    pub fn put_workspace_layout(&self,layout:&Value)->Result<()> {
+        crate::workspaces::validate(layout)?;
+        let db=self.db.lock().map_err(error)?;
+        db.execute("INSERT INTO metadata(key,value) VALUES('workspace_layout',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[serde_json::to_string(layout).map_err(error)?]).map_err(error)?;
+        Ok(())
     }
     pub fn save(&self,mut record:Value)->Result<Value> {
         domain::normalize(&mut record);
@@ -221,6 +228,29 @@ pub fn attachments(db:&Connection)->Result<Vec<Attachment>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn workspace_layout_survives_restart_and_backup_without_changing_business_records() {
+        let root=std::env::temp_dir().join(format!("northstar-layout-{}",uuid::Uuid::new_v4()));
+        let store=Store::open(root.clone()).unwrap();
+        let task=store.save(record("task")).unwrap();
+        assert!(store.load().unwrap().workspace_layout.is_none());
+        let id=uuid::Uuid::new_v4().to_string();
+        let layout=json!({"version":1,"activeId":id,"workspaces":[{"id":id,"name":"我的布局","zoom":80,"widgets":[]}],"templates":[]});
+        store.put_workspace_layout(&layout).unwrap();
+        let mut invalid=layout.clone();invalid["version"]=json!(2);
+        assert!(store.put_workspace_layout(&invalid).is_err());
+        assert_eq!(store.load().unwrap().workspace_layout,Some(layout.clone()));
+        let backup=crate::backup::create(&store,"layout-test").unwrap();
+        let mut changed=layout.clone();changed["workspaces"][0]["name"]=json!("新布局");
+        store.put_workspace_layout(&changed).unwrap();
+        assert_eq!(store.load().unwrap().records,vec![task.clone()]);
+        crate::backup::restore(&store,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();
+        drop(store);
+        let store=Store::open(root.clone()).unwrap();
+        assert_eq!(store.load().unwrap().workspace_layout,Some(layout));
+        assert_eq!(store.load().unwrap().records,vec![task]);
+        assert_eq!(store.load().unwrap().settings.user_name,Settings::default().user_name);
+        drop(store);fs::remove_dir_all(root).unwrap();
+    }
     fn record(kind:&str)->Value {json!({"id":uuid::Uuid::new_v4().to_string(),"kind":kind,"title":"test","createdAt":domain::now(),"updatedAt":domain::now(),"version":0,"archived":false,"description":"","status":"todo","priority":"normal","repeat":"none","projectId":null,"dueAt":null,"remindAt":null,"completedAt":null,"tags":[]})}
     #[test] fn conflicts_and_repeat_are_atomic() {
         let root=std::env::temp_dir().join(format!("northstar-test-{}",uuid::Uuid::new_v4()));

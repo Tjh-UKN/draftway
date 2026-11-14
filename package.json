@@ -1,6 +1,6 @@
 {
   "name": "northstar-workbench",
-  "version": "0.5.0",
+  "version": "0.6.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -18,13 +18,18 @@
     "test:health": "node scripts/check-health.cjs",
     "predev": "node scripts/prepare-excalidraw.mjs",
     "prebuild": "node scripts/prepare-excalidraw.mjs",
-    "test:drawings": "node scripts/check-drawings.cjs"
+    "test:drawings": "node scripts/check-drawings.cjs",
+    "test:workspaces": "node scripts/check-workspaces.cjs",
+    "desktop:next": "node scripts/desktop.mjs dev --no-watch --config scripts/next-config.json",
+    "desktop:next:build": "node scripts/desktop.mjs build --debug --no-bundle --config scripts/next-config.json",
+    "test:native-browser": "node scripts/native-browser-test.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-autostart": "^2.5.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
+    "diff": "^8.0.4",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

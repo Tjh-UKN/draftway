@@ -1,0 +1,6 @@
+{
+  "identifier": "com.northstar.workbench.preview",
+  "productName": "Northstar Preview",
+  "build": {"beforeDevCommand": ""},
+  "app": {"windows": [{"label": "main", "url": "next.html", "title": "北极星 · 工作区预览", "width": 1440, "height": 960, "minWidth": 960, "minHeight": 640, "decorations": true, "backgroundColor": "#ffffff"}]}
+}

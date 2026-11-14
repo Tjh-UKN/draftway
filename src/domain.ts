@@ -19,7 +19,7 @@ export interface Drawing extends Base {kind:'drawing';projectId:string|null;scen
 export type RecordItem = Goal | Project | Task | Milestone | Note | Issue | Journal | Habit | Sleep | Weight | Drawing;
 export interface Attachment { id: string; name: string; size: number; storedName: string; entityId: string | null; createdAt: string; }
 export interface Settings { userName: string; theme: 'dark' | 'light'; layout: 'overview' | 'focus'; closeToTray: boolean; autoStart: boolean; notifications: boolean; dailyBackup: boolean; }
-export interface Workspace { records: RecordItem[]; attachments: Attachment[]; settings: Settings; dataPath: string; }
+export interface WorkbenchData { records: RecordItem[]; attachments: Attachment[]; settings: Settings; dataPath: string; workspaceLayout?: unknown; }
 export interface BackupInfo { name: string; createdAt: string; size: number; }
 export const defaults: Settings = { userName: '同学', theme: 'dark', layout: 'overview', closeToTray: true, autoStart: false, notifications: true, dailyBackup: true };
 export const labels: Record<Kind, string> = { goal: '目标', project: '项目', task: '任务', milestone: '节点', note: '笔记', issue:'问题', journal:'工作记录',habit:'习惯',sleep:'睡眠',weight:'体重',drawing:'画板' };

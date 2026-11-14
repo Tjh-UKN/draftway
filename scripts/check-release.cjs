@@ -4,7 +4,7 @@ let playwright;try{playwright=require('playwright');}catch{playwright=require(re
  const exe=path.resolve('artifacts/北极星.exe');let startupLog='';let startupExit=null;const app=spawn(exe,[],{windowsHide:true,env:{...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9240'},stdio:['ignore','pipe','pipe']});app.stdout.on('data',value=>startupLog+=value);app.stderr.on('data',value=>startupLog+=value);app.on('exit',code=>startupExit=code);app.on('error',error=>startupLog+=error.message);
  try{
   let browser,page;
-  for(let i=0;i<40;i++){try{browser=await playwright.chromium.connectOverCDP('http://127.0.0.1:9240');page=browser.contexts()[0].pages()[0];await page.locator('.dashboard-intro h1').waitFor({timeout:1000});break;}catch{await new Promise(r=>setTimeout(r,500));}}
+  for(let i=0;i<40;i++){try{browser=await playwright.chromium.connectOverCDP('http://127.0.0.1:9240');page=browser.contexts()[0].pages()[0];await page.locator('.workspace-page h1').waitFor({timeout:1000});break;}catch{await new Promise(r=>setTimeout(r,500));}}
   if(!page)throw new Error(`Release app did not start (exit=${startupExit}): ${startupLog}`);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   const work=await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('load_workspace',{}));

@@ -22,6 +22,12 @@ pub fn external_url(value:&str)->Result<String,String>{
     if !parsed.username().is_empty()||parsed.password().is_some(){return Err("链接地址包含不支持的登录信息".into());}
     match parsed.scheme(){"http"|"https" if parsed.host_str().is_some()=>Ok(parsed.to_string()),"mailto" if !parsed.path().is_empty()=>Ok(parsed.to_string()),_=>Err("仅支持网页和邮件链接".into())}
 }
+pub fn edge_workspace_url(value:&str)->Result<String,String>{
+    if value.len()>2048{return Err("网页地址过长".into());}
+    let parsed=url::Url::parse(value.trim()).map_err(|_|"网页地址无效")?;
+    if !["http","https"].contains(&parsed.scheme()) || parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some(){return Err("工作区只支持不含登录信息的 HTTP 或 HTTPS 网页".into());}
+    Ok(format!("microsoft-edge:{parsed}"))
+}
 pub fn reminder_token(id:&str,at:&str)->Result<String,String>{let time=DateTime::parse_from_rfc3339(at).map_err(|_|"提醒时间无效")?;Ok(format!("{id}:{}",time.timestamp_millis()))}
 pub fn text<'a>(record: &'a Value, field: &str) -> &'a str { record.get(field).and_then(Value::as_str).unwrap_or("") }
 pub fn optional_id<'a>(record: &'a Value, field: &str) -> Option<&'a str> { record.get(field).and_then(Value::as_str).filter(|s| !s.is_empty()) }

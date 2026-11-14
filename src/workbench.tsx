@@ -1,8 +1,8 @@
 import { createContext, useContext } from 'react';
-import type { CaptureMode, Kind, Project, RecordItem, Task, Workspace } from './domain';
-export type Page = 'overview'|'planning'|'tasks'|'issues'|'journal'|'habits'|'health'|'calendar'|'knowledge'|'drawings'|'files'|'archive'|'settings';
+import type { CaptureMode, Kind, Project, RecordItem, Task, WorkbenchData } from './domain';
+export type Page = 'workspaces'|'overview'|'planning'|'tasks'|'issues'|'journal'|'habits'|'health'|'calendar'|'knowledge'|'drawings'|'files'|'archive'|'settings';
 export interface Workbench {
-  data:Workspace; page:Page; busy:boolean; navigate:(page:Page)=>void;
+  data:WorkbenchData; page:Page; busy:boolean; navigate:(page:Page)=>void;
   capture:(mode:CaptureMode,source?:Task|Project,day?:string)=>void; openProject:(id:string)=>void;
   edit:(record:RecordItem)=>void; create:(kind:Kind,projectId?:string)=>void;
   save:(record:RecordItem)=>Promise<boolean>; archive:(record:RecordItem,restore?:boolean)=>Promise<boolean>;

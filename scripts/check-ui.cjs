@@ -8,7 +8,7 @@ try{playwright=require('playwright');}catch{playwright=require(require.resolve('
  const page=await browser.newPage({viewport:{width:1440,height:960}});const errors=[];
  page.on('pageerror',e=>{errors.push(e.message);console.error('Runtime error',e.message);});
  await page.goto(process.env.NORTHSTAR_URL||'http://127.0.0.1:1420/');
- await page.locator('.dashboard-intro h1').waitFor();
+ await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'总览',exact:true}).click();await page.locator('.dashboard-intro h1').waitFor();
  fs.mkdirSync('artifacts',{recursive:true});
  await page.screenshot({path:'artifacts/dashboard.png',fullPage:true});
  const nav=label=>page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:new RegExp('^'+label)});
@@ -20,12 +20,12 @@ try{playwright=require('playwright');}catch{playwright=require(require.resolve('
  let dialog=await create('目标','验证年度目标');await dialog.getByLabel('说明').fill('建立可靠的工作流');await dialog.getByRole('button',{name:'保存',exact:true}).click();await dialog.waitFor({state:'hidden'});
  dialog=await create('项目','验证关联项目');await dialog.getByLabel('关联目标').selectOption({label:'验证年度目标'});await dialog.getByRole('button',{name:'保存',exact:true}).click();await dialog.waitFor({state:'hidden'});
  dialog=await create('任务','验证持久化任务');await dialog.getByLabel('所属项目').selectOption({label:'验证关联项目'});await dialog.getByLabel('优先级').selectOption({label:'优先推进'});await dialog.getByLabel('截止时间').fill('2026-10-03T15:30');await dialog.getByRole('button',{name:'保存',exact:true}).click();await dialog.waitFor({state:'hidden'});
- await nav('事项备忘').click();await page.locator('.task-title').filter({hasText:'验证持久化任务'}).waitFor();
+ await nav('事项备忘').click();await page.locator('.task-title:visible').filter({hasText:'验证持久化任务'}).waitFor();
  await page.getByRole('button',{name:'完成：验证持久化任务',exact:true}).click();await page.getByRole('button',{name:'重新打开：验证持久化任务',exact:true}).waitFor();
  await page.getByRole('button',{name:'看板视图',exact:true}).click();await page.getByRole('combobox',{name:'验证持久化任务的状态'}).selectOption('doing');await page.waitForTimeout(250);
  await page.keyboard.press('Control+k');await page.getByLabel('搜索工作台内容').fill('验证持久化任务');await page.locator('.search-results button').first().click();
  dialog=page.getByRole('dialog');await dialog.getByRole('textbox',{name:/^标题/}).fill('修改后的持久化任务');await dialog.getByRole('button',{name:'保存',exact:true}).click();await dialog.waitFor({state:'hidden'});
- await page.reload();await page.locator('.dashboard-intro h1').waitFor();await nav('事项备忘').click();await page.locator('.task-title').filter({hasText:'修改后的持久化任务'}).waitFor();
+ await page.reload();await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'总览',exact:true}).click();await page.locator('.dashboard-intro h1').waitFor();await nav('事项备忘').click();await page.locator('.task-title:visible').filter({hasText:'修改后的持久化任务'}).waitFor();
  dialog=await create('节点','验证项目验收');await dialog.getByLabel('所属项目').selectOption({label:'验证关联项目'});await dialog.getByLabel('节点日期').fill('2026-10-16');await dialog.getByRole('button',{name:'保存',exact:true}).click();await dialog.waitFor({state:'hidden'});await nav('日历与节点').click();await page.locator('.node-list h3').filter({hasText:'验证项目验收'}).waitFor();
  dialog=await create('笔记','验证关联笔记');await dialog.getByLabel('所属项目').selectOption({label:'验证关联项目'});await dialog.getByLabel('笔记正文').fill('关于目标与任务的验证记录\n第二段内容');await dialog.getByLabel('标签').fill('验证，项目');await dialog.getByRole('button',{name:'保存',exact:true}).click();await dialog.waitFor({state:'hidden'});await nav('知识整理').click();await page.locator('.note-title').filter({hasText:'验证关联笔记'}).waitFor();
  const chooser=page.waitForEvent('filechooser');await page.getByRole('button',{name:'添加附件',exact:true}).click();const file=await chooser;await file.setFiles({name:'验证附件.txt',mimeType:'text/plain',buffer:Buffer.from('attachment contents')});await page.locator('.file-chip').filter({hasText:'验证附件.txt'}).waitFor();

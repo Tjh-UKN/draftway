@@ -1,8 +1,9 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { advanceRepeat, archiveClosure, dateKey, defaults, healthError, normalizeRecord, starter, uid, type Attachment, type BackupInfo, type Habit, type RecordItem, type Settings, type Task, type Workspace } from './domain';
+import { advanceRepeat, archiveClosure, dateKey, defaults, healthError, normalizeRecord, starter, uid, type Attachment, type BackupInfo, type Habit, type RecordItem, type Settings, type Task, type WorkbenchData } from './domain';
 import {parseDrawingScene} from './drawings';
+import {parseWorkspaceLayout, webWorkspaceUrl, type WorkspaceLayout} from './workspace-layout';
 
 export const desktop = isTauri();
 const database: Promise<IDBDatabase> = new Promise((resolve,reject)=>{
@@ -17,12 +18,19 @@ async function put(store:string,value:unknown,key?:string) {const db=await datab
 async function remove(store:string,id:string) {const db=await database;return new Promise<void>((resolve,reject)=>{const tx=db.transaction(store,'readwrite');tx.objectStore(store).delete(id);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});}
 let serial=Promise.resolve();
 function queue<T>(fn:()=>Promise<T>):Promise<T>{const result=serial.then(fn);serial=result.then(()=>{},()=>{});return result;}
-export async function loadWorkspace():Promise<Workspace> {
+export async function saveWorkspaceLayout(layout: WorkspaceLayout): Promise<void> {
+  parseWorkspaceLayout(layout);
+  return queue(async () => {
+    if (desktop) await invoke('save_workspace_layout', {layout});
+    else await put('meta', layout, 'workspace-layout');
+  });
+}
+export async function loadWorkspace():Promise<WorkbenchData> {
   if(desktop)return invoke('load_workspace');
   return queue(async()=>{
     if(!await meta('initialized')) {for(const item of starter())await put('records',{...item,version:1});await put('meta',true,'initialized');}
     const records=(await readAll<RecordItem>('records')).map(normalizeRecord);const files=await readAll<Attachment & {blob:Blob}>('files');
-    return {records,attachments:files.map(({blob:_,...a})=>a),settings:await meta<Settings>('settings')||defaults,dataPath:'此浏览器的 IndexedDB（与 Windows 版数据独立）'};
+    return {records,attachments:files.map(({blob:_,...a})=>a),settings:await meta<Settings>('settings')||defaults,dataPath:'此浏览器的 IndexedDB（与 Windows 版数据独立）',workspaceLayout:await meta('workspace-layout')??null};
   });
 }
 export async function saveRecord(item:RecordItem):Promise<RecordItem> {
@@ -112,6 +120,11 @@ export const openDataFolder=()=>desktop?invoke<void>('open_data_folder'):Promise
 export const testNotification=()=>desktop?invoke<void>('test_notification'):Promise.reject(new Error('请在 Windows 应用中测试系统通知'));
 export const quitApp=()=>invoke<void>('quit_app');
 export async function openExternalUrl(url:string){if(desktop)return invoke<void>('open_external_url',{url});window.open(url,'_blank','noopener,noreferrer');}
+export async function openWebWorkspace(url:string) {
+  const target = webWorkspaceUrl(url);
+  if (desktop) return invoke<void>('open_web_workspace',{url:target});
+  window.open(target,'_blank','noopener,noreferrer');
+}
 export async function exportMarkdown(note:{id:string;title:string;body:string}){
  const name=(note.title.replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').trim().slice(0,80)||'笔记')+'.md';
  if(desktop){const path=await saveDialog({defaultPath:name,filters:[{name:'Markdown 笔记',extensions:['md']}]});if(!path)return false;await invoke('export_markdown',{id:note.id,path});return true;}
