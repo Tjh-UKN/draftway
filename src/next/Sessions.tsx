@@ -38,7 +38,7 @@ export function SessionView({state, session, change, onNode, active = true}: {st
   }
   return <div className="session-view" aria-label={`会话：${session.title}`}><div className="session-context"><span><Terminal size={14}/>{provider}{demo && <small className="simulation-badge">模拟</small>}</span><SessionStatus state={state} session={session}/></div>
     {!demo && session.cwd && <div className="session-directory" title={session.cwd}>{session.cwd}</div>}
-    {node && <div className="session-node-context"><button className="text-button" onClick={() => onNode(node.id)}>{node.title}<ChevronRight size={12}/></button></div>}
+    {node && <div className="session-node-context"><button className="text-button" onClick={() => onNode(node.id)}>{node.title}<ChevronRight size={12}/></button><small>发送时引用节点与材料</small></div>}
     <div className="transcript" aria-live="polite">
       {!session.messages.length && <Empty title="开始对话"/>}
       {session.messages.map(message => <article className={`message message-${message.role}`} key={message.id}><span className="message-role">{message.role === 'user' ? '你' : `${provider}${demo ? ' · 模拟回复' : ''}`}</span>{message.role === 'assistant' ? <MarkdownView value={message.text} onOpenLink={runtime ? url => {void invoke('open_external_url', {url});} : undefined}/> : <div>{message.text}</div>}</article>)}
@@ -48,6 +48,7 @@ export function SessionView({state, session, change, onNode, active = true}: {st
       {(session.connectionError || run?.error) && <p className="agent-error" role="alert">{session.connectionError || run?.error}</p>}
       {run?.state === 'cancelled' && <p className="quiet-note">本轮已停止。会话记录保留。</p>}
       {state.artifacts.filter(a => a.sessionId === session.id).map(artifact => {const placed = space.nodes.find(n => n.sourceArtifactId === artifact.id); return <details className="artifact" key={artifact.id}><summary><Check size={14}/>{artifact.title}</summary><p>{artifact.text}</p><button className="text-button" disabled={!placed && space.nodes.length >= 250} onClick={() => {const at = Date.now(); change(current => placeArtifact(current, artifact.id, at)); onNode(placed?.id || `artifact-${artifact.id}`);}}>{placed ? '查看地图节点' : '保留到地图'}<ChevronRight size={13}/></button></details>;})}
+      {run?.context && <details className="artifact"><summary>本轮引用的节点与材料</summary><pre className="material-text">{run.context}</pre></details>}
       <div ref={end}/>
     </div>
     <form className="session-composer" onSubmit={event => {event.preventDefault(); send();}}><textarea ref={composer} autoFocus={active} aria-label="会话消息" placeholder={busy ? '先写下下一步，草稿会保留' : '在这里输入消息…'} value={session.draft} maxLength={20000} disabled={demo ? !adapter : !runtime} onChange={event => {const draft = event.target.value; change(current => ({...current, sessions: current.sessions.map(s => s.id === session.id ? {...s, draft} : s)}));}} onKeyDown={event => {if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {event.preventDefault(); send();}}}/>

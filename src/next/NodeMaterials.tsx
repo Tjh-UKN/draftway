@@ -3,7 +3,7 @@ import {BookOpen, Check, Copy, ExternalLink, FileText, Globe, Plus, X} from 'luc
 import type {MindNode} from './model';
 import {parseMaterialTarget, type NodeMaterial} from './material-target';
 
-export function NodeMaterials({node, onChange}: {node: MindNode; onChange: (node: MindNode) => void}) {
+export function NodeMaterials({node, onChange, onOpen}: {node: MindNode; onChange: (node: MindNode) => void; onOpen?: (material: NodeMaterial) => void}) {
   const [adding, setAdding] = useState(false);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
@@ -25,7 +25,7 @@ export function NodeMaterials({node, onChange}: {node: MindNode; onChange: (node
       const Icon = parsed.kind === 'obsidian' ? BookOpen : parsed.kind === 'web' ? Globe : FileText;
       const content = <><Icon size={16}/><span><strong>{title}</strong><small>{parsed.detail}</small></span>{parsed.href && <ExternalLink size={12}/>}</>;
       return <div className="material-row" key={material.id}>
-        {parsed.href ? <a className="material-link" href={parsed.href} target={parsed.kind === 'web' ? '_blank' : undefined} rel="noopener noreferrer" title={material.target}>{content}</a> : <span className="material-link" title={material.target}>{content}</span>}
+        {onOpen ? <button className="material-link" type="button" title={material.target} onClick={() => {try {onOpen(material);}catch(e){setError(String(e));}}}>{content}</button> : parsed.href ? <a className="material-link" href={parsed.href} target={parsed.kind === 'web' ? '_blank' : undefined} rel="noopener noreferrer" title={material.target}>{content}</a> : <span className="material-link" title={material.target}>{content}</span>}
         {parsed.kind === 'file' && <button className="icon-button" aria-label={`复制${title}路径`} title="复制文件路径" onClick={async () => {try {await navigator.clipboard.writeText(material.target); setCopied(material.id); setError('');} catch {setError('复制失败，请从材料文字中复制路径。');}}}>{copied === material.id ? <Check size={13}/> : <Copy size={13}/>}</button>}
         <button className="icon-button material-remove" aria-label={`解除关联${title}`} title="解除关联" onClick={() => onChange(material.id === 'legacy-reference' ? {...node, reference: ''} : {...node, materials: (node.materials || []).filter(m => m.id !== material.id)})}><X size={13}/></button>
       </div>;

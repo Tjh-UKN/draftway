@@ -5,7 +5,7 @@ import type {ChangeState} from './Sessions';
 
 export function durableWorkbench(state: WorkbenchState): WorkbenchState {
   const owned = new Set(state.sessions.filter(session => ['codex', 'claude', 'pi'].includes(session.integrationId)).map(session => session.id));
-  return {...state, sessions: state.sessions.map(session => owned.has(session.id) ? {...session, messages: [], requests: [], nativeRevision: undefined} : session), artifacts: state.artifacts.filter(artifact => !owned.has(artifact.sessionId))};
+  return {...state, runs: state.runs.map(run => owned.has(run.sessionId) ? {...run, context: undefined} : run), sessions: state.sessions.map(session => owned.has(session.id) ? {...session, messages: [], requests: [], nativeRevision: undefined} : session), artifacts: state.artifacts.filter(artifact => !owned.has(artifact.sessionId))};
 }
 export function useWorkbenchPersistence(state: WorkbenchState, change: ChangeState, initialError: string) {
   const native = typeof window !== 'undefined' && isTauri();

@@ -16,7 +16,7 @@ fn valid_id(id: &str) -> bool {!id.is_empty() && id.len() <= 100 && id.bytes().a
 pub struct Message {pub id: String, pub role: String, pub text: String, pub at: u64}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Run {pub id: String, pub state: String, pub started_at: u64, pub finished_at: Option<u64>, pub source_turn_id: Option<String>, pub error: Option<String>, #[serde(default)] pub cancel_requested: bool}
+pub struct Run {pub id: String, pub state: String, pub started_at: u64, pub finished_at: Option<u64>, pub source_turn_id: Option<String>, pub error: Option<String>, #[serde(default)] pub cancel_requested: bool, #[serde(default)] pub context: Option<String>}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Request {pub id: String, pub kind: String, pub title: String, pub payload: Value, pub source_id: Value}
@@ -140,6 +140,9 @@ impl AgentHost {
         self.runtimes.lock().map_err(|e| e.to_string())?.insert(id.to_string(), rpc.clone()); Ok(rpc)
     }
     pub fn send(self: &Arc<Self>, id: &str, run_id: String, text: String) -> Result<AgentSession> {
+        self.send_context(id,run_id,text,String::new())
+    }
+    pub fn send_context(self: &Arc<Self>, id: &str, run_id: String, text: String, context: String) -> Result<AgentSession> {
         if text.trim().is_empty() || text.len() > 100_000 || !valid_id(&run_id) {return Err("消息内容或执行标识无效".into());}
         let session = self.session(id)?;
         if session.runs.iter().any(|r| ["running", "needs_input"].contains(&r.state.as_str())) {return Err("此会话仍有执行未结束".into());}
@@ -150,9 +153,10 @@ impl AgentHost {
             if session.messages.is_empty() && session.title.starts_with("新的会话") {session.title = text.lines().next().unwrap_or(&text).chars().take(32).collect();}
             session.error = None;
             session.messages.push(Message {id: format!("{run_id}-user"), role: "user".into(), text: text.clone(), at: now()});
-            session.runs.push(Run {id: run_id.clone(), state: "running".into(), started_at: now(), finished_at: None, source_turn_id: None, error: None, cancel_requested: false});
+            session.runs.push(Run {id: run_id.clone(), state: "running".into(), started_at: now(), finished_at: None, source_turn_id: None, error: None, cancel_requested: false, context: (!context.is_empty()).then(||context.clone())});
         })?;
         if rejected {return Err("此会话仍有执行未结束，或执行标识重复".into());}
+        let text=format!("{text}{context}");
         let host = self.clone(); let id = id.to_string();
         std::thread::spawn(move || {
             let result = (|| {
@@ -270,7 +274,7 @@ pub fn backends() -> Vec<Backend> {["codex", "claude", "pi"].into_iter().map(|id
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn record() -> AgentSession {AgentSession {id: "s".into(), workspace_id: "w".into(), node_id: None, backend: "codex".into(), title: "test".into(), cwd: String::new(), source_id: Some("thread".into()), created_at: 0, revision: 1, messages: vec![], requests: vec![], error: None, runs: vec![Run {id: "run".into(), state: "running".into(), started_at: 0, finished_at: None, source_turn_id: Some("turn".into()), error: None, cancel_requested: false}]}}
+    fn record() -> AgentSession {AgentSession {id: "s".into(), workspace_id: "w".into(), node_id: None, backend: "codex".into(), title: "test".into(), cwd: String::new(), source_id: Some("thread".into()), created_at: 0, revision: 1, messages: vec![], requests: vec![], error: None, runs: vec![Run {id: "run".into(), state: "running".into(), started_at: 0, finished_at: None, source_turn_id: Some("turn".into()), error: None, cancel_requested: false, context: None}]}}
     #[test]
     fn streams_without_duplicate_final_messages_and_never_maps_failure_to_success() {
         let mut s = record();

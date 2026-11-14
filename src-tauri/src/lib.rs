@@ -7,6 +7,7 @@ mod native_agents;
 mod workspace_state;
 mod review_service;
 mod background;
+mod resources;
 use crate::store::{Store,Result,error};
 use serde_json::{json,Value};
 use std::{fs, path::PathBuf, sync::{Arc,atomic::{AtomicBool, Ordering}}};
@@ -32,7 +33,22 @@ async fn agent_list(state: tauri::State<'_, Arc<native_agents::AgentHost>>) -> R
 #[tauri::command]
 async fn agent_create(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, workspace_id: String, node_id: Option<String>, backend: String, title: String, cwd: Option<String>) -> Result<native_agents::AgentSession> {state.create(id, workspace_id, node_id, backend, title, cwd)}
 #[tauri::command]
-async fn agent_send(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, run_id: String, text: String) -> Result<native_agents::AgentSession> {state.inner().send(&id, run_id, text)}
+async fn agent_send(state: tauri::State<'_, Arc<native_agents::AgentHost>>, app: tauri::State<'_, AppState>, id: String, run_id: String, text: String) -> Result<native_agents::AgentSession> {let session=state.session(&id)?;let context=resources::context(&app.store,&session.workspace_id,session.node_id.as_deref())?;state.inner().send_context(&id, run_id, text, context)}
+#[tauri::command]
+async fn read_material(state: tauri::State<'_, AppState>, workspace_id: String, node_id: String, material_id: String) -> Result<resources::TextFile> {resources::read_material(&state.store,&workspace_id,&node_id,&material_id)}
+#[tauri::command]
+async fn open_material(state: tauri::State<'_, AppState>, workspace_id: String, node_id: String, material_id: String) -> Result<()> {
+    let (space,path)=resources::material(&state.store,&workspace_id,&node_id,&material_id)?;
+    let target=space["nodes"].as_array().into_iter().flatten().find(|n|n["id"]==node_id).and_then(|node| {if material_id=="legacy-reference" {node["reference"].as_str()}else{node["materials"].as_array()?.iter().find(|m|m["id"]==material_id)?["target"].as_str()}});
+    if target.is_some_and(|target|target.starts_with("obsidian:")) {let mut url=url::Url::parse("obsidian://open").map_err(error)?;url.query_pairs_mut().append_pair("path",&resources::display_path(&path));return open::that(url.as_str()).map_err(error);}
+    let ext=path.extension().and_then(|e|e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !["md","txt","pdf","docx","xlsx","pptx","png","jpg","jpeg","gif","webp","csv","log","json","yaml","yml","toml","rs","py","c","cpp","h"].contains(&ext.as_str()) {return Err("此格式请从文件管理器手动打开".into());}
+    open::that(path).map_err(error)
+}
+#[tauri::command]
+async fn git_changed_files(state: tauri::State<'_, AppState>, workspace_id: String) -> Result<Vec<String>> {resources::git_files(&state.store,&workspace_id)}
+#[tauri::command]
+async fn git_file_diff(state: tauri::State<'_, AppState>, workspace_id: String, file: String) -> Result<Vec<resources::TextFile>> {resources::git_diff(&state.store,&workspace_id,&file)}
 #[tauri::command]
 async fn agent_stop(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String) -> Result<native_agents::AgentSession> {state.stop(&id)}
 #[tauri::command]
@@ -214,7 +230,7 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
                 handler(invoke)

@@ -20,6 +20,7 @@ export interface Workspace extends Space {
   dock: DockState;
   cwd?: string;
   review?: {url: string} | null;
+  materialRoots?: {name: string; path: string}[];
 }
 export interface Message {id: string; role: 'user' | 'assistant'; text: string; at: number}
 export interface AgentSession {
@@ -36,6 +37,7 @@ export interface Run {
   mapAction?: MapAction; targetNodeId?: string;
   error?: string | null;
   stopping?: boolean;
+  context?: string;
 }
 export interface Artifact {id: string; sessionId: string; runId: string; title: string; text: string}
 export type NoticeTarget = {kind: 'session'; sessionId: string} | {kind: 'report'; url: string; file: string} | {kind: 'workspace'};
@@ -251,6 +253,7 @@ export function parseWorkbench(value: unknown): WorkbenchState {
     for (const surface of space.surfaces) if (typeof surface.integrationId !== 'string' || typeof surface.title !== 'string' || (surface.text !== undefined && typeof surface.text !== 'string') || (surface.url !== undefined && typeof surface.url !== 'string') || (surface.integrationId === 'session' && !state.sessions.some(s => s.id === surface.resourceId && s.workspaceId === space.id))) return fail();
     if (space.cwd !== undefined && typeof space.cwd !== 'string') return fail();
     if (space.review != null && (typeof space.review.url !== 'string' || !reviewUrl(space.review.url))) return fail();
+    if (space.materialRoots !== undefined && (!Array.isArray(space.materialRoots) || space.materialRoots.length > 20 || space.materialRoots.some(root => !root || typeof root.name !== 'string' || !root.name.trim() || typeof root.path !== 'string' || !root.path.trim()))) return fail();
     const graph = space.graph;
     const window = space.sessionWindow;
     const tabs = space.sessionTabs;
@@ -265,6 +268,7 @@ export function parseWorkbench(value: unknown): WorkbenchState {
     if ((session.agentId !== undefined && !['codex', 'claude', 'pi'].includes(session.agentId)) || (session.linkedNodeIds !== undefined && (!Array.isArray(session.linkedNodeIds) || session.linkedNodeIds.some(id => !space.nodes.some(n => n.id === id))))) return fail();
   }
   for (const run of state.runs) {
+    if (run.context !== undefined && typeof run.context !== 'string') return fail();
     const session = state.sessions.find(s => s.id === run.sessionId);
     if ((run.error != null && typeof run.error !== 'string') || !session || !Object.hasOwn(statusNames, run.state) || run.state === ('idle' as string) || (run.outcome !== undefined ? !['succeeded', 'needs_input', 'failed'].includes(run.outcome) : session.integrationId === 'demo-agent') || !Number.isFinite(run.startedAt) || !Number.isFinite(run.dueAt) || (run.mapAction !== undefined && !['reply', 'progress', 'update', 'artifact'].includes(run.mapAction)) || (run.targetNodeId !== undefined && !state.spaces.find(w => w.id === session.workspaceId)?.nodes.some(n => n.id === run.targetNodeId))) return fail();
   }

@@ -31,6 +31,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let report = json!({"backend":backend,"passed":["explicit stop is cancelled, not failed", "owned runtime cleanup"],"dataPath":root});
         std::fs::write(format!("artifacts/agent-cancel-{backend}.json"), serde_json::to_vec_pretty(&report)?)?; println!("{report}"); return Ok(());
     }
+    if std::env::var_os("NORTHSTAR_CONTEXT_ONLY").is_some() {
+        let context="\n<Northstar reference material>Verification token: NORTHSTAR_CONTEXT_OK</Northstar reference material>".to_string();
+        host.send_context(&session.id,"context".into(),"Reply with only the verification token in the reference material. Do not use tools.".into(),context.clone())?;
+        let result=wait(&host,&session.id)?;assert_eq!(result.runs[0].context.as_ref(),Some(&context));assert!(result.messages.iter().any(|m|m.role=="assistant" && m.text.contains("NORTHSTAR_CONTEXT_OK")));host.shutdown();
+        let restored=AgentHost::open(root.clone(),Arc::new(|_|{}))?.session(&session.id)?;assert_eq!(restored.runs[0].context.as_ref(),Some(&context));
+        let report=json!({"backend":backend,"passed":["provider receives referenced material", "context snapshot survives restart"],"dataPath":root});std::fs::write(format!("artifacts/agent-context-{backend}.json"),serde_json::to_vec_pretty(&report)?)?;println!("{report}");return Ok(());
+    }
     host.send(&session.id, "r1".into(), "Reply with exactly NORTHSTAR_OK. Do not use any tools.".into())?;
     let first = wait(&host, &session.id)?;
     if !first.messages.iter().any(|m| m.role == "assistant" && m.text.contains("NORTHSTAR_OK")) {return Err("Missing real first reply".into());}
