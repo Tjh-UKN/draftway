@@ -1,0 +1,17 @@
+import {spawn} from 'node:child_process';
+import {existsSync,mkdirSync,writeFileSync,readFileSync} from 'node:fs';
+import path from 'node:path';
+import {build} from 'esbuild';
+const root=process.cwd();const env={...process.env};const pathKey=Object.keys(env).find(key=>key.toLowerCase()==='path')||'Path';
+if(existsSync(path.join(root,'.tools/cargo/bin/cargo.exe'))){env.CARGO_HOME=path.join(root,'.tools/cargo');env.RUSTUP_HOME=path.join(root,'.tools/rustup');env[pathKey]=path.join(env.CARGO_HOME,'bin')+path.delimiter+env[pathKey];}
+const assets=path.join(root,'artifacts/native-business-assets');mkdirSync(assets,{recursive:true});
+writeFileSync(path.join(assets,'next.html'),'<!doctype html><title>Business bridge probe</title><iframe src="child.html?embed=tasks"></iframe>');
+writeFileSync(path.join(assets,'child.html'),'<!doctype html><title>Trusted component</title><script type="module" src="child.js"></script>');
+const entry=`import {listenFromHost as listen} from ${JSON.stringify(path.join(root,'src/embedded-bridge.ts'))};import {isTauri,invoke} from '@tauri-apps/api/core';
+try{if(!isTauri())throw Error('Trusted component fell back to browser data');let received;const event=new Promise(resolve=>received=resolve);const off=await listen('business-bridge-event',e=>received(e.payload));const value=await invoke('business_probe',{stage:'bridge',result:null});if(value!=='NATIVE_MAIN_BRIDGE')throw Error('Main bridge reply mismatch');await Promise.race([event,new Promise((_,reject)=>setTimeout(()=>reject(Error('No native event')),3000))]);await off();await invoke('business_probe',{stage:'done',result:{passed:['component detects native host','command uses trusted main WebView','native event and listener cleanup']}});}catch(error){await invoke('business_probe',{stage:'error',result:{error:String(error)}});}`;
+await build({stdin:{contents:entry,resolveDir:root,sourcefile:'business-probe.ts',loader:'ts'},bundle:true,format:'esm',target:'es2022',outfile:path.join(assets,'child.js')});
+const manifest=path.join(assets,'business-smoke.manifest');writeFileSync(manifest,'<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"><dependency><dependentAssembly><assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/></dependentAssembly></dependency></assembly>');
+env.TAURI_CONFIG=JSON.stringify({identifier:'com.northstar.business-smoke',build:{frontendDist:'../artifacts/native-business-assets'},app:{windows:[{label:'main',url:'next.html',title:'北极星 · 业务组件验证',width:900,height:650,decorations:true}]}});env.NORTHSTAR_BUSINESS_REPORT=path.join(root,'artifacts/native-business-runtime.json');
+const run=(exe,args)=>new Promise((resolve,reject)=>{const child=spawn(exe,args,{env,stdio:'inherit',windowsHide:true});const timer=setTimeout(()=>{child.kill();reject(Error('Probe timed out'));},240000);child.on('error',error=>{clearTimeout(timer);reject(error);});child.on('exit',code=>{clearTimeout(timer);code===0?resolve():reject(Error(`${exe} exited ${code}`));});});
+await run('cargo',['rustc','--manifest-path','src-tauri/Cargo.toml','--example','business_smoke','--features','custom-protocol','--','-C','link-arg=/MANIFEST:EMBED','-C',`link-arg=/MANIFESTINPUT:${manifest}`]);
+await run(path.join(root,'src-tauri/target/debug/examples/business_smoke.exe'),[]);console.log(readFileSync(env.NORTHSTAR_BUSINESS_REPORT,'utf8'));

@@ -13,7 +13,7 @@ export function applyMapOperations(state: WorkbenchState, operations: MapOperati
       let text=op.payload.text||'';let body=node.body;const nodes=[...space.nodes];
       if(op.kind==='update'){if(body===op.payload.expectedBody)body=op.payload.body||'';else text=`AI 内容建议（原内容已变化，未覆盖）：\n${op.payload.body||''}`;}
       if(op.kind==='artifact'){
-        const id=`artifact-${op.id}`;
+        const id=`artifact-${op.seq}`;
         if(nodes.length>=250)text='AI 产物未放入地图：节点数量已达上限。';
         else {const artifact:MindNode={id,parentId:node.id,side:node.side,kind:'artifact',title:op.payload.title||'AI 产物',body:op.payload.body||'',progress:0,due:'',steps:[],updates:[{id:op.id,text:'从 AI 执行保留产物',at:op.at,sessionId:op.sessionId}]};if(!nodes.some(n=>n.id===id))nodes.push(artifact);text=`保留产物：${artifact.title}`;}
       }

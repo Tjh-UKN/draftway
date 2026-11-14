@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Archive, CircleAlert, FilePenLine, FilePlus2, Paperclip, RefreshCw, RotateCcw, Save, X } from 'lucide-react';
 import { dateKey, durationLabel, habitStats, healthError, issueStatuses, journalSummary, labels, makeRecord, noteTypes, shiftDay, sleepMinutes, type Kind, type Project, type Goal, type Task, type RecordItem } from './domain';
 import { useWorkbench } from './workbench';
@@ -8,9 +8,11 @@ import MarkdownEditor from './MarkdownEditor';
 import * as api from './api';
 const toInput=(iso:string|null)=>{if(!iso)return '';const d=new Date(iso);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;};
 const iso=(value:string)=>value?new Date(value).toISOString():null;
-export default function EntityEditor({initial,onClose}:{initial:RecordItem;onClose:()=>void}){
- const ctx=useWorkbench();const [record,setRecord]=useState<RecordItem>(structuredClone(initial));const [error,setError]=useState('');const [tagText,setTagText]=useState('tags'in initial?initial.tags.join('，'):'');
- const existingReminder='remindAt'in initial?initial.remindAt:null;const [reminderMode,setReminderMode]=useState(existingReminder?'custom':'none');const [customReminder,setCustomReminder]=useState(toInput(existingReminder));
+export default function EntityEditor({initial,onClose,draftKey}:{initial:RecordItem;onClose:()=>void;draftKey?:string}){
+ const [cached]=useState(()=>{if(!draftKey)return null;try{const value=JSON.parse(sessionStorage.getItem(draftKey)||'null');return value?.record?.id===initial.id&&value.record.kind===initial.kind&&value.record.version===initial.version?value:null;}catch{return null;}});
+ const ctx=useWorkbench();const [record,setRecord]=useState<RecordItem>(cached?.record||structuredClone(initial));const [error,setError]=useState('');const [tagText,setTagText]=useState<string>(cached?.tagText||('tags'in initial?initial.tags.join('，'):''));
+ const existingReminder='remindAt'in initial?initial.remindAt:null;const [reminderMode,setReminderMode]=useState<string>(cached?.reminderMode||(existingReminder?'custom':'none'));const [customReminder,setCustomReminder]=useState<string>(cached?.customReminder||toInput(existingReminder));
+ useEffect(()=>{if(draftKey)try{sessionStorage.setItem(draftKey,JSON.stringify({record,tagText,reminderMode,customReminder}));}catch{/* Saved records remain in the database. */}},[draftKey,record,tagText,reminderMode,customReminder]);
  const patch=(fields:object)=>setRecord(r=>({...r,...fields} as RecordItem));
  const projects=ctx.data.records.filter((r):r is Project=>r.kind==='project'&&(!r.archived||('projectId'in record&&record.projectId===r.id)));const goals=ctx.data.records.filter((r):r is Goal=>r.kind==='goal'&&(!r.archived||(record.kind==='project'&&record.goalId===r.id)));const tasks=ctx.data.records.filter((r):r is Task=>r.kind==='task'&&(!r.archived||('taskId'in record&&record.taskId===r.id)));
  const files=ctx.data.attachments.filter(a=>a.entityId===record.id);const archived=record.archived;

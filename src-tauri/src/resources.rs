@@ -22,7 +22,9 @@ pub fn target(space: &Value, value: &str) -> Result<PathBuf> {
         let params: std::collections::HashMap<_,_>=url.query_pairs().into_owned().collect();
         if let Some(path)=params.get("path") {return scoped(space,Path::new(path));}
         let vault=params.get("vault").ok_or("Obsidian 链接缺少库名")?;
-        let root=space["materialRoots"].as_array().into_iter().flatten().find(|root|root["name"].as_str()==Some(vault)).and_then(|root|root["path"].as_str()).ok_or("请在「自定工作区」添加与 Obsidian 库同名的材料目录。")?;
+        let matches:Vec<_>=space["materialRoots"].as_array().into_iter().flatten().filter(|root|root["name"].as_str()==Some(vault)).collect();
+        if matches.len()>1 {return Err("存在多个同名材料目录，请在「自定工作区」修改名称后再打开。".into());}
+        let root=matches.first().and_then(|root|root["path"].as_str()).ok_or("请在「自定工作区」添加与 Obsidian 库同名的材料目录。")?;
         let file=params.get("file").ok_or("请选择具体的 Obsidian 笔记")?.split('#').next().unwrap_or("");
         let mut path=PathBuf::from(root).join(file);if path.extension().is_none() {path.set_extension("md");}
         scoped(space,&path)
@@ -80,6 +82,7 @@ mod tests {
     fn scopes_canonical_paths_and_resolves_vault_notes_without_traversal() {
         let root=std::env::temp_dir().join(format!("northstar-resource-test-{}",uuid::Uuid::new_v4()));fs::create_dir_all(root.join("vault")).unwrap();fs::write(root.join("vault/note.md"),"Note").unwrap();fs::write(root.join("private.txt"),"Private").unwrap();let space=json!({"materialRoots":[{"name":"Knowledge","path":root.join("vault")} ]});
         assert_eq!(read(target(&space,"obsidian://open?vault=Knowledge&file=note").unwrap()).unwrap().text,"Note");assert!(target(&space,&root.join("private.txt").to_string_lossy()).is_err());assert!(target(&space,"obsidian://open?vault=Knowledge&file=../private.txt").is_err());
+        let duplicate=json!({"materialRoots":[{"name":"Knowledge","path":root.join("vault")},{"name":"Knowledge","path":root}]});assert!(target(&duplicate,"obsidian://open?vault=Knowledge&file=note").is_err());
     }
     #[test]
     fn context_contains_only_bound_materials_and_reports_unreadable_references() {

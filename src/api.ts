@@ -1,11 +1,13 @@
-import { invoke, isTauri } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { invoke as nativeInvoke, isTauri } from '@tauri-apps/api/core';
+import {embeddedInternals,listenFromHost as listen} from './embedded-bridge';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { advanceRepeat, archiveClosure, dateKey, defaults, healthError, normalizeRecord, starter, uid, type Attachment, type BackupInfo, type Habit, type RecordItem, type Settings, type Task, type WorkbenchData } from './domain';
 import {parseDrawingScene} from './drawings';
 import {parseWorkspaceLayout, webWorkspaceUrl, type WorkspaceLayout} from './workspace-layout';
 
-export const desktop = isTauri();
+const host=embeddedInternals();
+const invoke:typeof nativeInvoke=(command,args)=>host?host.invoke(command,args as Record<string,unknown>):nativeInvoke(command,args);
+export const desktop = isTauri() || !!host;
 const database: Promise<IDBDatabase> = new Promise((resolve,reject)=>{
   if(desktop) return;
   const request=indexedDB.open('northstar-preview-v1',1);

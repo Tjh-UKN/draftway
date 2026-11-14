@@ -1,0 +1,10 @@
+{
+  "protocol": "northstar.integration/1",
+  "id": "local.pr-review",
+  "version": "1.0.0",
+  "name": "PR 检视看板",
+  "surfaces": [
+    {"id": "dashboard", "kind": "webview", "entry": "http://127.0.0.1:8765/"}
+  ],
+  "capabilities": ["surface.open"]
+}

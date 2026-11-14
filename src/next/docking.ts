@@ -1,10 +1,13 @@
+import {isBusinessPage,type BusinessPage} from '../business-components';
 export interface ReviewFile {name: string; text: string}
 export type DockTab =
   | {id: string; kind: 'map'; title: string}
+  | {id: string; kind: 'events'; title: string}
   | {id: string; kind: 'session'; title: string; sessionId: string}
   | {id: string; kind: 'browser'; title: string; url: string}
   | {id: string; kind: 'report'; title: string; url: string; file: string}
   | {id: string; kind: 'material'; title: string; nodeId: string; materialId: string}
+  | {id: string; kind: 'business'; title: string; page: BusinessPage}
   | {id: string; kind: 'review'; title: string; files: ReviewFile[]};
 export interface TabGroup {kind: 'group'; id: string; tabs: string[]; activeId: string}
 export interface Split {kind: 'split'; id: string; axis: 'row' | 'column'; ratio: number; children: [DockNode, DockNode]}
@@ -115,11 +118,13 @@ export function validateDock(value: unknown, sessionIds: string[]): asserts valu
   for (const tab of dock.tabs) {
     if (!tab || typeof tab.id !== 'string' || !tab.id || !placed.includes(tab.id) || typeof tab.title !== 'string') return fail();
     if (tab.kind === 'map') {if (tab.id !== 'workspace') return fail();}
+    else if (tab.kind === 'events') {if (!tab.id) return fail();}
     else if (tab.kind === 'session') {if (tab.id !== tab.sessionId || !sessionIds.includes(tab.sessionId)) return fail();}
     else if (tab.kind === 'browser') {if (typeof tab.url !== 'string' || browserUrl(tab.url) === null) return fail();}
     else if (tab.kind === 'review') {if (!Array.isArray(tab.files) || tab.files.length > 2 || tab.files.some(f => !f || typeof f.name !== 'string' || typeof f.text !== 'string' || f.text.length > 262144)) return fail();}
     else if (tab.kind === 'report') {if (typeof tab.url !== 'string' || browserUrl(tab.url) === null || typeof tab.file !== 'string' || !/^round-[\w.-]+\.json$/.test(tab.file) || tab.file.includes('..')) return fail();}
     else if (tab.kind === 'material') {if (typeof tab.nodeId !== 'string' || typeof tab.materialId !== 'string') return fail();}
+    else if (tab.kind === 'business') {if (!isBusinessPage(tab.page)) return fail();}
     else return fail();
   }
   if (new Set(dock.recent).size !== dock.recent.length || dock.recent.some(id => !placed.includes(id))) return fail();

@@ -18,7 +18,7 @@ pub fn apply(snapshot: &mut Value, op: &Operation) {
     let mut text=op.payload["text"].as_str().unwrap_or("").to_string();
     if op.kind=="update" {if nodes[index]["body"]==op.payload["expectedBody"] {nodes[index]["body"]=op.payload["body"].clone();}else{text=format!("AI 内容建议（原内容已变化，未覆盖）：\n{}",op.payload["body"].as_str().unwrap_or(""));}}
     if op.kind=="artifact" {
-        let id=format!("artifact-{}",op.id);
+        let id=format!("artifact-{}",op.seq);
         if nodes.len()>=250 {text="AI 产物未放入地图：节点数量已达上限。".into();}
         else {if !nodes.iter().any(|n|n["id"]==id) {let title=op.payload["title"].as_str().unwrap_or("AI 产物");nodes.push(json!({"id":id,"parentId":op.node_id,"side":nodes[index]["side"].as_i64().unwrap_or(1),"kind":"artifact","title":title,"body":op.payload["body"],"progress":0,"due":"","steps":[],"updates":[{"id":op.id,"text":"从 AI 执行保留产物","at":op.at,"sessionId":op.session_id}]}));}
         text=format!("保留产物：{}",op.payload["title"].as_str().unwrap_or("AI 产物"));}

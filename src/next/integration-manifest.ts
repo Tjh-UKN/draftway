@@ -1,0 +1,7 @@
+export interface ExternalIntegration {protocol:'northstar.integration/1';id:string;version:string;name:string;surfaces:{id:string;kind:'webview';entry:string;title?:string}[];capabilities:string[]}
+export function parseIntegration(value:unknown):ExternalIntegration {
+  const v=value as ExternalIntegration;const token=(s:unknown)=>typeof s==='string' && /^[a-z][a-z\d._-]{0,63}$/i.test(s);
+  if(!v || v.protocol!=='northstar.integration/1' || !token(v.id) || ['graph','tasks','note','web','demo-agent','codex','claude','pi'].includes(v.id) || typeof v.name!=='string' || !v.name.trim() || v.name.length>60 || typeof v.version!=='string' || !Array.isArray(v.surfaces) || !v.surfaces.length || v.surfaces.length>12 || !Array.isArray(v.capabilities) || v.capabilities.some(c=>typeof c!=='string') || JSON.stringify(v).length>16000)throw Error('接入声明格式无效。');
+  const ids=new Set<string>();for(const surface of v.surfaces){if(!surface || !token(surface.id) || ids.has(surface.id) || surface.kind!=='webview' || typeof surface.entry!=='string' || (surface.title!==undefined && typeof surface.title!=='string'))throw Error('当前接入声明仅支持网页视图。');ids.add(surface.id);const url=new URL(surface.entry);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('工具入口须为 HTTP 或 HTTPS 地址。');}
+  return{protocol:v.protocol,id:v.id,name:v.name.trim(),version:v.version,surfaces:v.surfaces.map(s=>({...s})),capabilities:[...v.capabilities]};
+}

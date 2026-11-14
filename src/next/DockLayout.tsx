@@ -5,9 +5,11 @@ import {latestRun, statusNames, type AgentSession, type WorkbenchState, type Wor
 import {closeEmptyGroup, groups, mergeDock, moveDockTab, resizeDock, splitDockGroup, type DockNode, type DockState, type DockTab, type Edge, type Split, type TabGroup} from './docking';
 import {agentNames} from './integrations';
 import {useAgentRuntime} from './NativeAgents';
+import {businessComponents,type BusinessPage} from '../business-components';
+import type {ExternalIntegration} from './integration-manifest';
 
 const dragType = 'application/x-northstar-tab';
-type CreateKind = 'browser' | 'review' | NonNullable<AgentSession['agentId']>;
+type CreateKind = 'browser' | 'review' | 'events' | NonNullable<AgentSession['agentId']> | `business:${BusinessPage}` | `integration:${string}`;
 interface Props {
   state: WorkbenchState; space: Workspace;
   onChange: (update: (dock: DockState) => DockState) => void;
@@ -61,7 +63,7 @@ function GroupView({group, dragging, onDrag, ...props}: Props & {group: TabGroup
           </button>{tab.kind !== 'map' && <button className="dock-tab-close" aria-label={`关闭${label}页签`} title={tab.kind === 'session' ? '关闭页签，保留会话记录' : '关闭页签'} onClick={() => onClose(id)}><X size={11}/></button>}
         </div>;
       })}
-    </div><PaneMenu onCreate={kind => onCreate(kind, group.id)} onSplit={axis => onChange(dock => splitDockGroup(dock, group.id, axis))} onMerge={() => onChange(mergeDock)} canSplit={groups(space.dock.root).length < 8} canMerge={space.dock.root.kind === 'split'}/>{!group.tabs.length && <button className="icon-button" aria-label="关闭空分区" onClick={() => onChange(dock => closeEmptyGroup(dock, group.id))}><X size={13}/></button>}</header>
+    </div><PaneMenu integrations={state.externalIntegrations||[]} onCreate={kind => onCreate(kind, group.id)} onSplit={axis => onChange(dock => splitDockGroup(dock, group.id, axis))} onMerge={() => onChange(mergeDock)} canSplit={groups(space.dock.root).length < 8} canMerge={space.dock.root.kind === 'split'}/>{!group.tabs.length && <button className="icon-button" aria-label="关闭空分区" onClick={() => onChange(dock => closeEmptyGroup(dock, group.id))}><X size={13}/></button>}</header>
     <div className="dock-group-content" onDragOver={event => {
       if (!event.dataTransfer.types.includes(dragType)) return; event.preventDefault();
       const rect = event.currentTarget.getBoundingClientRect(); const x = (event.clientX - rect.left) / rect.width; const y = (event.clientY - rect.top) / rect.height;
@@ -73,9 +75,10 @@ function GroupView({group, dragging, onDrag, ...props}: Props & {group: TabGroup
     </div>
   </section>;
 }
-function PaneMenu({onCreate, onSplit, onMerge, canSplit, canMerge}: {onCreate: (kind: CreateKind) => void; onSplit: (axis: Split['axis']) => void; onMerge: () => void; canSplit: boolean; canMerge: boolean}) {
+function PaneMenu({onCreate, onSplit, onMerge, canSplit, canMerge, integrations}: {integrations:ExternalIntegration[];onCreate: (kind: CreateKind) => void; onSplit: (axis: Split['axis']) => void; onMerge: () => void; canSplit: boolean; canMerge: boolean}) {
   const agents = useAgentRuntime();
   const [position, setPosition] = useState<{left: number; top: number} | null>(null);
+  const [businessMenu,setBusinessMenu]=useState(false);
   const trigger = useRef<HTMLButtonElement>(null); const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!position) return; menu.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
@@ -85,8 +88,8 @@ function PaneMenu({onCreate, onSplit, onMerge, canSplit, canMerge}: {onCreate: (
     return () => {document.removeEventListener('pointerdown', dismiss); document.removeEventListener('focusin', dismiss); window.removeEventListener('resize', close);};
   }, [position]);
   const choose = (action: () => void) => {setPosition(null); action();};
-  return <><button className="icon-button pane-create" ref={trigger} title="新标签页与分屏" aria-label="新标签页与分屏" aria-expanded={!!position} aria-haspopup="menu" onClick={() => {const r = trigger.current!.getBoundingClientRect(); setPosition(position ? null : {left: Math.max(8, Math.min(innerWidth - 216, r.left)), top: Math.max(8, Math.min(innerHeight - 345, r.bottom + 5))});}}><Plus size={16}/></button>{position && createPortal(<div className="backend-menu pane-menu" role="menu" aria-label="新建内容" ref={menu} style={{position: 'fixed', ...position, zIndex: 1000}} onKeyDown={event => {
+  return <><button className="icon-button pane-create" ref={trigger} title="新标签页与分屏" aria-label="新标签页与分屏" aria-expanded={!!position} aria-haspopup="menu" onClick={() => {if(!position)setBusinessMenu(false);const r = trigger.current!.getBoundingClientRect(); setPosition(position ? null : {left: Math.max(8, Math.min(innerWidth - 216, r.left)), top: Math.max(8, Math.min(innerHeight - 345, r.bottom + 5))});}}><Plus size={16}/></button>{position && createPortal(<div className="backend-menu pane-menu" role="menu" aria-label="新建内容" ref={menu} style={{position: 'fixed', ...position, maxHeight: innerHeight-position.top-12, overflowY:'auto', zIndex: 1000}} onKeyDown={event => {
     if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); setPosition(null); trigger.current?.focus(); return;}
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {event.preventDefault(); const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]; const index = items.indexOf(document.activeElement as HTMLButtonElement); items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();}
-  }}><button role="menuitem" onClick={() => choose(() => onCreate('browser'))}><Globe size={15}/><span>浏览器</span></button><button role="menuitem" onClick={() => choose(() => onCreate('review'))}><FileCode2 size={15}/><span>文件审查</span></button><div className="pane-menu-label">Agent 会话</div>{Object.entries(agentNames).map(([id, name]) => <button key={id} role="menuitem" disabled={!!agents && !agents.backends.some(backend => backend.id === id && backend.available)} onClick={() => choose(() => onCreate(id as CreateKind))}><Terminal size={15}/><span>{name}</span><small>{agents ? agents.backends.some(backend => backend.id === id && backend.available) ? '本机' : '待接入' : '模拟'}</small></button>)}<div className="pane-menu-divider"/><button role="menuitem" disabled={!canSplit} onClick={() => choose(() => onSplit('row'))}><Columns2 size={15}/><span>向右分屏</span></button><button role="menuitem" disabled={!canSplit} onClick={() => choose(() => onSplit('column'))}><Rows2 size={15}/><span>向下分屏</span></button>{canMerge && <button role="menuitem" onClick={() => choose(onMerge)}><Layers size={15}/><span>合并所有分区</span></button>}</div>, document.body)}</>;
+  }}>{businessMenu?<><button role="menuitem" onClick={()=>setBusinessMenu(false)}>‹ 返回</button><div className="pane-menu-label">业务组件</div><button role="menuitem" onClick={()=>choose(()=>onCreate('events'))}><Network size={15}/><span>工作区事件</span></button>{businessComponents.map(component=><button role="menuitem" key={component.id} onClick={()=>choose(()=>onCreate(`business:${component.id}`))}><Layers size={15}/><span>{component.title}</span></button>)}{!!integrations.length&&<div className="pane-menu-label">接入工具</div>}{integrations.flatMap(i=>i.surfaces.map(surface=><button role="menuitem" key={`${i.id}:${surface.id}`} onClick={()=>choose(()=>onCreate(`integration:${i.id}:${surface.id}`))}><Globe size={15}/><span>{surface.title||i.name}</span></button>))}</>:<><button role="menuitem" onClick={() => choose(() => onCreate('browser'))}><Globe size={15}/><span>浏览器</span></button><button role="menuitem" onClick={() => choose(() => onCreate('review'))}><FileCode2 size={15}/><span>文件审查</span></button><div className="pane-menu-label">Agent 会话</div>{Object.entries(agentNames).map(([id, name]) => <button key={id} role="menuitem" disabled={!!agents && !agents.backends.some(backend => backend.id === id && backend.available)} onClick={() => choose(() => onCreate(id as CreateKind))}><Terminal size={15}/><span>{name}</span><small>{agents ? agents.backends.some(backend => backend.id === id && backend.available) ? '本机' : '待接入' : '模拟'}</small></button>)}<div className="pane-menu-divider"/><button role="menuitem" onClick={()=>setBusinessMenu(true)}><Layers size={15}/><span>业务组件</span><small>›</small></button><div className="pane-menu-divider"/><button role="menuitem" disabled={!canSplit} onClick={() => choose(() => onSplit('row'))}><Columns2 size={15}/><span>向右分屏</span></button><button role="menuitem" disabled={!canSplit} onClick={() => choose(() => onSplit('column'))}><Rows2 size={15}/><span>向下分屏</span></button>{canMerge && <button role="menuitem" onClick={() => choose(onMerge)}><Layers size={15}/><span>合并所有分区</span></button>}</>}</div>, document.body)}</>;
 }
