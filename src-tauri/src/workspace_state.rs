@@ -21,7 +21,7 @@ pub fn load(store: &Store) -> Result<Option<Value>> {
 }
 pub fn save(store: &Store, value: &Value) -> Result<()> {
     validate(value)?;
-    let mut db=store.db.lock().map_err(error)?;let tx=db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(error)?;let value=crate::map_ops::merge(&tx,value)?;validate(&value)?;
+    let mut db=store.write_db()?;let tx=db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(error)?;let value=crate::map_ops::merge(&tx,value)?;validate(&value)?;
     tx.execute("INSERT INTO metadata(key,value) VALUES('workbench-shell-v2',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [serde_json::to_string(&value).map_err(error)?]).map_err(error)?;tx.commit().map_err(error)?;
     Ok(())
 }

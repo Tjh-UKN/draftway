@@ -118,3 +118,6 @@ describe('browser and read-only file review', () => {
     await expect(readReviewFile(new File(['x'.repeat(262145)], 'large'))).rejects.toThrow();
   });
 });
+
+import {repairBrowserIds} from './docking';
+it('migrates unsafe browser IDs without losing their pane or history order',()=>{const dock=openDockTab(initialDock(),{id:'dashboard:http://localhost:8765/',kind:'browser',url:'http://localhost:8765/',title:'Review'});const next=repairBrowserIds(dock,new Set(),()=>'safe-id');expect(next.tabs.find(t=>t.kind==='browser')?.id).toBe('safe-id');expect(next.recent.at(-1)).toBe('safe-id');expect(focusedGroup(next).activeId).toBe('safe-id');validateDock(next,[]);});

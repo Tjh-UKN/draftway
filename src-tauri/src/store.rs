@@ -3,9 +3,9 @@ use chrono::{DateTime, Datelike, Local};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{fs, path::PathBuf, sync::Mutex};
+use std::{fs, path::PathBuf, sync::{Mutex,MutexGuard,atomic::{AtomicBool,AtomicU64,Ordering}}};
 
-pub struct Store { pub db: Mutex<Connection>, pub root: PathBuf }
+pub struct Store { pub db: Mutex<Connection>, pub root: PathBuf, pub maintenance:AtomicBool, pub restore_epoch:AtomicU64 }
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all="camelCase")]
 pub struct Attachment { pub id:String, pub name:String, pub size:u64, pub stored_name:String, pub entity_id:Option<String>, pub created_at:String }
@@ -32,7 +32,7 @@ impl Store {
           CREATE TABLE IF NOT EXISTS reminders(token TEXT PRIMARY KEY, delivered_at TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);").map_err(error)?;
         db.execute("INSERT OR IGNORE INTO settings(id,data) VALUES(1,?1)",[serde_json::to_string(&Settings::default()).map_err(error)?]).map_err(error)?;
-        let store=Self{db:Mutex::new(db),root};
+        let store=Self{db:Mutex::new(db),root,maintenance:AtomicBool::new(false),restore_epoch:AtomicU64::new(0)};
         if (1..5).contains(&version){crate::backup::create(&store,"before-upgrade-v0.5")?;}
         {let mut connection=store.db.lock().map_err(error)?;migrate_connection(&mut connection)?;}
         Ok(store)
@@ -54,6 +54,7 @@ impl Store {
         }
         tx.execute("INSERT INTO metadata(key,value) VALUES('initialized','true')",[]).map_err(error)?;tx.commit().map_err(error)
     }
+    pub fn write_db(&self)->Result<MutexGuard<'_,Connection>> {let db=self.db.lock().map_err(error)?;if self.maintenance.load(Ordering::SeqCst){return Err("正在恢复数据，请稍后重试".into());}Ok(db)}
     pub fn load(&self)->Result<WorkbenchData> {
         let db=self.db.lock().map_err(error)?;
         let layout:Option<String>=db.query_row("SELECT value FROM metadata WHERE key='workspace_layout'",[],|row|row.get(0)).optional().map_err(error)?;
@@ -61,14 +62,14 @@ impl Store {
     }
     pub fn put_workspace_layout(&self,layout:&Value)->Result<()> {
         crate::workspaces::validate(layout)?;
-        let db=self.db.lock().map_err(error)?;
+        let db=self.write_db()?;
         db.execute("INSERT INTO metadata(key,value) VALUES('workspace_layout',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[serde_json::to_string(layout).map_err(error)?]).map_err(error)?;
         Ok(())
     }
     pub fn save(&self,mut record:Value)->Result<Value> {
         domain::normalize(&mut record);
         domain::validate(&record)?;
-        let mut db=self.db.lock().map_err(error)?;
+        let mut db=self.write_db()?;
         let tx=db.transaction().map_err(error)?;
         let id=domain::text(&record,"id").to_owned();
         let kind=domain::text(&record,"kind").to_owned();
@@ -144,7 +145,7 @@ impl Store {
     pub fn check_habit(&self,id:&str,day:&str,checked:bool)->Result<Value>{
         let date=chrono::NaiveDate::parse_from_str(day,"%Y-%m-%d").map_err(|_|"签到日期无效")?;
         if date.format("%Y-%m-%d").to_string()!=day||date>Local::now().date_naive(){return Err("不能对未来日期签到".into());}
-        let mut db=self.db.lock().map_err(error)?;let tx=db.transaction().map_err(error)?;let mut record=get(&tx,id)?.ok_or("习惯不存在")?;
+        let mut db=self.write_db()?;let tx=db.transaction().map_err(error)?;let mut record=get(&tx,id)?.ok_or("习惯不存在")?;
         if domain::text(&record,"kind")!="habit"||record["archived"]==true{return Err("请先恢复或选择有效习惯".into());}
         if day<domain::text(&record,"startDate"){return Err("不能对习惯开始之前的日期签到".into());}
         let exists=record["checkIns"].as_object().ok_or("签到记录格式无效")?.contains_key(day);
@@ -156,7 +157,7 @@ impl Store {
         write(&tx,&record,None)?;tx.commit().map_err(error)?;Ok(record)
     }
     pub fn archive(&self,id:&str,restore:bool)->Result<()> {
-        let mut db=self.db.lock().map_err(error)?;
+        let mut db=self.write_db()?;
         let tx=db.transaction().map_err(error)?;
         let all=records(&tx)?;
         let target=all.iter().find(|r|domain::text(r,"id")==id).ok_or("记录不存在")?;
@@ -179,7 +180,7 @@ impl Store {
         tx.commit().map_err(error)
     }
     pub fn delete(&self,id:&str)->Result<()> {
-        let mut db=self.db.lock().map_err(error)?;
+        let mut db=self.write_db()?;
         let tx=db.transaction().map_err(error)?;
         let item=get(&tx,id)?.ok_or("记录不存在")?;
         if item["archived"].as_bool()!=Some(true) {return Err("只有归档记录可以永久删除".into());}
@@ -191,7 +192,7 @@ impl Store {
     }
     pub fn put_settings(&self,s:&Settings)->Result<()> {
         if s.user_name.chars().count()>30 || !["dark","light"].contains(&s.theme.as_str()) || !["overview","focus"].contains(&s.layout.as_str()) {return Err("设置值无效".into());}
-        let db=self.db.lock().map_err(error)?;
+        let db=self.write_db()?;
         db.execute("UPDATE settings SET data=?1 WHERE id=1",[serde_json::to_string(s).map_err(error)?]).map_err(error)?;Ok(())
     }
 }

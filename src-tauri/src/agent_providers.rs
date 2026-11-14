@@ -38,9 +38,16 @@ fn wsl_path(path: &str) -> Result<String> {
     let mut command = Command::new("wsl.exe"); command.args(["--exec", "wslpath", "-a", "-u", path]);
     timed_output(command, 8).and_then(|bytes| String::from_utf8(bytes).ok()).map(|s| s.trim().to_string()).filter(|s| s.starts_with('/')).ok_or_else(|| "无法把工作目录转换为 WSL 路径".into())
 }
+fn relocate_pi_header(path:&Path,cwd:&str)->Result<()> {
+    use std::io::{BufRead,Write};
+    let mut input=std::io::BufReader::new(std::fs::File::open(path).map_err(|e|e.to_string())?);let mut line=String::new();input.read_line(&mut line).map_err(|e|e.to_string())?;let mut header:Value=serde_json::from_str(&line).map_err(|_|"Pi 来源会话头无效，历史文件已保留")?;
+    if header["type"]!="session"{return Err("Pi 来源会话头无效，历史文件已保留".into());}if header["cwd"]==cwd{return Ok(());}header["cwd"]=json!(cwd);
+    let temporary=path.with_extension(format!("{}.tmp",uuid::Uuid::new_v4()));let result=(||{let mut output=std::fs::File::create(&temporary).map_err(|e|e.to_string())?;serde_json::to_writer(&mut output,&header).map_err(|e|e.to_string())?;output.write_all(b"\n").map_err(|e|e.to_string())?;std::io::copy(&mut input,&mut output).map_err(|e|e.to_string())?;output.sync_all().map_err(|e|e.to_string())?;drop(output);drop(input);std::fs::rename(&temporary,path).map_err(|e|e.to_string())})();if result.is_err(){let _=std::fs::remove_file(temporary);}result
+}
 impl Provider {
     pub fn command(&self, cwd: &str, source: Option<&str>, session_root: &Path, tools: Option<&ToolConfig>) -> Result<(Command, Option<String>, Option<String>)> {
         let mut args: Vec<String> = Vec::new(); let mut planned = None;
+        let runtime_cwd=if self.wsl{wsl_path(cwd)?}else{cwd.into()};
         match self.backend.as_str() {
             "codex" => args.extend(["app-server", "--listen", "stdio://"].map(String::from)),
             "claude" => {
@@ -52,6 +59,7 @@ impl Provider {
                 std::fs::create_dir_all(session_root).map_err(|e| e.to_string())?;
                 let file = source.map(String::from).unwrap_or_else(|| session_root.join(format!("{}.jsonl", uuid::Uuid::new_v4())).to_string_lossy().into_owned());
                 let file = if self.wsl {wsl_path(&file)?} else {file};
+                if let Some(name)=file.rsplit(['\\','/']).next(){let owned=session_root.join(name);if owned.is_file(){let expected=if self.wsl{wsl_path(&owned.to_string_lossy())?}else{owned.to_string_lossy().into_owned()};if file==expected{relocate_pi_header(&owned,&runtime_cwd)?;}}}
                 args.extend(["--mode".into(), "rpc".into(), "--session".into(), file.clone()]); planned = Some(file);
             },
             _ => return Err("不支持的执行器".into()),
@@ -65,7 +73,7 @@ impl Provider {
         let token = self.wsl.then(|| uuid::Uuid::new_v4().to_string());
         let mut command = if self.wsl {
             let mut command = Command::new("wsl.exe");
-            command.args(["--cd", &wsl_path(cwd)?, "--exec", "/usr/bin/setsid", "--wait", "/bin/bash", "-ic", r#"printf '__NORTHSTAR_PROCESS__:%s:%s:%s\n' "$WSL_DISTRO_NAME" "$(id -un)" "$$" >&2; export NORTHSTAR_SESSION_TOKEN="$1"; shift; exec "$@""#, "northstar", token.as_deref().unwrap()]).arg(&self.program).args(args); command
+            command.args(["--cd", &runtime_cwd, "--exec", "/usr/bin/setsid", "--wait", "/bin/bash", "-ic", r#"printf '__NORTHSTAR_PROCESS__:%s:%s:%s\n' "$WSL_DISTRO_NAME" "$(id -un)" "$$" >&2; export NORTHSTAR_SESSION_TOKEN="$1"; shift; exec "$@""#, "northstar", token.as_deref().unwrap()]).arg(&self.program).args(args); command
         } else {let mut command = Command::new(&self.program); command.current_dir(cwd).args(&self.prefix).args(args); command};
         command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         #[cfg(windows)] {use std::os::windows::process::CommandExt; command.creation_flags(0x08000000);}
@@ -178,6 +186,8 @@ pub fn response(backend: &str, request: &Request, answer: Value) -> Result<Value
 mod tests {
     use super::*;
     fn session(backend: &str) -> AgentSession {serde_json::from_value(json!({"id":"s","workspaceId":"w","nodeId":null,"backend":backend,"title":"test","cwd":"C:/project","sourceId":null,"createdAt":0,"revision":1,"messages":[],"requests":[],"error":null,"runs":[{"id":"r","state":"running","startedAt":0,"finishedAt":null,"sourceTurnId":null,"error":null}]})).unwrap()}
+    #[test]
+    fn relocating_owned_pi_header_preserves_the_transcript_bytes(){let root=std::env::temp_dir().join(format!("northstar-pi-header-{}",uuid::Uuid::new_v4()));std::fs::create_dir_all(&root).unwrap();let path=root.join("session.jsonl");let body="{\"type\":\"message\",\"text\":\"保留\"}\n";std::fs::write(&path,format!("{{\"type\":\"session\",\"cwd\":\"old\"}}\n{body}")).unwrap();relocate_pi_header(&path,"new").unwrap();let text=std::fs::read_to_string(path).unwrap();let (header,rest)=text.split_once('\n').unwrap();assert_eq!(serde_json::from_str::<Value>(header).unwrap()["cwd"],"new");assert_eq!(rest,body);}
     #[test]
     fn rpc_frames_preserve_text_and_correlate_each_provider() {
         let value = wire_request("pi", 7, "prompt", json!({"message":"text\u{2028}with\nnewlines"})); assert_eq!(value["message"], "text\u{2028}with\nnewlines"); assert_eq!(value["id"], "7");

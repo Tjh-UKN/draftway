@@ -2,7 +2,7 @@ import {newSpace, parseState, seedState, type DesignState, type Space} from './m
 import type {WidgetWindowRect} from '../workspace-layout';
 import type {LayoutTemplate} from './composition';
 import {parseIntegration,type ExternalIntegration} from './integration-manifest';
-import {closeDockTab, groups, initialDock, moveDockTab, openDockTab, selectDockTab, validateDock, type DockState} from './docking';
+import {closeDockTab, groups, initialDock, moveDockTab, openDockTab, repairBrowserIds, selectDockTab, validateDock, type DockState} from './docking';
 
 export type RunState = 'running' | 'needs_input' | 'succeeded' | 'failed' | 'cancelled';
 export type DemoOutcome = 'succeeded' | 'needs_input' | 'failed';
@@ -242,12 +242,13 @@ export function parseWorkbench(value: unknown): WorkbenchState {
   if(raw.templates!==undefined){if(!Array.isArray(raw.templates)||raw.templates.length>30||new Set(raw.templates.map(t=>t.id)).size!==raw.templates.length)return fail();for(const template of raw.templates){if(!template || typeof template.id!=='string' || typeof template.name!=='string' || !template.name.trim() || template.dock.tabs.some(t=>!['map','events','business','review','browser'].includes(t.kind)))return fail();validateDock(template.dock,[]);}}
   if(raw.externalIntegrations!==undefined){if(!Array.isArray(raw.externalIntegrations)||raw.externalIntegrations.length>30||new Set(raw.externalIntegrations.map(i=>i.id)).size!==raw.externalIntegrations.length)return fail();raw.externalIntegrations.forEach(parseIntegration);}
   parseState({version: 2, activeId: raw.activeId, spaces: raw.spaces});
+  const browserIds=new Set<string>();
   const state: WorkbenchState = {...raw, version: 2, spaces: raw.spaces.map(space => {
     const activeTab = space.layout?.panes?.find(p => p.id === space.layout.activePaneId)?.activeId;
     const legacySession = space.surfaces?.find(s => s.id === activeTab && s.integrationId === 'session')?.resourceId;
     const window = space.sessionWindow ?? {...defaultSessionWindow(), sessionId: legacySession || null};
     const sessionTabs = space.sessionTabs ?? {ids: window.sessionId ? [window.sessionId] : [], activeId: window.sessionId || 'workspace', recent: window.sessionId ? ['workspace', window.sessionId] : ['workspace']};
-    return {...space, review: space.review === undefined && space.website === 'http://127.0.0.1:8765/' ? {url: space.website} : space.review ?? null, graph: {...space.graph, ...((raw.version as number) === 1 ? {camera: null} : {})}, sessionPanelOpen: space.sessionPanelOpen ?? false, sessionWindow: window, sessionTabs, dock: space.dock ?? initialDock(sessionTabs.ids, sessionTabs.activeId, sessionTabs.recent)};
+    return {...space, review: space.review === undefined && space.website === 'http://127.0.0.1:8765/' ? {url: space.website} : space.review ?? null, graph: {...space.graph, ...((raw.version as number) === 1 ? {camera: null} : {})}, sessionPanelOpen: space.sessionPanelOpen ?? false, sessionWindow: window, sessionTabs, dock: repairBrowserIds(space.dock ?? initialDock(sessionTabs.ids, sessionTabs.activeId, sessionTabs.recent),browserIds)};
   })};
   parseState({version: 2, activeId: state.activeId, spaces: state.spaces});
   const unique = (items: {id: string}[]) => items.every(i => i && typeof i.id === 'string' && i.id.length > 0) && new Set(items.map(i => i.id)).size === items.length;

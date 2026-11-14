@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 pub struct Operation {pub seq: u64, pub id: String, pub workspace_id: String, pub node_id: String, pub session_id: String, pub run_id: String, pub kind: String, pub payload: Value, pub at: u64}
 fn init(db: &Connection) -> Result<()> {db.execute_batch("CREATE TABLE IF NOT EXISTS map_operations(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,data TEXT NOT NULL CHECK(json_valid(data))); ").map_err(error)}
 pub fn changes(db: &Connection, after: u64) -> Result<Vec<Operation>> {
-    init(db)?;let mut query=db.prepare("SELECT seq,data FROM map_operations WHERE seq>?1 ORDER BY seq").map_err(error)?;
+    let exists:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='map_operations')",[],|row|row.get(0)).map_err(error)?;if !exists{return Ok(vec![]);}let mut query=db.prepare("SELECT seq,data FROM map_operations WHERE seq>?1 ORDER BY seq").map_err(error)?;
     let rows=query.query_map([after],|row|Ok((row.get::<_,u64>(0)?,row.get::<_,String>(1)?))).map_err(error)?;
     rows.map(|row| {let (seq,data)=row.map_err(error)?;let mut op:Operation=serde_json::from_str(&data).map_err(error)?;op.seq=seq;Ok(op)}).collect()
 }
@@ -32,7 +32,7 @@ pub fn merge(db: &Connection, snapshot: &Value) -> Result<Value> {
     Ok(snapshot)
 }
 pub fn append(store: &Store, mut op: Operation) -> Result<Operation> {
-    let mut db=store.db.lock().map_err(error)?;init(&db)?;let tx=db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(error)?;
+    let mut db=store.write_db()?;init(&db)?;let tx=db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(error)?;
     if let Some((seq,data))=tx.query_row("SELECT seq,data FROM map_operations WHERE id=?1",[&op.id],|row|Ok((row.get::<_,u64>(0)?,row.get::<_,String>(1)?))).optional().map_err(error)? {let mut old:Operation=serde_json::from_str(&data).map_err(error)?;old.seq=seq;if old.workspace_id!=op.workspace_id || old.session_id!=op.session_id || old.kind!=op.kind || old.payload!=op.payload || old.node_id!=op.node_id {return Err("重复标识对应的地图操作不一致".into());}return Ok(old);}
     let raw:String=tx.query_row("SELECT value FROM metadata WHERE key='workbench-shell-v2'",[],|r|r.get(0)).map_err(error)?;let mut snapshot:Value=serde_json::from_str(&raw).map_err(error)?;snapshot=merge(&tx,&snapshot)?;
     let space=snapshot["spaces"].as_array().and_then(|spaces|spaces.iter().find(|s|s["id"]==op.workspace_id)).ok_or("工作区不存在")?;

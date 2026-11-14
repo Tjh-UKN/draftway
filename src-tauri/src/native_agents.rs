@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, ChildStdin}, sync::{Arc, Mutex, Weak, atomic::{AtomicU64, Ordering}, mpsc}, time::Duration};
+use std::{collections::HashMap, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, ChildStdin}, sync::{Arc, Mutex, Weak, atomic::{AtomicBool, AtomicU64, Ordering}, mpsc}, time::Duration};
 #[path = "agent_providers.rs"]
 mod providers;
 #[path = "agent_process.rs"]
@@ -58,6 +58,7 @@ pub struct AgentHost {
     root: PathBuf, db: Mutex<Connection>, sessions: Mutex<HashMap<String, AgentSession>>, runtimes: Mutex<HashMap<String, Arc<Rpc>>>, sink: Sink,
     checkpoints: Mutex<HashMap<String, (u64, u64)>>,
     tools: Mutex<Option<WorkspaceTools>>,
+    maintenance: AtomicBool,
 }
 impl AgentHost {
     pub fn open(root: PathBuf, sink: Sink) -> Result<Arc<Self>> {
@@ -73,7 +74,7 @@ impl AgentHost {
             if interrupted {session.requests.clear(); session.revision += 1;}
             sessions.insert(session.id.clone(), session);
         }}
-        let host = Arc::new(Self {root, db: Mutex::new(db), sessions: Mutex::new(sessions), runtimes: Mutex::new(HashMap::new()), sink, checkpoints: Mutex::new(HashMap::new()), tools: Mutex::new(None)});
+        let host = Arc::new(Self {root, db: Mutex::new(db), sessions: Mutex::new(sessions), runtimes: Mutex::new(HashMap::new()), sink, checkpoints: Mutex::new(HashMap::new()), tools: Mutex::new(None),maintenance:AtomicBool::new(false)});
         for session in host.list()? {host.persist(&session)?;}
         Ok(host)
     }
@@ -90,6 +91,7 @@ impl AgentHost {
         let (save, publish) = {let mut clocks = self.checkpoints.lock().map_err(|e|e.to_string())?; let clock = clocks.entry(id.into()).or_default(); let at = now(); let save = !stream || at.saturating_sub(clock.0) >= 1000; let publish = !stream || at.saturating_sub(clock.1) >= 100; if save {clock.0=at;} if publish {clock.1=at;} (save,publish)};
         let (snapshot, saved) = {
             let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+            if self.maintenance.load(Ordering::SeqCst){return Err("正在恢复会话，请稍后重试".into());}
             let session = sessions.get_mut(id).ok_or("会话不存在")?; change(session); session.revision += 1;
             let saved = if save {self.persist(session)} else {Ok(())};
             if let Err(error) = &saved {session.error = Some(format!("执行记录保存失败：{error}")); session.requests.clear(); if let Some(run) = session.runs.last_mut() {run.state = "failed".into(); run.finished_at = Some(now()); run.error = session.error.clone();}}
@@ -108,7 +110,7 @@ impl AgentHost {
         if !directory.is_dir() {return Err("请选择文件夹作为工作目录".into());}
         let value = directory.to_string_lossy(); let cwd = if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {format!(r"\\{unc}")} else {value.strip_prefix(r"\\?\").unwrap_or(&value).to_string()};
         let session = AgentSession {id: id.clone(), workspace_id, node_id, backend, title: if title.trim().is_empty() {"新的会话".into()} else {title.chars().take(100).collect()}, cwd, source_id: None, created_at: now(), revision: 1, messages: Vec::new(), runs: Vec::new(), requests: Vec::new(), error: None};
-        self.persist(&session)?; self.sessions.lock().map_err(|e| e.to_string())?.insert(id, session.clone()); (self.sink)(&session); Ok(session)
+        {let mut sessions=self.sessions.lock().map_err(|e|e.to_string())?;if self.maintenance.load(Ordering::SeqCst){return Err("正在恢复会话，请稍后重试".into());}self.persist(&session)?;sessions.insert(id,session.clone());}(self.sink)(&session); Ok(session)
     }
     fn connect(self: &Arc<Self>, id: &str) -> Result<Arc<Rpc>> {
         if let Some(runtime) = self.runtimes.lock().map_err(|e| e.to_string())?.get(id).cloned() {return Ok(runtime);}
@@ -217,6 +219,12 @@ impl AgentHost {
         self.update(id, |s| {s.requests.retain(|r| r.id != request_id); if s.requests.is_empty() {if let Some(run) = s.runs.last_mut().filter(|r| r.state == "needs_input") {run.state = "running".into();}}})
     }
     pub fn shutdown(&self) {if let Ok(mut runtimes) = self.runtimes.lock() {runtimes.clear();}}
+    pub fn checkpoint_all(&self)->Result<()> {let ids=self.list()?.into_iter().map(|s|s.id).collect::<Vec<_>>();for id in ids {self.update(&id,|_|{})?;}Ok(())}
+    pub fn prepare_restore(&self)->Result<()> {
+        self.maintenance.store(true,Ordering::SeqCst);let active=self.sessions.lock().map_err(|e|e.to_string())?.values().any(|s|s.runs.iter().any(|r|["running","needs_input"].contains(&r.state.as_str())));
+        if active {self.maintenance.store(false,Ordering::SeqCst);return Err("请先等待正在执行的会话结束，或停止它们，再恢复备份。".into());}self.shutdown();Ok(())
+    }
+    pub fn cancel_restore(&self){self.maintenance.store(false,Ordering::SeqCst);}
     fn event(&self, id: &str, value: &Value) {
         if let Ok(session) = self.session(id) {if session.backend != "codex" {if providers::relevant(&session.backend, value) {let stream = value["type"] == "stream_event" || value["type"] == "message_update"; let _ = self.update_stream(id, stream, |s| providers::apply_event(s, value));} return;}}
         let method = value["method"].as_str().unwrap_or(""); let p = &value["params"];
@@ -304,6 +312,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("northstar-agent-test-{}", uuid::Uuid::new_v4()));
         let host = AgentHost::open(dir.clone(), Arc::new(|_| {})).unwrap(); let mut s = record(); s.messages.push(Message {id: "m".into(), role: "user".into(), text: "keep".into(), at: 0}); host.persist(&s).unwrap(); drop(host);
         let restored = AgentHost::open(dir, Arc::new(|_| {})).unwrap().session("s").unwrap(); assert_eq!(restored.runs[0].state, "failed"); assert_eq!(restored.messages[0].text, "keep"); assert!(restored.source_id.is_some());
+    }
+    #[test]
+    fn restore_requires_idle_agents_and_blocks_updates_until_cancelled(){
+        let root=std::env::temp_dir().join(format!("northstar-agent-restore-{}",uuid::Uuid::new_v4()));let host=AgentHost::open(root,Arc::new(|_|{})).unwrap();host.sessions.lock().unwrap().insert("s".into(),record());assert!(host.prepare_restore().is_err());host.update("s",|s|s.runs[0].state="cancelled".into()).unwrap();host.prepare_restore().unwrap();assert!(host.update("s",|s|s.title="overwrite".into()).is_err());assert_eq!(host.session("s").unwrap().title,"test");host.cancel_restore();host.update("s",|s|s.title="after".into()).unwrap();
     }
     #[test]
     fn stream_is_coalesced_but_terminal_update_flushes_every_delta() {

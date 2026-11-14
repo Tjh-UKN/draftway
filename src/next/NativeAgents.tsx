@@ -23,9 +23,10 @@ export function useNativeAgents(_state: WorkbenchState, change: ChangeState, ena
   function failure(id: string, error: unknown) {if (alive.current) change(old => ({...old, sessions: old.sessions.map(session => session.id === id ? {...session, connectionError: String(error)} : session)}));}
   useEffect(() => {
     if (!native || !enabled) return; alive.current = true;
+    const restoredIds=_state.sessions.filter(s=>['codex','claude','pi'].includes(s.integrationId)).map(s=>s.id);let initial=true;
     const listener = listen<NativeSession>('agent-session', ({payload}) => accept(payload));
     void invoke<BackendState[]>('agent_backends').then(value => {if (alive.current) setBackends(value);}).catch(error => {if (alive.current) setError(String(error));});
-    const refresh = () => {void invoke<NativeSession[]>('agent_list').then(sessions => {for (const session of sessions) accept(session);}).catch(error => {if (alive.current) setError(String(error));});};
+    const refresh = () => {void invoke<NativeSession[]>('agent_list').then(sessions => {for (const session of sessions) accept(session);if(initial){initial=false;for(const id of restoredIds.filter(id=>!sessions.some(s=>s.id===id)))failure(id,'本机没有此会话日志。请从包含会话的完整备份恢复，或新建会话。');}}).catch(error => {if (alive.current) setError(String(error));});};
     void listener.then(refresh).catch(error => {if (alive.current) setError(String(error));}); window.addEventListener('focus', refresh);
     return () => {alive.current = false; window.removeEventListener('focus', refresh); void listener.then(off => off()).catch(() => {});};
   }, [native, enabled]);

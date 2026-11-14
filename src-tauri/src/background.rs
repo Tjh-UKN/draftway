@@ -37,10 +37,11 @@ impl Background {
     }
     pub fn snapshot(&self) -> Result<State> {Ok(self.state.lock().map_err(error)?.clone())}
     fn commit(&self, state: &State) -> Result<()> {
-        self.store.db.lock().map_err(error)?.execute("INSERT INTO metadata(key,value) VALUES('background-runtime-v1',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [serde_json::to_string(state).map_err(error)?]).map_err(error)?; Ok(())
+        self.store.write_db()?.execute("INSERT INTO metadata(key,value) VALUES('background-runtime-v1',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [serde_json::to_string(state).map_err(error)?]).map_err(error)?; Ok(())
     }
     fn change(&self, update: impl FnOnce(&mut State)) -> Result<()> {
-        let (next, saved) = {let mut state = self.state.lock().map_err(error)?; let old = state.clone(); update(&mut state); state.revision += 1; state.error = None; let saved = self.commit(&state); if let Err(error) = &saved {*state = old; state.revision += 1; state.error=Some(format!("后台状态保存失败：{error}"));} (state.clone(),saved)};
+        if self.store.maintenance.load(Ordering::SeqCst){return Err("正在恢复数据".into());}
+        let (next, saved) = {let mut state = self.state.lock().map_err(error)?; let old = state.clone(); update(&mut state); state.revision += 1; state.error = None; let saved = self.commit(&state); if let Err(error) = &saved {*state = old; if !self.store.maintenance.load(Ordering::SeqCst){state.revision += 1; state.error=Some(format!("后台状态保存失败：{error}"));}} (state.clone(),saved)};
         (self.sink)(&next); saved
     }
     pub fn mark_read(&self, ids: &[String]) -> Result<()> {self.change(|state| {for notice in &mut state.notices {if ids.contains(&notice.id) {notice.read = true;}}})}
@@ -74,6 +75,7 @@ impl Background {
         self.shell().and_then(|shell| shell["spaces"].as_array().cloned()).unwrap_or_default().iter().filter_map(|space| Some((space["id"].as_str()?.to_string(), space["review"]["url"].as_str()?.to_string()))).collect()
     }
     pub fn poll_once(&self) {
+        if self.store.maintenance.load(Ordering::SeqCst){return;}
         let bindings = self.bindings();
         std::thread::scope(|scope| {for (workspace, base) in bindings {scope.spawn(move || {
             let result = (|| {let status = review_service::get(&self.client,&base,"api/status")?; let reports = review_service::get(&self.client,&base,"api/reports")?; review_service::parse(&workspace,&base,&status,&reports)})();
@@ -111,6 +113,7 @@ impl Background {
         review_service::get(&self.client,&base,&format!("api/reports/{file}"))
     }
     pub fn deliver_pending(&self) {
+        if self.store.maintenance.load(Ordering::SeqCst){return;}
         let notices = match self.snapshot() {Ok(state)=>state.notices,Err(_)=>return};
         if !notices.iter().any(|notice|notice.delivery=="pending" && notice.retry_at<=now()) {return;}
         let enabled = self.store.db.lock().ok().and_then(|db|db.query_row("SELECT json_extract(data,'$.notifications') FROM settings WHERE id=1",[],|row|row.get::<_,bool>(0)).ok()).unwrap_or(false);

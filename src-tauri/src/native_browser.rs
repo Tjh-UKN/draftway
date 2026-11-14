@@ -31,7 +31,7 @@ fn browser_url(value: &str, host_origin: Option<&str>) -> Result<Url> {
     Ok(url)
 }
 fn validate_snapshot(snapshot: &BrowserSnapshot, origin: Option<&str>) -> Result<()> {
-    if snapshot.tabs.len() > 64 || snapshot.slots.len() > 8 || ![snapshot.viewport_width, snapshot.viewport_height].iter().all(|v| v.is_finite() && *v >= 1. && *v <= 100000.) {return Err("浏览器分区参数无效".into());}
+    if snapshot.tabs.len() > 1024 || snapshot.slots.len() > 8 || ![snapshot.viewport_width, snapshot.viewport_height].iter().all(|v| v.is_finite() && *v >= 1. && *v <= 100000.) {return Err("浏览器分区参数无效".into());}
     let mut ids = HashSet::new();
     for tab in &snapshot.tabs {if !valid_id(&tab.id) || !ids.insert(tab.id.as_str()) {return Err("浏览器页签标识无效".into());}}
     let _ = origin;
@@ -67,6 +67,7 @@ pub async fn sync_browser_views(app: tauri::AppHandle, caller: Webview, state: t
             let url = browser_url(&tab.url, origin.as_deref())?;
             let view = if let Some(view) = app.get_webview(&label(&tab.id)) {view} else {
                 let Some(slot) = slot else {return Ok(());};
+                if current.len()>=64 {return Err("已保留 64 个原生网页，请关闭暂不用的网页页签后重试。".into());}
                 let nav_origin = origin.clone(); let event_id = tab.id.clone(); let popup_id = tab.id.clone(); let title_id = tab.id.clone(); let popup_app = app.clone();
                 let profile = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("browser-profile");
                 let builder = WebviewBuilder::new(label(&tab.id), WebviewUrl::External(url.clone()))

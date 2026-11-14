@@ -112,7 +112,7 @@ export default function Workbench() {
   function updateTab(tab: DockTab) {updateSpace(w => ({...w, dock: {...w.dock, tabs: w.dock.tabs.map(t => t.id === tab.id ? tab : t)}}));}
   function openMaterial(material: NodeMaterial) {
     if (!selected) return;const parsed=parseMaterialTarget(material.target);
-    const tab: DockTab=parsed.kind==='web' ? {id:`web:${material.id}`,kind:'browser',title:material.title || parsed.title,url:parsed.target} : {id:`material:${selected.id}:${material.id}`,kind:'material',title:material.title || parsed.title,nodeId:selected.id,materialId:material.id};
+    const tab: DockTab=parsed.kind==='web' ? {id:crypto.randomUUID(),kind:'browser',title:material.title || parsed.title,url:parsed.target} : {id:`material:${selected.id}:${material.id}`,kind:'material',title:material.title || parsed.title,nodeId:selected.id,materialId:material.id};
     updateSpace(w=>({...w,dock:openDockTab(w.dock,tab)}));
   }
 
@@ -173,8 +173,8 @@ export default function Workbench() {
         if (tab.kind === 'browser') return <BrowserView tab={tab} active={active} onChange={updateTab} native={nativeBrowsers}/>;
         if (tab.kind === 'review') return <ReviewView workspaceId={space.id} tab={tab} onChange={updateTab}/>;
         if (tab.kind === 'material') return <MaterialView workspaceId={space.id} tab={tab}/>;
-        if (tab.kind === 'business') return <BusinessView workspaceId={space.id} tab={tab} active={active} onChange={updateTab}/>;
-        if (tab.kind === 'report') return <ReportView workspaceId={space.id} tab={tab} onDashboard={() => updateSpace(w => ({...w, dock: openDockTab(w.dock, {id: `dashboard:${tab.url}`, kind: 'browser', title: 'PR 检视看板', url: tab.url})}))}/>;
+        if (tab.kind === 'business') return <BusinessView workspaceId={space.id} tab={tab} active={active} onChange={updateTab} flush={persistence.flush}/>;
+        if (tab.kind === 'report') return <ReportView workspaceId={space.id} tab={tab} onDashboard={() => updateSpace(w => ({...w, dock: openDockTab(w.dock, {id: w.dock.tabs.find(t=>t.kind==='browser'&&t.url===tab.url)?.id||crypto.randomUUID(), kind: 'browser', title: 'PR 检视看板', url: tab.url})}))}/>;
         const session = state.sessions.find(s => s.id === tab.sessionId)!;
         return <SessionView state={state} session={session} active={active} change={change} onNode={id => {const nodeId = id || session.nodeId; if (nodeId) openNode(nodeId);}}/>;
       }}/>

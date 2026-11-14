@@ -54,7 +54,7 @@ export function SessionView({state, session, change, onNode, active = true}: {st
     <form className="session-composer" onSubmit={event => {event.preventDefault(); send();}}><textarea ref={composer} autoFocus={active} aria-label="会话消息" placeholder={busy ? '先写下下一步，草稿会保留' : '在这里输入消息…'} value={session.draft} maxLength={20000} disabled={demo ? !adapter : !runtime} onChange={event => {const draft = event.target.value; change(current => ({...current, sessions: current.sessions.map(s => s.id === session.id ? {...s, draft} : s)}));}} onKeyDown={event => {if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {event.preventDefault(); send();}}}/>
       <div className="composer-toolbar chat-composer-actions">{busy ? <button type="button" className="icon-button stop-button" disabled={(demo ? !adapter : !runtime) || run?.stopping} aria-label={demo ? '停止模拟' : '停止生成'} onClick={() => {if (demo) change(current => adapter!.cancel(current, run!.id)); else runtime?.stop(session.id);}}><Square size={14}/></button> : <button className="send-button" aria-label="发送消息" disabled={!session.draft.trim() || !canSend}><Send size={15}/></button>}</div>
 
-    </form><p className="composer-footnote">{demo ? '模拟模式 · 尚未连接真实 Agent' : runtime ? session.nativeRevision ? '由本机执行器运行 · 记录保存在北极星' : '正在创建会话…' : '请在 Windows 版继续此会话'}</p>
+    </form><p className="composer-footnote">{demo ? '模拟模式 · 尚未连接真实 Agent' : runtime ? session.nativeRevision ? '由本机执行器运行 · 记录保存在北极星' : session.connectionError ? '会话未就绪，请查看上方错误。' : '正在创建会话…' : '请在 Windows 版继续此会话'}</p>
   </div>;
 }
 

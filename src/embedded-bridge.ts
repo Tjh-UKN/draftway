@@ -10,6 +10,10 @@ export async function listenFromHost<T>(event:string,handler:EventCallback<T>):P
   try {id=await host.invoke<number>('plugin:event|listen',{event,target:{kind:'Any'},handler:callback});}catch(error){host.unregisterCallback(callback);throw error;}
   return async()=>{host.unregisterCallback(callback);await host.invoke('plugin:event|unlisten',{event,eventId:id});};
 }
+export async function flushHostWorkspace():Promise<void>{
+  if(!embeddedInternals())return;const id=crypto.randomUUID();
+  return new Promise((resolve,reject)=>{const cleanup=()=>{clearTimeout(timer);window.removeEventListener('message',receive);};const receive=(event:MessageEvent)=>{if(event.source!==parent||event.origin!==location.origin||event.data?.type!=='northstar-business-flushed'||event.data.id!==id)return;cleanup();if(event.data.ok)resolve();else reject(Error(event.data.error||'工作区保存失败'));};const timer=setTimeout(()=>{cleanup();reject(Error('工作区保存未完成，请稍后重试备份。'));},10000);window.addEventListener('message',receive);parent.postMessage({type:'northstar-business-flush',id},location.origin);});
+}
 export function installEmbeddedBridge(target:Window) {
   try {
     if(target.parent===target || target.parent.location.origin!==target.location.origin || target.parent.location.pathname!=='/next.html' || !isBusinessPage(new URLSearchParams(target.location.search).get('embed')))return;

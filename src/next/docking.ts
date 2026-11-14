@@ -14,6 +14,11 @@ export interface Split {kind: 'split'; id: string; axis: 'row' | 'column'; ratio
 export type DockNode = TabGroup | Split;
 export interface DockState {root: DockNode; tabs: DockTab[]; activeGroupId: string; recent: string[]}
 export type Edge = 'left' | 'right' | 'top' | 'bottom';
+export function repairBrowserIds(dock:DockState,used:Set<string>,uid:()=>string=()=>crypto.randomUUID()):DockState {
+  const replacements=new Map<string,string>();for(const tab of dock.tabs)if(tab.kind==='browser'){let id=tab.id;if(!/^[a-z\d_-]{1,80}$/i.test(id)||used.has(id)){id=uid();replacements.set(tab.id,id);}used.add(id);}
+  if(!replacements.size)return dock;const rename=(id:string)=>replacements.get(id)||id;const tree=(node:DockNode):DockNode=>node.kind==='group'?{...node,tabs:node.tabs.map(rename),activeId:rename(node.activeId)}:{...node,children:node.children.map(tree) as [DockNode,DockNode]};
+  return{...dock,tabs:dock.tabs.map(tab=>({...tab,id:rename(tab.id)})),root:tree(dock.root),recent:dock.recent.map(rename)};
+}
 export const groups = (node: DockNode): TabGroup[] => node.kind === 'group' ? [node] : node.children.flatMap(groups);
 export const focusedGroup = (dock: DockState) => groups(dock.root).find(g => g.id === dock.activeGroupId)!;
 const touch = (recent: string[], id: string) => [...recent.filter(value => value !== id), id];

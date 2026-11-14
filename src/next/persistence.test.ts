@@ -19,3 +19,10 @@ describe('durable workspace snapshot', () => {
     state.sessions[0].integrationId='unknown-provider'; expect(durableWorkbench(state).sessions[0].messages).toEqual(state.sessions[0].messages);
   });
 });
+import {snapshotWriter} from './persistence';
+it('flushes the latest snapshot even when it matches an earlier write with a different save still queued',async()=>{
+  const saved:string[]=[];const writer=snapshotWriter(async value=>{saved.push(value);},()=>{});await writer.write('A');const b=writer.write('B');const a=writer.write('A');await Promise.all([b,a]);expect(saved).toEqual(['A','B','A']);
+});
+it('allows retrying the same snapshot after a storage failure',async()=>{
+  let fail=true;const saved:string[]=[];const errors:unknown[]=[];const writer=snapshotWriter(async value=>{if(fail)throw Error('disk');saved.push(value);},error=>errors.push(error));await expect(writer.write('A')).rejects.toThrow('disk');fail=false;await writer.write('A');expect(saved).toEqual(['A']);expect(errors).toHaveLength(1);
+});

@@ -1,5 +1,5 @@
 import { invoke as nativeInvoke, isTauri } from '@tauri-apps/api/core';
-import {embeddedInternals,listenFromHost as listen} from './embedded-bridge';
+import {embeddedInternals,flushHostWorkspace,listenFromHost as listen} from './embedded-bridge';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { advanceRepeat, archiveClosure, dateKey, defaults, healthError, normalizeRecord, starter, uid, type Attachment, type BackupInfo, type Habit, type RecordItem, type Settings, type Task, type WorkbenchData } from './domain';
 import {parseDrawingScene} from './drawings';
@@ -115,8 +115,8 @@ export function pickFiles(single=true,accept=''):Promise<File[]> {return new Pro
 export async function openAttachment(id:string) {if(desktop)return invoke<void>('open_attachment',{id});const files=await readAll<Attachment & {blob:Blob}>('files');const item=files.find(x=>x.id===id);if(!item)throw new Error('附件不存在');const url=URL.createObjectURL(item.blob);const a=document.createElement('a');a.href=url;a.download=item.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 export async function removeAttachment(id:string) {if(desktop)return invoke<void>('remove_attachment',{id});await remove('files',id);}
 export const listBackups=()=>desktop?invoke<BackupInfo[]>('list_backups'):Promise.resolve([]);
-export const createBackup=()=>desktop?invoke<BackupInfo>('create_backup'):Promise.reject(new Error('完整备份请在 Windows 应用中操作'));
-export async function restoreBackup(name?:string) {if(!desktop)throw new Error('请在 Windows 应用中恢复备份');if(name)return invoke<void>('restore_backup',{name,path:null});const path=await openDialog({multiple:false,directory:false,title:'恢复北极星备份',filters:[{name:'北极星备份',extensions:['zip']}]});if(typeof path==='string')return invoke<void>('restore_backup',{name:null,path});return false;}
+export const createBackup=async()=>{if(!desktop)throw Error('完整备份请在 Windows 应用中操作');await flushHostWorkspace();return invoke<BackupInfo>('create_backup');};
+export async function restoreBackup(name?:string) {if(!desktop)throw new Error('请在 Windows 应用中恢复备份');if(name){await flushHostWorkspace();return invoke<void>('restore_backup',{name,path:null});}const path=await openDialog({multiple:false,directory:false,title:'恢复北极星备份',filters:[{name:'北极星备份',extensions:['zip']}]});if(typeof path==='string'){await flushHostWorkspace();return invoke<void>('restore_backup',{name:null,path});}return false;}
 export async function exportBackup(name:string){if(!desktop)return;const path=await saveDialog({defaultPath:name,filters:[{name:'备份压缩包',extensions:['zip']}]});if(path)await invoke('export_backup',{name,path});}
 export const openDataFolder=()=>desktop?invoke<void>('open_data_folder'):Promise.reject(new Error('浏览器预览的数据由浏览器管理'));
 export const testNotification=()=>desktop?invoke<void>('test_notification'):Promise.reject(new Error('请在 Windows 应用中测试系统通知'));

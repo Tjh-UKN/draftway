@@ -26,9 +26,18 @@ fn cancel(host: &Arc<AgentHost>, id: &str, run_id: &str) -> native_agents::Resul
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::current_dir()?.join("artifacts").join(format!("agent-live-{}", uuid::Uuid::new_v4()));
     let tool_test=std::env::var_os("NORTHSTAR_TOOLS_ONLY").is_some();
-    let host = AgentHost::open(if tool_test {root.join("agents")}else{root.clone()}, Arc::new(|_| {}))?;
+    let backup_test=std::env::var_os("NORTHSTAR_BACKUP_ONLY").is_some();
+    let host = AgentHost::open(if tool_test||backup_test {root.join("agents")}else{root.clone()}, Arc::new(|_| {}))?;
     let backend = std::env::var("NORTHSTAR_AGENT_BACKEND").unwrap_or_else(|_| "codex".into());
     let session = host.create("smoke".into(), "smoke-workspace".into(), None, backend.clone(), "新的会话".into(), None)?;
+    if backup_test {
+        if backend!="pi"{return Err("Portable provider-file recovery probe uses Pi".into());}
+        std::fs::write(std::path::Path::new(&session.cwd).join("workspace-location.txt"),"NORTHSTAR_OLD_LOCATION")?;
+        host.send(&session.id,"before-backup".into(),"Reply only NORTHSTAR_BACKUP_OK. Do not use tools.".into())?;wait(&host,&session.id)?;host.shutdown();drop(host);
+        let store=northstar_lib::WorkbenchStore::open(root.clone())?;let backup=northstar_lib::create_full_backup(&store,"live-recovery")?;let restored_root=root.join("restored-location");let restored_store=northstar_lib::WorkbenchStore::open(restored_root.clone())?;northstar_lib::restore_full_backup(&restored_store,&root.join("backups").join(backup.name))?;
+        let restored=AgentHost::open(restored_root.join("agents"),Arc::new(|_|{}))?;let relocated=restored.session("smoke")?;let token=format!("NORTHSTAR_RESTORED_{}",uuid::Uuid::new_v4());std::fs::write(std::path::Path::new(&relocated.cwd).join("workspace-location.txt"),&token)?;restored.send("smoke","after-backup".into(),"What exact token did I ask you to say in the previous message? Also use the read tool on the relative file workspace-location.txt and echo its exact content. Do not use shell or other tools.".into())?;let result=wait(&restored,"smoke")?;restored.shutdown();assert!(result.messages.iter().filter(|m|m.role=="assistant"&&m.text.contains("NORTHSTAR_BACKUP_OK")).count()>=2);assert!(result.messages.iter().any(|m|m.role=="assistant"&&m.text.contains(&token)),"Pi must read from the restored work directory, not the previous header cwd");assert!(result.source_id.as_deref().unwrap_or("").contains("restored-location"));
+        let report=json!({"backend":backend,"passed":["complete backup restores real transcript", "Pi resumes copied provider session in another directory", "owned work directory is relocated", "real relative file read uses restored directory"],"dataPath":root,"restoredPath":restored_root});std::fs::write("artifacts/agent-backup-pi.json",serde_json::to_vec_pretty(&report)?)?;println!("{report}");return Ok(());
+    }
     if tool_test {
         let db=rusqlite::Connection::open(root.join("northstar.sqlite3"))?;db.execute_batch("CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);PRAGMA user_version=5;")?;
         let snapshot=json!({"version":2,"activeId":"smoke-workspace","spaces":[{"id":"smoke-workspace","name":"MCP verification","nodes":[{"id":"root","kind":"root","title":"MCP fixture","parentId":null,"side":1,"body":"Fixture","progress":20,"due":"","steps":[]}],"dock":{}}],"sessions":[],"runs":[],"artifacts":[],"notices":[]});

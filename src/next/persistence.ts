@@ -2,6 +2,10 @@ import {useEffect, useRef, useState} from 'react';
 import {invoke, isTauri} from '@tauri-apps/api/core';
 import {parseWorkbench, shellStorageKey, type WorkbenchState} from './core';
 import type {ChangeState} from './Sessions';
+export function snapshotWriter(save:(value:string)=>Promise<unknown>,onError:(error:unknown)=>void) {
+  let queue:Promise<unknown>=Promise.resolve();let scheduled:string|undefined;let latest:Promise<unknown>=queue;
+  return {write(value:string){if(value===scheduled)return latest;scheduled=value;const action=queue.then(()=>save(value));latest=action;queue=action.catch(error=>{if(scheduled===value)scheduled=undefined;onError(error);});return action;}};
+}
 
 export function durableWorkbench(state: WorkbenchState): WorkbenchState {
   const owned = new Set(state.sessions.filter(session => ['codex', 'claude', 'pi'].includes(session.integrationId)).map(session => session.id));
@@ -14,18 +18,15 @@ export function useWorkbenchPersistence(state: WorkbenchState, change: ChangeSta
   const readyRef = useRef(!native); const readOnlyRef = useRef(!!initialError);
   const serialized = JSON.stringify(native ? durableWorkbench(state) : state);
   const latest = useRef(serialized); latest.current = serialized;
-  const queue = useRef<Promise<unknown>>(Promise.resolve()); const written = useRef('');
+  const written = useRef('');
+  const writer=useRef<ReturnType<typeof snapshotWriter>|null>(null);
+  if(!writer.current)writer.current=snapshotWriter(async value=>{if(native)await invoke('save_shell_state',{snapshot:JSON.parse(value)});else localStorage.setItem(shellStorageKey,value);written.current=value;},error=>{setSaved(false);setError(`保存失败：${String(error)}`);});
   const loaded = useRef(state);
   function persist(value: string) {
-    if (!readyRef.current || readOnlyRef.current) return;
-    if (value === written.current) {setSaved(true); return;}
-    const action = queue.current.then(async () => {
-      if (native) await invoke('save_shell_state', {snapshot: JSON.parse(value)});
-      else localStorage.setItem(shellStorageKey, value);
-      written.current = value;
-      if (latest.current === value) {setSaved(true); setError('');}
-    });
-    queue.current = action.catch(error => {setSaved(false); setError(`保存失败：${String(error)}`);});
+    if (!readyRef.current || readOnlyRef.current) return Promise.resolve();
+    const action=writer.current!.write(value);
+    void action.then(()=>{if(latest.current===value&&written.current===value){setSaved(true);setError('');}},()=>{});
+    return action;
   }
   async function restore() {
     if (!native) {window.location.reload(); return;}
@@ -46,5 +47,5 @@ export function useWorkbenchPersistence(state: WorkbenchState, change: ChangeSta
     window.addEventListener('pagehide', flush); document.addEventListener('visibilitychange', visibility);
     return () => {window.removeEventListener('pagehide', flush); document.removeEventListener('visibilitychange', visibility);};
   }, []);
-  return {ready, readOnly, saved, error, retry: () => readOnly ? void restore() : persist(latest.current)};
+  return {ready, readOnly, saved, error, flush:async()=>{if(!readyRef.current||readOnlyRef.current)throw Error('工作区当前不能保存，请先恢复数据读取。');await persist(latest.current);},retry: () => readOnly ? void restore() : persist(latest.current)};
 }
