@@ -85,9 +85,9 @@ impl AgentHost {
     pub fn session(&self, id: &str) -> Result<AgentSession> {self.sessions.lock().map_err(|e| e.to_string())?.get(id).cloned().ok_or_else(|| "会话不存在".into())}
     pub fn configure_tools(&self, tools: WorkspaceTools) {if let Ok(mut config)=self.tools.lock(){*config=Some(tools);}}
     fn update(&self, id: &str, change: impl FnOnce(&mut AgentSession)) -> Result<AgentSession> {
-        self.update_stream(id, false, change)
+        self.update_stream(id, false, change)?.ok_or_else(||"执行记录快照未发布".into())
     }
-    fn update_stream(&self, id: &str, stream: bool, change: impl FnOnce(&mut AgentSession)) -> Result<AgentSession> {
+    fn update_stream(&self, id: &str, stream: bool, change: impl FnOnce(&mut AgentSession)) -> Result<Option<AgentSession>> {
         let (save, publish) = {let mut clocks = self.checkpoints.lock().map_err(|e|e.to_string())?; let clock = clocks.entry(id.into()).or_default(); let at = now(); let save = !stream || at.saturating_sub(clock.0) >= 1000; let publish = !stream || at.saturating_sub(clock.1) >= 100; if save {clock.0=at;} if publish {clock.1=at;} (save,publish)};
         let (snapshot, saved) = {
             let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
@@ -95,10 +95,10 @@ impl AgentHost {
             let session = sessions.get_mut(id).ok_or("会话不存在")?; change(session); session.revision += 1;
             let saved = if save {self.persist(session)} else {Ok(())};
             if let Err(error) = &saved {session.error = Some(format!("执行记录保存失败：{error}")); session.requests.clear(); if let Some(run) = session.runs.last_mut() {run.state = "failed".into(); run.finished_at = Some(now()); run.error = session.error.clone();}}
-            (session.clone(), saved)
+            (if publish||saved.is_err(){Some(session.clone())}else{None}, saved)
         };
         if saved.is_err() {self.runtimes.lock().unwrap().remove(id);}
-        if publish || saved.is_err() {(self.sink)(&snapshot);} saved?; Ok(snapshot)
+        if let Some(snapshot)=&snapshot{(self.sink)(snapshot);} saved?; Ok(snapshot)
     }
     pub fn create(&self, id: String, workspace_id: String, node_id: Option<String>, backend: String, title: String, cwd: Option<String>) -> Result<AgentSession> {
         if !valid_id(&id) || !valid_id(&workspace_id) || node_id.as_ref().is_some_and(|id| !valid_id(id)) {return Err("会话归属标识无效".into());}
@@ -218,7 +218,7 @@ impl AgentHost {
         rpc.write(if session.backend == "codex" {json!({"id":request.source_id,"result":result})} else {providers::response(&session.backend, request, result)?})?;
         self.update(id, |s| {s.requests.retain(|r| r.id != request_id); if s.requests.is_empty() {if let Some(run) = s.runs.last_mut().filter(|r| r.state == "needs_input") {run.state = "running".into();}}})
     }
-    pub fn shutdown(&self) {if let Ok(mut runtimes) = self.runtimes.lock() {runtimes.clear();}}
+    pub fn shutdown(&self) {if !self.maintenance.load(Ordering::SeqCst){let _=self.checkpoint_all();}if let Ok(mut runtimes) = self.runtimes.lock() {runtimes.clear();}}
     pub fn checkpoint_all(&self)->Result<()> {let ids=self.list()?.into_iter().map(|s|s.id).collect::<Vec<_>>();for id in ids {self.update(&id,|_|{})?;}Ok(())}
     pub fn prepare_restore(&self)->Result<()> {
         self.maintenance.store(true,Ordering::SeqCst);let active=self.sessions.lock().map_err(|e|e.to_string())?.values().any(|s|s.runs.iter().any(|r|["running","needs_input"].contains(&r.state.as_str())));
@@ -226,7 +226,7 @@ impl AgentHost {
     }
     pub fn cancel_restore(&self){self.maintenance.store(false,Ordering::SeqCst);}
     fn event(&self, id: &str, value: &Value) {
-        if let Ok(session) = self.session(id) {if session.backend != "codex" {if providers::relevant(&session.backend, value) {let stream = value["type"] == "stream_event" || value["type"] == "message_update"; let _ = self.update_stream(id, stream, |s| providers::apply_event(s, value));} return;}}
+        if let Some(backend)=self.sessions.lock().ok().and_then(|sessions|sessions.get(id).map(|s|s.backend.clone())) {if backend != "codex" {if providers::relevant(&backend, value) {let stream = value["type"] == "stream_event" || value["type"] == "message_update"; let _ = self.update_stream(id, stream, |s| providers::apply_event(s, value));} return;}}
         let method = value["method"].as_str().unwrap_or(""); let p = &value["params"];
         if value.get("id").is_some() && value.get("method").is_some() {
             let kind = if ["item/commandExecution/requestApproval","item/fileChange/requestApproval"].contains(&method) {"approval"} else if method=="mcpServer/elicitation/request" && p["mode"]=="form" {"elicitation"} else if method == "item/tool/requestUserInput" {"input"} else {"unsupported"};

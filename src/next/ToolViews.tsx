@@ -23,12 +23,12 @@ export function BrowserView({tab, active, onChange, native}: {tab: Extract<DockT
     <button type="button" className="icon-button" aria-label="后退" disabled={native ? !status?.back : !history.index} onClick={() => native ? native.action(tab.id, 'back') : visit(history.urls[history.index - 1], history.index - 1)}><ArrowLeft size={15}/></button>
     <button type="button" className="icon-button" aria-label="前进" disabled={native ? !status?.forward : history.index === history.urls.length - 1} onClick={() => native ? native.action(tab.id, 'forward') : visit(history.urls[history.index + 1], history.index + 1)}><ArrowRight size={15}/></button>
     <button type="button" className="icon-button" aria-label="刷新网页" disabled={!tab.url} onClick={() => native ? native.action(tab.id, 'reload') : setReload(n => n + 1)}><RotateCw size={14} className={status?.loading ? 'spinning' : ''}/></button>
-    <label><Globe size={13}/><input ref={input} aria-label="网页地址" placeholder="输入网址，按 Enter 打开" value={address} onChange={event => setAddress(event.target.value)} onFocus={event => event.target.select()}/></label>
+    <label><Globe size={13}/><input ref={input} data-browser-address={tab.id} aria-label="网页地址" placeholder="输入网址，按 Enter 打开" value={address} onChange={event => setAddress(event.target.value)} onFocus={event => event.target.select()}/></label>
     {tab.url && <a className="icon-button" href={tab.url} target="_blank" rel="noreferrer" title="在浏览器打开" aria-label="在浏览器打开" onClick={event => {if (native) {event.preventDefault(); native.external(tab.url);}}}><ExternalLink size={14}/></a>}
   </form>{error && <p className="tool-error" role="alert">{error}</p>}
     {/* shortcut: iframe cannot host sites that refuse embedding; use a native WebView in the desktop host. */}
     {tab.url ? native ? <div className="native-browser-slot" data-native-browser-id={tab.id} aria-label={`原生网页：${tab.url}`}>{status?.error ? <div className="tool-empty" role="alert"><p>{status.error}</p></div> : !status?.ready && <div className="tool-empty"><p>正在打开网页…</p></div>}</div> : <iframe key={`${tab.url}-${reload}`} title={`网页：${tab.url}`} src={tab.url} sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" referrerPolicy="no-referrer"/> : <div className="tool-empty"><Globe size={26} strokeWidth={1.2}/><h2>打开网页</h2><p>输入网址，在分区内查看。</p></div>}
-    {tab.url && <div className="browser-frame-note">{native ? 'Windows · WebView2' : '网页预览'}{!native && <a href={tab.url} target="_blank" rel="noreferrer">页面拒绝嵌入？在浏览器打开 <ExternalLink size={10}/></a>}</div>}
+    {tab.url && <div className="browser-frame-note">{native ? '内置浏览器' : '网页预览'}{!native && <a href={tab.url} target="_blank" rel="noreferrer">页面拒绝嵌入？在浏览器打开 <ExternalLink size={10}/></a>}</div>}
   </div>;
 }
 

@@ -267,3 +267,4 @@ describe('workspace shell records and lifecycle', () => {
   });
 
 });
+it('keeps retained Unicode artifact titles valid for the node schema and native JSON',()=>{let state=createSession(initialWorkbench(),'design',null,'unicode',0);state=startDemoRun(state,'unicode','Test','succeeded','unicode-run',0);state=advanceDemoRuns(state,8000);state.artifacts[0].title='a'+'🚀'.repeat(100);state=placeArtifact(state,state.artifacts[0].id,9000);expect(state.spaces[0].nodes.at(-1)!.title.length).toBeLessThanOrEqual(120);expect(()=>parseWorkbench(JSON.parse(JSON.stringify(state)))).not.toThrow();});

@@ -1,6 +1,7 @@
 use northstar_lib::{WorkbenchStore,create_full_backup};
 use serde_json::json;
 fn main()->Result<(),Box<dyn std::error::Error>>{
+    if std::env::args().nth(1).as_deref()==Some("--backup-existing"){let root=std::path::PathBuf::from(std::env::args_os().nth(2).ok_or("Data root required")?);if !root.join("northstar.sqlite3").is_file(){return Err("Existing data directory required".into());}let store=WorkbenchStore::open(root)?;let backup=create_full_backup(&store,"before-workspace-update")?;println!("{}",serde_json::to_string(&backup)?);return Ok(());}
     let root=std::path::PathBuf::from(std::env::args_os().nth(1).ok_or("Fixture root required")?);let source=WorkbenchStore::open(root.join("source"))?;source.seed_if_new()?;let mut settings=source.load()?.settings;settings.user_name="AFTER_RECOVERY".into();settings.notifications=false;settings.daily_backup=false;settings.close_to_tray=false;source.put_settings(&settings)?;let backup=create_full_backup(&source,"runtime-probe")?;
     let destination=WorkbenchStore::open(root.join("destination"))?;destination.seed_if_new()?;settings.user_name="BEFORE_RECOVERY".into();destination.put_settings(&settings)?;let ids=source.load()?.records.iter().map(|r|r["id"].clone()).collect::<Vec<_>>();let fixture=json!({"dataRoot":destination.root,"backup":source.root.join("backups").join(backup.name),"expectedIds":ids});std::fs::write(root.join("fixture.json"),serde_json::to_vec_pretty(&fixture)?)?;Ok(())
 }

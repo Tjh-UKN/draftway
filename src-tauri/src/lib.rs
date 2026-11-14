@@ -48,6 +48,7 @@ async fn read_material(state: tauri::State<'_, AppState>, workspace_id: String, 
 #[tauri::command]
 async fn open_material(state: tauri::State<'_, AppState>, workspace_id: String, node_id: String, material_id: String) -> Result<()> {
     let (space,path)=resources::material(&state.store,&workspace_id,&node_id,&material_id)?;
+    if path.is_dir(){return open::that(path).map_err(error);}
     let target=space["nodes"].as_array().into_iter().flatten().find(|n|n["id"]==node_id).and_then(|node| {if material_id=="legacy-reference" {node["reference"].as_str()}else{node["materials"].as_array()?.iter().find(|m|m["id"]==material_id)?["target"].as_str()}});
     if target.is_some_and(|target|target.starts_with("obsidian:")) {let mut url=url::Url::parse("obsidian://open").map_err(error)?;url.query_pairs_mut().append_pair("path",&resources::display_path(&path));return open::that(url.as_str()).map_err(error);}
     let ext=path.extension().and_then(|e|e.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -206,7 +207,7 @@ fn start_services(app:tauri::AppHandle,store:Arc<Store>) {
     });
 }
 pub fn run() {
-    tauri::Builder::default()
+    let application=tauri::Builder::default()
         .manage(native_browser::Browsers::default())
         .plugin(tauri_plugin_single_instance::init(|app,args,_|{if args.iter().any(|a|a=="--quit"){app.state::<AppState>().quit.store(true,Ordering::SeqCst);app.exit(0);}else{reveal(app);}}))
         .plugin(tauri_plugin_dialog::init())
@@ -232,8 +233,8 @@ pub fn run() {
             let show=MenuItem::with_id(app,"show","打开北极星",true,None::<&str>)?;
             let quick=MenuItem::with_id(app,"new","新建任务",true,None::<&str>)?;
             let quit=MenuItem::with_id(app,"quit","退出",true,None::<&str>)?;
-            let menu=Menu::with_items(app,&[&show,&quick,&quit])?;
-            TrayIconBuilder::new().icon(app.default_window_icon().ok_or("应用图标缺失")?.clone()).tooltip("北极星 · 个人工作台").menu(&menu).show_menu_on_left_click(false)
+            let preview=app.config().identifier.ends_with(".preview");let menu=if preview{Menu::with_items(app,&[&show,&quit])?}else{Menu::with_items(app,&[&show,&quick,&quit])?};
+            TrayIconBuilder::new().icon(app.default_window_icon().ok_or("应用图标缺失")?.clone()).tooltip(if preview{"北极星 · 工作区预览"}else{"北极星 · 个人工作台"}).menu(&menu).show_menu_on_left_click(false)
                 .on_menu_event(|app,event|match event.id.as_ref(){"show"=>reveal(app),"new"=>{reveal(app);let _=app.emit("quick-capture",());},"quit"=>{app.state::<AppState>().quit.store(true,Ordering::SeqCst);app.exit(0);},_=>()})
                 .on_tray_icon_event(|tray,event|{if let TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}=event{reveal(tray.app_handle());}}).build(app)?;
             if std::env::args().any(|a|a=="--tray")&&!restored {if let Some(w)=app.get_webview_window("main"){let _=w.hide();}}if restored{reveal(app.handle());}
@@ -253,6 +254,9 @@ pub fn run() {
                 handler(invoke)
             }
         })
-        .build(tauri::generate_context!()).expect("北极星启动失败")
-        .run(|app, event| {if let tauri::RunEvent::Exit = event {app.state::<Arc<background::Background>>().stop(); app.state::<Arc<native_agents::AgentHost>>().shutdown();}});
+        .build(tauri::generate_context!());
+    match application{Ok(application)=>application.run(|app, event| {if let tauri::RunEvent::Exit = event {app.state::<Arc<background::Background>>().stop(); app.state::<Arc<native_agents::AgentHost>>().shutdown();}}),Err(error)=>{
+        #[cfg(windows)]unsafe{use windows::{core::{HSTRING,PCWSTR},Win32::UI::WindowsAndMessaging::{MessageBoxW,MB_OK,MB_ICONERROR}};let text=HSTRING::from(format!("无法打开北极星。\n\n{error}\n\n请保留数据目录和备份后重试。"));let title=HSTRING::from("北极星");let _=MessageBoxW(None,PCWSTR(text.as_ptr()),PCWSTR(title.as_ptr()),MB_OK|MB_ICONERROR);}
+        #[cfg(not(windows))]eprintln!("北极星启动失败：{error}");
+    }}
 }

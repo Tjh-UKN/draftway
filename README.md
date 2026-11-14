@@ -21,6 +21,8 @@
 - 后台保留执行与检视状态，通知中心定位会话和报告；模板与网页接入声明用于扩展组合。
 - 完整备份包括工作区、会话与默认工作目录，支持旧版业务备份、跨目录恢复和保护回滚。
 
+Windows 运行版与安装包、快捷键和验收边界见 [Windows 交付](docs/windows-delivery.md)。
+
 使用与边界：[组件交付](docs/component-delivery.md)、[组合工作区](docs/composable-workspaces.md)、[材料与审查](docs/materials.md)、[工作区工具](docs/workspace-tools.md)、[后台状态](docs/background-runtime.md)、[备份恢复](docs/backup-recovery.md)。接入约定见 [协议](docs/integration-protocol.md)。
 
 ## v0.6.2：网页工作区

@@ -26,7 +26,8 @@
     "test:agent-live": "node scripts/agent-test.mjs",
     "test:native-business": "node scripts/native-business-test.mjs",
     "test:native-recovery": "node scripts/native-recovery-test.mjs",
-    "test:agent-backup": "node scripts/agent-test.mjs pi backup"
+    "test:agent-backup": "node scripts/agent-test.mjs pi backup",
+    "desktop:next:release": "node scripts/desktop.mjs build --bundles nsis --config scripts/next-config.json"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",

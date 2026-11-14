@@ -2251,6 +2251,7 @@ dependencies = [
  "tauri-winrt-notification",
  "url",
  "uuid",
+ "webview2-com",
  "windows",
  "zip",
 ]

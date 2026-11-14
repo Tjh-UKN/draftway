@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react';
+import {useCallback,useEffect, useRef, useState} from 'react';
 import {Check, ChevronRight, CircleAlert, LoaderCircle, MessageSquare, Send, Square, Terminal} from 'lucide-react';
 import {latestRun, placeArtifact, statusNames, type AgentRequest, type AgentSession, type WorkbenchState} from './core';
 import {sessionAdapter} from './adapters';
@@ -20,8 +20,10 @@ export function SessionView({state, session, change, onNode, active = true}: {st
   const adapter = sessionAdapter(session.integrationId);
   const runtime = useAgentRuntime();
   const demo = session.integrationId === 'demo-agent';
-  const canSend = demo ? !!adapter : !!runtime && !!session.nativeRevision;
+  const canSend = demo ? !!adapter : !!runtime && !runtime.readOnly && !!session.nativeRevision;
   const end = useRef<HTMLDivElement>(null);
+  const transcript=useRef<HTMLDivElement>(null);const follow=useRef(true);const [linkError,setLinkError]=useState('');
+  const openLink=useCallback((url:string)=>{void invoke('open_external_url',{url}).catch(error=>setLinkError(String(error)));},[]);
   const composer = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {if (active && !(document.activeElement as HTMLElement | null)?.closest('[role="tablist"]')) composer.current?.focus();}, [active, session.id]);
   const run = latestRun(state, session.id);
@@ -29,9 +31,9 @@ export function SessionView({state, session, change, onNode, active = true}: {st
   const space = state.spaces.find(s => s.id === session.workspaceId)!;
   const node = space.nodes.find(n => n.id === session.nodeId);
   const provider = agentNames[session.agentId || 'codex'];
-  useEffect(() => {end.current?.scrollIntoView({block: 'nearest', behavior: 'smooth'});}, [session.messages.length, run?.state]);
+  useEffect(() => {const element=transcript.current;if(element?.getClientRects().length&&follow.current)element.scrollTop=element.scrollHeight;}, [session.messages.length,session.messages.at(-1)?.text.length,run?.state,active]);
   function send() {
-    if (busy) return;
+    if (busy||!canSend) return;follow.current=true;
     if (!demo) {runtime?.send(session); return;}
     const id = crypto.randomUUID(); const at = Date.now();
     if (adapter) change(current => adapter.start(current, session.id, session.draft, 'succeeded', id, at));
@@ -39,13 +41,14 @@ export function SessionView({state, session, change, onNode, active = true}: {st
   return <div className="session-view" aria-label={`会话：${session.title}`}><div className="session-context"><span><Terminal size={14}/>{provider}{demo && <small className="simulation-badge">模拟</small>}</span><SessionStatus state={state} session={session}/></div>
     {!demo && session.cwd && <div className="session-directory" title={session.cwd}>{session.cwd}</div>}
     {node && <div className="session-node-context"><button className="text-button" onClick={() => onNode(node.id)}>{node.title}<ChevronRight size={12}/></button><small>发送时引用节点与材料</small></div>}
-    <div className="transcript" aria-live="polite">
+    <div className="transcript" ref={transcript} aria-live="polite" onScroll={event=>{const el=event.currentTarget;follow.current=el.scrollHeight-el.scrollTop-el.clientHeight<120;}}>
       {!session.messages.length && <Empty title="开始对话"/>}
-      {session.messages.map(message => <article className={`message message-${message.role}`} key={message.id}><span className="message-role">{message.role === 'user' ? '你' : `${provider}${demo ? ' · 模拟回复' : ''}`}</span>{message.role === 'assistant' ? <MarkdownView value={message.text} onOpenLink={runtime ? url => {void invoke('open_external_url', {url});} : undefined}/> : <div>{message.text}</div>}</article>)}
+      {session.messages.map(message => <article className={`message message-${message.role}`} key={message.id}><span className="message-role">{message.role === 'user' ? '你' : `${provider}${demo ? ' · 模拟回复' : ''}`}</span>{message.role === 'assistant' ? <MarkdownView value={message.text} onOpenLink={runtime ? openLink : undefined} allowRemoteImages={false}/> : <div>{message.text}</div>}</article>)}
       {run?.state === 'running' && <div className="run-progress"><LoaderCircle size={15} className="spinning"/><span>{run.stopping ? '正在停止…' : '正在回复…'}</span></div>}
       {run?.state === 'needs_input' && demo && <div className="run-attention"><CircleAlert size={16}/><span>需要你的输入</span><button className="primary-button" disabled={!adapter} onClick={() => {const at = Date.now(); change(current => adapter!.resume(current, run.id, at));}}>继续模拟</button></div>}
       {!demo && session.requests?.map(request => <AgentRequestForm key={request.id} request={request} onRespond={answer => runtime?.respond(session.id, request.id, answer)}/>)}
       {(session.connectionError || run?.error) && <p className="agent-error" role="alert">{session.connectionError || run?.error}</p>}
+      {linkError&&<p className="agent-error" role="alert">{linkError}</p>}
       {run?.state === 'cancelled' && <p className="quiet-note">本轮已停止。会话记录保留。</p>}
       {state.artifacts.filter(a => a.sessionId === session.id).map(artifact => {const placed = space.nodes.find(n => n.sourceArtifactId === artifact.id); return <details className="artifact" key={artifact.id}><summary><Check size={14}/>{artifact.title}</summary><p>{artifact.text}</p><button className="text-button" disabled={!placed && space.nodes.length >= 250} onClick={() => {const at = Date.now(); change(current => placeArtifact(current, artifact.id, at)); onNode(placed?.id || `artifact-${artifact.id}`);}}>{placed ? '查看地图节点' : '保留到地图'}<ChevronRight size={13}/></button></details>;})}
       {run?.context && <details className="artifact"><summary>本轮引用的节点与材料</summary><pre className="material-text">{run.context}</pre></details>}

@@ -23,7 +23,7 @@ export function GraphView({space, onChange, onAdd, sessionCounts}: {space: Works
     const right = Math.max(...positions.map(p => p.x + p.width / 2));
     const top = Math.min(...positions.map(p => p.y - p.height / 2));
     const bottom = Math.max(...positions.map(p => p.y + p.height / 2));
-    const zoom = Math.max(.65, Math.min(1, (frame.current.clientWidth - 90) / (right - left), (frame.current.clientHeight - 100) / (bottom - top)));
+    const zoom = Math.max(.2, Math.min(1, (frame.current.clientWidth - 90) / (right - left), (frame.current.clientHeight - 100) / (bottom - top)));
     onChange({...graph, camera: {x: -(left + right) / 2 * zoom, y: -(top + bottom) / 2 * zoom, zoom}});
   }
   useLayoutEffect(() => {if (!graph.camera) fit();}, [graph.camera, graph.focusId, space.id]);

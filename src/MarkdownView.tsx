@@ -1,9 +1,9 @@
-import { useId } from 'react';
+import { memo,useId } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { markdownUrl } from './markdown';
-export default function MarkdownView({value,onOpenLink,className=''}:{value:string;onOpenLink?:(url:string)=>void;className?:string}){
+export default memo(function MarkdownView({value,onOpenLink,className='',allowRemoteImages=true}:{value:string;onOpenLink?:(url:string)=>void;className?:string;allowRemoteImages?:boolean}){
  const prefix=`md-${useId().replace(/[^a-z\d]/gi,'')}-`;
  return <div className={`markdown-content ${className}`}>
   <Markdown remarkPlugins={[remarkGfm,remarkBreaks]} skipHtml remarkRehypeOptions={{clobberPrefix:prefix,footnoteLabel:'脚注',footnoteBackLabel:'返回正文'}} urlTransform={(url,key)=>markdownUrl(url,key==='src')} components={{
@@ -13,7 +13,7 @@ export default function MarkdownView({value,onOpenLink,className=''}:{value:stri
     if(onOpenLink){e.preventDefault();onOpenLink(href);}
    }}>{children}</a>,
    table:({node:_,children,...props})=><div className="markdown-table-wrap"><table {...props}>{children}</table></div>,
-   img:({node:_,src,alt,...props})=>src?<img {...props} src={src} alt={alt||'笔记图片'} loading="lazy" referrerPolicy="no-referrer"/>:<span className="markdown-image-placeholder">图片：{alt||'未指定图片地址'}</span>,
+   img:({node:_,src,alt,...props})=>src&&(allowRemoteImages||!/^https?:/i.test(src))?<img {...props} src={src} alt={alt||'笔记图片'} loading="lazy" referrerPolicy="no-referrer"/>:<span className="markdown-image-placeholder">图片：{alt||'未指定图片地址'}</span>,
   }}>{value}</Markdown>
  </div>;
-}
+});

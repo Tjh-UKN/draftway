@@ -6,9 +6,14 @@ use std::{fs, io::Read, path::{Path, PathBuf}, process::{Command, Stdio}, time::
 #[serde(rename_all="camelCase")]
 pub struct TextFile {pub path: String, pub name: String, pub text: String}
 pub fn display_path(path: &Path) -> String {let value=path.to_string_lossy();if let Some(unc)=value.strip_prefix(r"\\?\UNC\") {format!(r"\\{unc}")}else{value.strip_prefix(r"\\?\").unwrap_or(&value).into()}}
-pub fn space(store: &Store, id: &str) -> Result<Value> {workspace_state::load(store)?.and_then(|value|value["spaces"].as_array()?.iter().find(|w|w["id"]==id).cloned()).ok_or("工作区不存在".into())}
+pub fn space(store: &Store, id: &str) -> Result<Value> {
+    let mut space=workspace_state::load(store)?.and_then(|value|value["spaces"].as_array()?.iter().find(|w|w["id"]==id).cloned()).ok_or("工作区不存在")?;
+    space["_ownedRoot"]=Value::Null;
+    if !id.is_empty()&&id.len()<=100&&id.bytes().all(|b|b.is_ascii_alphanumeric()||[b'-',b'_'].contains(&b)) {if let (Ok(root),Ok(owned))=(store.root.canonicalize(),store.root.join("agents/workspaces").join(id).canonicalize()){if owned.is_dir()&&owned.starts_with(root){space["_ownedRoot"]=serde_json::json!(display_path(&owned));}}}
+    Ok(space)
+}
 fn roots(space: &Value) -> Vec<PathBuf> {
-    space["cwd"].as_str().map(PathBuf::from).into_iter().chain(space["materialRoots"].as_array().into_iter().flatten().filter_map(|root|root["path"].as_str().map(PathBuf::from))).filter_map(|path|path.canonicalize().ok()).filter(|path|path.is_dir()).collect()
+    space["cwd"].as_str().map(PathBuf::from).into_iter().chain(space["_ownedRoot"].as_str().map(PathBuf::from)).chain(space["materialRoots"].as_array().into_iter().flatten().filter_map(|root|root["path"].as_str().map(PathBuf::from))).filter_map(|path|path.canonicalize().ok()).filter(|path|path.is_dir()).collect()
 }
 pub fn scoped(space: &Value, path: &Path) -> Result<PathBuf> {
     let file=path.canonicalize().map_err(|e|format!("文件不可用：{e}"))?;
@@ -32,6 +37,7 @@ pub fn target(space: &Value, value: &str) -> Result<PathBuf> {
     else {scoped(space,Path::new(value))}
 }
 fn read(path: PathBuf) -> Result<TextFile> {
+    if path.is_dir(){return Ok(TextFile{path:display_path(&path),name:path.file_name().unwrap_or_default().to_string_lossy().into(),text:format!("文件夹位置：{}\n可使用原应用打开。",display_path(&path))});}
     let handle=fs::File::open(&path).map_err(error)?;let mut bytes=Vec::new();handle.take(1_048_577).read_to_end(&mut bytes).map_err(error)?;
     if bytes.len()>1_048_576 || bytes.contains(&0) {return Err("内置阅读支持 1 MB 以内的 UTF-8 文本文件，请用原应用打开其他格式。".into());}
     let text=String::from_utf8(bytes).map_err(|_|"文件不是 UTF-8 文本，请用原应用打开。")?;
@@ -52,7 +58,7 @@ fn git(directory: &Path, args: &[&str]) -> Result<Vec<u8>> {
         if fs::metadata(&output_path).map_err(error)?.len()>2_000_000 {return Err("差异超过 2 MB，请缩小审查范围".into());}fs::read(&output_path).map_err(error)})();let _=fs::remove_file(output_path);result
 }
 pub fn git_files(store: &Store, workspace: &str) -> Result<Vec<String>> {
-    let space=space(store,workspace)?;let root=PathBuf::from(space["cwd"].as_str().ok_or("请先为工作区选择 Git 工作目录")?);
+    let space=space(store,workspace)?;let root=PathBuf::from(space["cwd"].as_str().or(space["_ownedRoot"].as_str()).ok_or("请先为工作区选择 Git 工作目录")?);
     let bytes=git(&root,&["status","--porcelain=v1","-z","--no-renames","--untracked-files=all","--","."])?;
     let mut files=Vec::new();let mut rows=bytes.split(|b|*b==0).filter(|r|!r.is_empty());while let Some(row)=rows.next() {if row.len()<4 {continue;}let name=std::str::from_utf8(&row[3..]).map_err(|_|"文件名不是 UTF-8")?.to_string();files.push(name);if row[..2].contains(&b'R') || row[..2].contains(&b'C') {rows.next();}}
     Ok(files)
@@ -60,7 +66,7 @@ pub fn git_files(store: &Store, workspace: &str) -> Result<Vec<String>> {
 pub fn git_diff(store: &Store, workspace: &str, file: &str) -> Result<Vec<TextFile>> {
     if file.starts_with('-') || file.contains('\0') || Path::new(file).is_absolute() || Path::new(file).components().any(|c|matches!(c,std::path::Component::ParentDir|std::path::Component::Prefix(_))) {return Err("Git 文件路径无效".into());}
     if !git_files(store,workspace)?.iter().any(|name|name==file) {return Err("此文件不在当前改动列表内".into());}
-    let space=space(store,workspace)?;let directory=PathBuf::from(space["cwd"].as_str().ok_or("工作目录不存在")?);let top=String::from_utf8(git(&directory,&["rev-parse","--show-toplevel"])?).map_err(error)?;let top=PathBuf::from(top.trim());
+    let space=space(store,workspace)?;let directory=PathBuf::from(space["cwd"].as_str().or(space["_ownedRoot"].as_str()).ok_or("工作目录不存在")?);let top=String::from_utf8(git(&directory,&["rev-parse","--show-toplevel"])?).map_err(error)?;let top=PathBuf::from(top.trim());
     // status paths are repository-relative, including when cwd is a subdirectory.
     let path=top.join(file);let current=if path.exists() {read(scoped(&space,&path)?)?.text}else {scoped(&space,path.parent().ok_or("文件目录无效")?)?;String::new()};
     let has_head=git(&top,&["rev-parse","--verify","HEAD"]).is_ok();
@@ -78,6 +84,8 @@ pub fn context(store: &Store, workspace: &str, node_id: Option<&str>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;use serde_json::json;
+    #[test]
+    fn default_workspace_materials_are_available_without_granting_neighbour_workspaces(){let root=std::env::temp_dir().join(format!("northstar-owned-material-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();let owned=root.join("agents/workspaces/w");let other=root.join("agents/workspaces/other");fs::create_dir_all(&owned).unwrap();fs::create_dir_all(&other).unwrap();fs::write(owned.join("note.md"),"Own").unwrap();fs::write(other.join("note.md"),"Other").unwrap();workspace_state::save(&store,&serde_json::json!({"version":2,"activeId":"w","spaces":[{"id":"w","name":"Work","nodes":[{"id":"n"}],"dock":{}}],"sessions":[],"runs":[],"artifacts":[],"notices":[]})).unwrap();let space=space(&store,"w").unwrap();assert_eq!(read(target(&space,&owned.join("note.md").to_string_lossy()).unwrap()).unwrap().text,"Own");assert!(target(&space,&other.join("note.md").to_string_lossy()).is_err());assert!(read(target(&space,&owned.to_string_lossy()).unwrap()).unwrap().text.contains("文件夹位置"));}
     #[test]
     fn scopes_canonical_paths_and_resolves_vault_notes_without_traversal() {
         let root=std::env::temp_dir().join(format!("northstar-resource-test-{}",uuid::Uuid::new_v4()));fs::create_dir_all(root.join("vault")).unwrap();fs::write(root.join("vault/note.md"),"Note").unwrap();fs::write(root.join("private.txt"),"Private").unwrap();let space=json!({"materialRoots":[{"name":"Knowledge","path":root.join("vault")} ]});

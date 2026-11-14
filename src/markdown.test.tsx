@@ -9,3 +9,5 @@ describe('Markdown notes',()=>{
  it('keeps web/mail/anchor links and only approved image schemes',()=>{expect(markdownUrl('https://example.com/docs')).toBe('https://example.com/docs');expect(markdownUrl('mailto:reader@example.com')).toBe('mailto:reader@example.com');expect(markdownUrl('#section')).toBe('#section');expect(markdownUrl('https://example.com/photo.png',true)).toBe('https://example.com/photo.png');expect(markdownUrl('http://example.com/photo.png',true)).toBe('');});
  it('wraps selected text without destroying the surrounding draft',()=>{const result=insertMarkdown('前文 重点 后文',3,5,'bold');expect(result.value).toBe('前文 **重点** 后文');expect(result.value.slice(result.start,result.end)).toBe('重点');const code=insertMarkdown('已有内容',4,4,'code');expect(code.value).toContain('已有内容\n```text\n代码内容\n```');});
 });
+
+it('does not load remote tracking images in AI content',()=>{const html=renderToStaticMarkup(<MarkdownView value="![image](https://example.com/tracker.png)" allowRemoteImages={false}/>);expect(html).not.toContain('<img');});

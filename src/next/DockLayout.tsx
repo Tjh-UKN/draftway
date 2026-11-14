@@ -27,11 +27,11 @@ export function DockLayout(props: Props) {
   return <div className={`dock-layout ${dragging ? 'is-dragging' : ''}`}>{tree(props.space.dock.root)}</div>;
 }
 function SplitView({node, children, onResize}: {node: Split; children: ReactNode[]; onResize: (ratio: number) => void}) {
-  const container = useRef<HTMLDivElement>(null);
+  const container = useRef<HTMLDivElement>(null);const resizing=useRef(false);useEffect(()=>()=>{if(resizing.current)document.body.classList.remove('resizing-panes');},[]);
   return <div ref={container} className={`dock-split split-${node.axis}`} style={{gridTemplateColumns: node.axis === 'row' ? `minmax(0, ${node.ratio}fr) 5px minmax(0, ${1 - node.ratio}fr)` : undefined, gridTemplateRows: node.axis === 'column' ? `minmax(0, ${node.ratio}fr) 5px minmax(0, ${1 - node.ratio}fr)` : undefined}}>
     {children[0]}<div className="dock-divider" role="separator" aria-label={node.axis === 'row' ? '调整左右分区大小' : '调整上下分区大小'} aria-orientation={node.axis === 'row' ? 'vertical' : 'horizontal'} aria-valuemin={15} aria-valuemax={85} aria-valuenow={Math.round(node.ratio * 100)} tabIndex={0} onKeyDown={event => {if (['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(event.key)) {event.preventDefault(); onResize(node.ratio + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -.025 : .025));}}} onPointerDown={event => {
-      event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); document.body.classList.add('resizing-panes');
-    }} onPointerMove={event => {if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const rect = container.current!.getBoundingClientRect(); onResize(node.axis === 'row' ? (event.clientX - rect.left) / rect.width : (event.clientY - rect.top) / rect.height);}} onPointerUp={event => {event.currentTarget.releasePointerCapture(event.pointerId); document.body.classList.remove('resizing-panes');}} onLostPointerCapture={() => document.body.classList.remove('resizing-panes')}/>{children[1]}
+      event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);resizing.current=true;document.body.classList.add('resizing-panes');
+    }} onPointerMove={event => {if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const rect = container.current!.getBoundingClientRect(); onResize(node.axis === 'row' ? (event.clientX - rect.left) / rect.width : (event.clientY - rect.top) / rect.height);}} onPointerUp={event => {event.currentTarget.releasePointerCapture(event.pointerId); document.body.classList.remove('resizing-panes');}} onLostPointerCapture={() => {resizing.current=false;document.body.classList.remove('resizing-panes');}}/>{children[1]}
   </div>;
 }
 function GroupView({group, dragging, onDrag, ...props}: Props & {group: TabGroup; dragging: boolean; onDrag: (value: boolean) => void}) {

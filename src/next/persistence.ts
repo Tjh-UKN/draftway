@@ -47,5 +47,5 @@ export function useWorkbenchPersistence(state: WorkbenchState, change: ChangeSta
     window.addEventListener('pagehide', flush); document.addEventListener('visibilitychange', visibility);
     return () => {window.removeEventListener('pagehide', flush); document.removeEventListener('visibilitychange', visibility);};
   }, []);
-  return {ready, readOnly, saved, error, flush:async()=>{if(!readyRef.current||readOnlyRef.current)throw Error('工作区当前不能保存，请先恢复数据读取。');await persist(latest.current);},retry: () => readOnly ? void restore() : persist(latest.current)};
+  return {ready, readOnly, saved, error, flush:async()=>{if(!readyRef.current)throw Error('工作区还在恢复，请稍后重试。');if(readOnlyRef.current)return;await persist(latest.current);},retry: () => readOnly ? void restore() : persist(latest.current)};
 }

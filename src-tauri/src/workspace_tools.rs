@@ -32,7 +32,7 @@ pub fn call(store: &Store, session_id: &str, name: &str, args: &Value) -> Result
     if kind=="progress" || kind=="update" {if string(args,"text",6000)?.trim().is_empty() {return Err("进展说明不能为空".into());}}
     if kind=="update" || kind=="artifact" {string(args,"body",60000)?;}
     if kind=="update" {string(args,"expectedBody",60000)?;}
-    if kind=="artifact" {if string(args,"title",240)?.trim().is_empty() {return Err("产物名称不能为空".into());}}
+    if kind=="artifact" {let title=string(args,"title",480)?;if title.trim().is_empty()||title.encode_utf16().count()>120 {return Err("产物名称需要 1 至 120 个字符".into());}}
     let op=Operation{seq:0,id:format!("{session_id}-{mutation}"),workspace_id:workspace.into(),node_id:node.into(),session_id:session_id.into(),run_id:session["runs"].as_array().unwrap().last().unwrap()["id"].as_str().ok_or("执行标识无效")?.into(),kind:kind.into(),payload:args.clone(),at:chrono::Utc::now().timestamp_millis() as u64};
     let op=map_ops::append(store,op)?;Ok(json!({"recorded":true,"operationId":op.id,"sequence":op.seq,"message":"操作已记录；前台若有同时编辑，保留用户内容并把 AI 内容写入建议记录。事件进度与验收状态保持独立。"}))
 }
@@ -63,6 +63,7 @@ mod tests {
         let root=std::env::temp_dir().join(format!("northstar-tool-test-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();std::fs::create_dir(root.join("agents")).unwrap();let agents=Connection::open(root.join("agents/agent-sessions.sqlite3")).unwrap();agents.execute_batch("CREATE TABLE agent_sessions(id TEXT PRIMARY KEY,data TEXT);").unwrap();let mut session=json!({"workspaceId":"w","nodeId":"n","runs":[{"id":"r","state":"running"}]});agents.execute("INSERT INTO agent_sessions VALUES('s',?1)",[session.to_string()]).unwrap();
         crate::workspace_state::save(&store,&json!({"version":2,"activeId":"w","spaces":[{"id":"w","name":"Work","nodes":[{"id":"n","body":"Original","progress":20}],"dock":{}},{"id":"other","name":"Other","nodes":[{"id":"outside"}],"dock":{}}],"sessions":[],"runs":[],"artifacts":[],"notices":[]})).unwrap();
         let args=json!({"nodeId":"n","mutationId":"m","text":"Progress"});assert_eq!(call(&store,"s","northstar_progress",&args).unwrap()["sequence"],1);assert_eq!(call(&store,"s","northstar_progress",&args).unwrap()["sequence"],1);assert!(call(&store,"s","northstar_node_read",&json!({"nodeId":"outside"})).is_err());
+        assert!(call(&store,"s","northstar_keep_artifact",&json!({"nodeId":"n","mutationId":"long-title","title":"x".repeat(121),"body":"Result"})).is_err());
         let db=store.db.lock().unwrap();let ops=map_ops::changes(&db,0).unwrap();assert_eq!(ops[0].session_id,"s");assert_eq!(ops[0].run_id,"r");drop(db);
         session["runs"][0]["state"]=json!("cancelled");agents.execute("UPDATE agent_sessions SET data=?1 WHERE id='s'",[session.to_string()]).unwrap();assert!(call(&store,"s","northstar_progress",&json!({"nodeId":"n","mutationId":"later","text":"After stop"})).is_err());
     }

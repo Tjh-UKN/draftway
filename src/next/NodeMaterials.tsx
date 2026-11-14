@@ -2,6 +2,7 @@ import {useState} from 'react';
 import {BookOpen, Check, Copy, ExternalLink, FileText, Globe, Plus, X} from 'lucide-react';
 import type {MindNode} from './model';
 import {parseMaterialTarget, type NodeMaterial} from './material-target';
+import {boundedText} from './text';
 
 export function NodeMaterials({node, onChange, onOpen}: {node: MindNode; onChange: (node: MindNode) => void; onOpen?: (material: NodeMaterial) => void}) {
   const [adding, setAdding] = useState(false);
@@ -14,7 +15,7 @@ export function NodeMaterials({node, onChange, onOpen}: {node: MindNode; onChang
     try {
       const parsed = parseMaterialTarget(input);
       if (materials.some(m => {try {return parseMaterialTarget(m.target).target === parsed.target;} catch {return m.target === parsed.target;}})) throw new Error('这份材料已经关联。');
-      onChange({...node, materials: [...(node.materials || []), {id: crypto.randomUUID(), title: parsed.title.slice(0, 240), target: parsed.target}]});
+      onChange({...node, materials: [...(node.materials || []), {id: crypto.randomUUID(), title: boundedText(parsed.title,240), target: parsed.target}]});
       setInput(''); setError(''); setAdding(false);
     } catch (e) {setError(e instanceof Error ? e.message : '无法添加这份材料。');}
   }

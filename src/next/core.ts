@@ -2,6 +2,7 @@ import {newSpace, parseState, seedState, type DesignState, type Space} from './m
 import type {WidgetWindowRect} from '../workspace-layout';
 import type {LayoutTemplate} from './composition';
 import {parseIntegration,type ExternalIntegration} from './integration-manifest';
+import {boundedText} from './text';
 import {closeDockTab, groups, initialDock, moveDockTab, openDockTab, repairBrowserIds, selectDockTab, validateDock, type DockState} from './docking';
 
 export type RunState = 'running' | 'needs_input' | 'succeeded' | 'failed' | 'cancelled';
@@ -168,7 +169,7 @@ export function startDemoRun(state: WorkbenchState, sessionId: string, text: str
   if ((mapAction === 'progress' || mapAction === 'update') && !state.spaces.find(w => w.id === session?.workspaceId)?.nodes.some(n => n.id === targetNodeId)) return state;
   if (!text.trim() || !state.sessions.some(s => s.id === sessionId && s.integrationId === 'demo-agent') || state.runs.some(r => r.sessionId === sessionId && (r.state === 'running' || r.state === 'needs_input'))) return state;
   return {...state,
-    sessions: state.sessions.map(s => s.id === sessionId ? {...s, ...(!s.messages.length && /^新的会话(?: \d+)?$/.test(s.title) ? {title: text.trim().split('\n')[0].slice(0, 32)} : {}), draft: '', messages: [...s.messages, {id: `${runId}-user`, role: 'user', text: text.trim(), at}]} : s),
+    sessions: state.sessions.map(s => s.id === sessionId ? {...s, ...(!s.messages.length && /^新的会话(?: \d+)?$/.test(s.title) ? {title: boundedText(text.trim().split('\n')[0],32)} : {}), draft: '', messages: [...s.messages, {id: `${runId}-user`, role: 'user', text: text.trim(), at}]} : s),
     runs: [...state.runs, {id: runId, sessionId, state: 'running', outcome, startedAt: at, dueAt: at + 7000, mapAction, targetNodeId}],
   };
 }
@@ -216,7 +217,7 @@ export function placeArtifact(state: WorkbenchState, artifactId: string, at: num
   const next = updateWorkspace(state, session.workspaceId, space => {
     if (space.nodes.length >= 250 || space.nodes.some(n => n.sourceArtifactId === artifact.id)) return space;
     const parent = space.nodes.find(n => n.id === session.nodeId) || space.nodes.find(n => !n.parentId)!;
-    return {...space, nodes: [...space.nodes, {id: `artifact-${artifact.id}`, parentId: parent.id, side: parent.side, kind: 'artifact', title: artifact.title, body: artifact.text, progress: 0, due: '', steps: [], completed: false, sourceArtifactId: artifact.id, updates: [{id: `created-${artifact.id}`, text: session.integrationId === 'demo-agent' ? '从会话保留产物（模拟结果）' : '从会话保留产物', at, sessionId: session.id}]}], graph: {...space.graph, collapsed: space.graph.collapsed.filter(id => id !== parent.id)}};
+    return {...space, nodes: [...space.nodes, {id: `artifact-${artifact.id}`, parentId: parent.id, side: parent.side, kind: 'artifact', title: boundedText(artifact.title,120)||'产物', body: artifact.text, progress: 0, due: '', steps: [], completed: false, sourceArtifactId: artifact.id, updates: [{id: `created-${artifact.id}`, text: session.integrationId === 'demo-agent' ? '从会话保留产物（模拟结果）' : '从会话保留产物', at, sessionId: session.id}]}], graph: {...space.graph, collapsed: space.graph.collapsed.filter(id => id !== parent.id)}};
   });
   return {...next, sessions: next.sessions.map(s => s.id === session.id ? {...s, linkedNodeIds: [...new Set([...(s.linkedNodeIds || []), nodeId])]} : s)};
 }

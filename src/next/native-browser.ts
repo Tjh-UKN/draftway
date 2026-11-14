@@ -1,13 +1,15 @@
 import {useEffect, useRef, useState} from 'react';
 import {invoke, isTauri} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
+import {flushSync} from 'react-dom';
 import {updateWorkspace, type WorkbenchState} from './core';
-import {browserUrl, groups, openDockTab} from './docking';
+import {browserUrl, groups, openDockTab,selectDockTab} from './docking';
 import type {ChangeState} from './Sessions';
 
 export const nativeBrowserEnabled = typeof window !== 'undefined' && isTauri();
 export interface BrowserStatus {ready?: boolean; error?: string; back?: boolean; forward?: boolean; loading?: boolean}
-export interface NativeBrowserHost {statuses: Record<string, BrowserStatus>; action: (id: string, action: 'back' | 'forward' | 'reload') => void; external: (url: string) => void}
+export interface NativeBrowserHost {statuses: Record<string, BrowserStatus>; action: (id: string, action: 'back' | 'forward' | 'reload' | 'focus') => void; external: (url: string) => void}
+export function focusBrowser(state:WorkbenchState,id:string):WorkbenchState {const space=state.spaces.find(s=>s.id===state.activeId);if(!space?.dock.tabs.some(t=>t.id===id&&t.kind==='browser')||!groups(space.dock.root).some(g=>g.activeId===id))return state;return updateWorkspace(state,space.id,w=>({...w,dock:selectDockTab(w.dock,id)}));}
 export interface BrowserSnapshot {tabs: {id: string; url: string}[]; slots: {id: string; x: number; y: number; width: number; height: number}[]; viewportWidth: number; viewportHeight: number}
 interface BrowserPageEvent {id: string; url?: string | null; title?: string; loading?: boolean}
 export function applyBrowserPage(state: WorkbenchState, event: BrowserPageEvent): WorkbenchState {
@@ -83,6 +85,13 @@ export function useNativeBrowserHost(state: WorkbenchState, change: ChangeState,
       if (typeof payload.loading === 'boolean') patch(payload.id, {loading: payload.loading});
       change(old => applyBrowserPage(old, payload));
     });
+    const focus=listen<{id:string}>('browser-focus',({payload})=>{if(alive)change(old=>focusBrowser(old,payload.id));});
+    const shortcuts=listen<{id:string;key:string;ctrlKey:boolean;altKey:boolean;shiftKey:boolean}>('browser-shortcut',({payload})=>{
+      if(!alive||!snapshot().slots.some(slot=>slot.id===payload.id))return;
+      flushSync(()=>change(old=>focusBrowser(old,payload.id)));
+      if(payload.key==='F6'||(payload.ctrlKey&&payload.key==='l')){const input=document.querySelector<HTMLInputElement>(`[data-browser-address="${CSS.escape(payload.id)}"]`);input?.focus();input?.select();return;}
+      document.dispatchEvent(new KeyboardEvent('keydown',{...payload,bubbles:true,cancelable:true}));
+    });
     const popup = listen<{id: string; url: string}>('browser-new-tab', ({payload}) => {
       const url = browserUrl(payload.url); if (!alive || !url) return; const id = crypto.randomUUID();
       change(old => {
@@ -102,6 +111,7 @@ export function useNativeBrowserHost(state: WorkbenchState, change: ChangeState,
       alive = false; cancelAnimationFrame(frame); clearInterval(interval); observer.disconnect(); mutations.disconnect();
       window.removeEventListener('resize', layout); document.removeEventListener('visibilitychange', layout); document.removeEventListener('scroll', layout, true);
       void page.then(off => off()); void popup.then(off => off());
+      void focus.then(off=>off()).catch(()=>{});void shortcuts.then(off=>off()).catch(()=>{});
       void call('sync_browser_views', {snapshot: {tabs: browserTabs(current.current), slots: [], viewportWidth: innerWidth, viewportHeight: innerHeight}}).catch(() => {});
     };
   }, [change, enabled]);

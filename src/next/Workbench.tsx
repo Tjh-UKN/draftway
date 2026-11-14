@@ -23,15 +23,17 @@ import {BusinessView} from './BusinessView';
 import {businessComponents,isBusinessPage,type BusinessPage} from '../business-components';
 import {fromTemplate,layoutTemplate} from './composition';
 import {CompositionSettings} from './CompositionSettings';
+import {boundedText} from './text';
 import {Dialog, Empty, SpaceSymbol, Star} from './ui';
 
+function freshWorkbench(){const space=createWorkspace('我的工作区','blank');return initialWorkbench({version:2,activeId:space.id,spaces:[space]});}
 function loadWorkbench() {
   try {
     const raw = localStorage.getItem(shellStorageKey) || localStorage.getItem(previousShellStorageKey);
     if (raw) return {state: parseWorkbench(JSON.parse(raw)), error: ''};
     const legacy = localStorage.getItem(storageKey);
-    return {state: initialWorkbench(legacy ? parseState(JSON.parse(legacy)) : undefined), error: ''};
-  } catch {return {state: initialWorkbench(), error: '无法读取已保存的数据。本次使用临时状态，原始内容不会被覆盖。'};}
+    return {state: legacy ? initialWorkbench(parseState(JSON.parse(legacy))) : freshWorkbench(), error: ''};
+  } catch {return {state: freshWorkbench(), error: '无法读取已保存的数据。本次使用临时状态，原始内容不会被覆盖。'};}
 }
 export default function Workbench() {
   const [loaded] = useState(loadWorkbench);
@@ -75,6 +77,7 @@ export default function Workbench() {
     else switchSpace(notice.workspaceId);
   }
   function startSession(agentId: AgentSession['agentId'], nodeId: string | null = null, groupId?: string) {
+    if(persistence.readOnly)return;
     const id = crypto.randomUUID(); const at = Date.now();
     const title = createSession(current.current, space.id, nodeId, id, at, agentId).sessions.find(s => s.id === id)!.title;
     change(s => {const target = groupId ? updateWorkspace(s, space.id, w => ({...w, dock: {...w.dock, activeGroupId: groupId}})) : s; const next = updateWorkspace(createSession(target, space.id, nodeId, id, at, agentId, title), space.id, w => ({...w, sessionPanelOpen: false})); return agents ? {...next, sessions: next.sessions.map(session => session.id === id ? {...session, integrationId: agentId || 'codex', cwd: space.cwd} : session)} : next;});
@@ -83,10 +86,8 @@ export default function Workbench() {
   }
   function changeGraph(graph: GraphState) {if (graph.selectedId !== newNodeId) setNewNodeId(null); updateSpace(s => ({...s, graph}));}
   function openNode(id: string) {
-    if (!space.nodes.some(node => node.id === id)) return;
     setNewNodeId(null);
-    change(s => selectWorkspaceTab(s, space.id));
-    updateSpace(s => ({...s, graph: {...s.graph, selectedId: id, focusId: null, collapsed: [], camera: null}}));
+    change(s=>{const target=s.spaces.find(w=>w.id===space.id);if(!target?.nodes.some(node=>node.id===id))return s;return updateWorkspace(selectWorkspaceTab(s,space.id),space.id,w=>({...w,graph:{...w.graph,selectedId:id,focusId:null,collapsed:[],camera:null}}));});
     setDialog(null);
   }
   function selectTab(id: string) {
@@ -122,6 +123,9 @@ export default function Workbench() {
     const listener = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {event.preventDefault(); setDialog(d => d === 'search' ? null : 'search'); return;}
       if (dialog) return;
+      if(event.ctrlKey&&!event.altKey&&!event.shiftKey&&event.key.toLowerCase()==='t'){event.preventDefault();createTab('browser',space.dock.activeGroupId);return;}
+      if(event.ctrlKey&&!event.altKey&&!event.shiftKey&&event.key.toLowerCase()==='w'){event.preventDefault();closeTab(focusedGroup(space.dock).activeId);return;}
+      if((event.ctrlKey&&!event.altKey&&event.key.toLowerCase()==='l')||event.key==='F6'){const tab=space.dock.tabs.find(t=>t.id===focusedGroup(space.dock).activeId);if(tab?.kind==='browser'){event.preventDefault();const input=document.querySelector<HTMLInputElement>(`[data-browser-address="${CSS.escape(tab.id)}"]`);if(event.key==='F6'&&nativeBrowsers?.statuses[tab.id]?.ready)nativeBrowsers.action(tab.id,'focus');else{input?.focus();input?.select();}}return;}
       if (event.altKey && !event.ctrlKey && /^[1-9]$/.test(event.key)) {const next = current.current.spaces[Number(event.key) - 1]; if (next) {event.preventDefault(); switchSpace(next.id);}}
       if (event.ctrlKey && event.key === 'Tab') {
         event.preventDefault();
@@ -130,8 +134,8 @@ export default function Workbench() {
         cycle.index = (cycle.index + (event.shiftKey ? -1 : 1) + cycle.ids.length) % cycle.ids.length;
         selectTab(cycle.ids[cycle.index]); return;
       }
-      if (event.ctrlKey && event.shiftKey && ['[', ']'].includes(event.key)) {
-        event.preventDefault(); const group = focusedGroup(space.dock); const ids = group.tabs; if (!ids.length) return; selectTab(ids[(ids.indexOf(group.activeId) + (event.key === ']' ? 1 : -1) + ids.length) % ids.length]); return;
+      if (event.ctrlKey && event.shiftKey && ['[', ']', '{', '}'].includes(event.key)) {
+        event.preventDefault(); const group = focusedGroup(space.dock); const ids = group.tabs; if (!ids.length) return; selectTab(ids[(ids.indexOf(group.activeId) + ([']','}'].includes(event.key) ? 1 : -1) + ids.length) % ids.length]); return;
       }
       if (event.key === 'Escape') {
         if (inbox) setInbox(false);
@@ -143,8 +147,10 @@ export default function Workbench() {
     document.addEventListener('keydown', listener); document.addEventListener('keyup', release); return () => {document.removeEventListener('keydown', listener); document.removeEventListener('keyup', release);};
   }, [dialog, inbox, space]);
   const nodeSessions = selected ? sessions.filter(s => sessionNodeIds(s).includes(selected.id) || selected.updates?.some(u=>u.sessionId===s.id)) : [];
-  const sessionCounts: Record<string, number> = {};
-  for (const session of sessions) for (const id of sessionNodeIds(session)) sessionCounts[id] = (sessionCounts[id] || 0) + 1;
+  const nodeLinks=new Map<string,Set<string>>();const knownSessions=new Set(sessions.map(s=>s.id));
+  for(const session of sessions)for(const id of sessionNodeIds(session)){const ids=nodeLinks.get(id)||new Set<string>();ids.add(session.id);nodeLinks.set(id,ids);}
+  for(const node of space.nodes)for(const update of node.updates||[])if(update.sessionId&&knownSessions.has(update.sessionId)){const ids=nodeLinks.get(node.id)||new Set<string>();ids.add(update.sessionId);nodeLinks.set(node.id,ids);}
+  const sessionCounts=Object.fromEntries([...nodeLinks].map(([id,sessions])=>[id,sessions.size]));
   const mapView = <div className="workspace-map-scene">
       <main className="workspace-map" aria-label="工作区"><GraphView key={space.id} space={space} onChange={changeGraph} onAdd={parentId => {if (space.nodes.length >= 250) return; const id = crypto.randomUUID(); change(s => createMapNode(s, space.id, parentId, id)); setNewNodeId(id);}} sessionCounts={sessionCounts}/></main>
       {selected && <NodeInspector key={`${space.id}-${selected.id}`} space={space} node={selected} autoFocusTitle={newNodeId === selected.id} onChange={updateNode} onClose={() => changeGraph({...space.graph, selectedId: null})} onFocus={() => changeGraph({...space.graph, focusId: selected.id, selectedId: null, collapsed: [], camera: null})}>
@@ -156,7 +162,7 @@ export default function Workbench() {
       </NodeInspector>}
     </div>;
   if (!persistence.ready) return <div className="workbench-loading">正在恢复工作区…</div>;
-  return <AgentRuntimeContext.Provider value={agents}><div className="workbench-shell map-first-shell">
+  return <AgentRuntimeContext.Provider value={agents?{...agents,readOnly:persistence.readOnly,backends:persistence.readOnly?[]:agents.backends}:null}><div className="workbench-shell map-first-shell">
     <aside className="shell-sidebar" aria-label="主导航"><div className="sidebar-brand"><Star/><span>北极星</span></div>
       <nav className="global-navigation"><button onClick={() => setDialog('workspace')} disabled={state.spaces.length >= 20}><Plus size={17}/>新建工作区</button><button onClick={() => setDialog('search')}><Search size={17}/>搜索<kbd>Ctrl K</kbd></button></nav>
       <div className="sidebar-label">工作区</div><nav className="workspace-list" aria-label="工作区">{state.spaces.map((item, index) => {
@@ -173,7 +179,7 @@ export default function Workbench() {
         if (tab.kind === 'browser') return <BrowserView tab={tab} active={active} onChange={updateTab} native={nativeBrowsers}/>;
         if (tab.kind === 'review') return <ReviewView workspaceId={space.id} tab={tab} onChange={updateTab}/>;
         if (tab.kind === 'material') return <MaterialView workspaceId={space.id} tab={tab}/>;
-        if (tab.kind === 'business') return <BusinessView workspaceId={space.id} tab={tab} active={active} onChange={updateTab} flush={persistence.flush}/>;
+        if (tab.kind === 'business') return <BusinessView workspaceId={space.id} tab={tab} active={active} onChange={updateTab} flush={persistence.flush} onWorkspace={()=>change(s=>selectWorkspaceTab(s,space.id))}/>;
         if (tab.kind === 'report') return <ReportView workspaceId={space.id} tab={tab} onDashboard={() => updateSpace(w => ({...w, dock: openDockTab(w.dock, {id: w.dock.tabs.find(t=>t.kind==='browser'&&t.url===tab.url)?.id||crypto.randomUUID(), kind: 'browser', title: 'PR 检视看板', url: tab.url})}))}/>;
         const session = state.sessions.find(s => s.id === tab.sessionId)!;
         return <SessionView state={state} session={session} active={active} change={change} onNode={id => {const nodeId = id || session.nodeId; if (nodeId) openNode(nodeId);}}/>;
@@ -186,7 +192,7 @@ export default function Workbench() {
     {dialog === 'workspace' && <WorkspaceDialog templates={state.templates} onClose={() => setDialog(null)} onCreate={(name,templateId) => {const template=state.templates?.find(t=>t.id===templateId);const next = template?fromTemplate(name,template):createWorkspace(name, 'blank'); change(s => ({...s, activeId: next.id, spaces: [...s.spaces, next]})); setDialog(null);}}/>}
 
     {dialog === 'settings' && <Dialog title="接入与设置" onClose={() => setDialog(null)}><p className="muted">{agents ? '使用本机已安装的执行器。会话、来源标识和执行记录由北极星保存。' : '浏览器模式使用模拟器；真实 Agent 请在 Windows 版中操作。'}</p><div className="integration-list">{integrations.filter(i => ['codex', 'claude', 'pi'].includes(i.id)).map(i => <div key={i.id}><Terminal size={16}/><span><strong>{i.name}</strong><small>{i.description}</small></span><span className="small-tag">{agents?.backends.find(backend => backend.id === i.id)?.available ? '已发现' : '未发现'}</span></div>)}</div><p className="quiet-note">地图、会话和更新记录保存在本机。Windows 版收起或切换工作区后继续执行；退出北极星会停止本机执行器。</p></Dialog>}
-    {dialog === 'customize' && <CustomizeDialog space={space} onClose={() => setDialog(null)} onSave={(name, cwd, review, materialRoots) => {updateSpace(w => ({...w, name, cwd, review, materialRoots})); setDialog(null);}} onPlace={(title, body, kind) => {const node: MindNode = {id: crypto.randomUUID(), parentId: space.nodes.find(n => !n.parentId)!.id, side: 1, kind, title, body, progress: 0, due: '', steps: []}; updateSpace(w => ({...w, nodes: [...w.nodes, node], graph: {...w.graph, selectedId: node.id, camera: null}})); change(s => selectWorkspaceTab(s, space.id)); setDialog(null);}}>
+    {dialog === 'customize' && <CustomizeDialog space={space} onClose={() => setDialog(null)} onSave={(name, cwd, review, materialRoots) => {updateSpace(w => ({...w, name, cwd, review, materialRoots})); setDialog(null);}} onPlace={(title, body, kind) => {const node: MindNode = {id: crypto.randomUUID(), parentId: space.nodes.find(n => !n.parentId)!.id, side: 1, kind, title:boundedText(title,120), body, progress: 0, due: '', steps: []}; updateSpace(w => ({...w, nodes: [...w.nodes, node], graph: {...w.graph, selectedId: node.id, camera: null}})); change(s => selectWorkspaceTab(s, space.id)); setDialog(null);}}>
       <CompositionSettings workspaceName={space.name} templates={state.templates||[]} integrations={state.externalIntegrations||[]} onTemplate={name=>change(s=>{const old=s.templates?.find(t=>t.name===name);const template=layoutTemplate(space,old?.id||crypto.randomUUID(),name);return{...s,templates:[...(s.templates||[]).filter(t=>t.id!==template.id),template]};})} onRemoveTemplate={id=>change(s=>({...s,templates:s.templates?.filter(t=>t.id!==id)}))} onIntegration={integration=>change(s=>({...s,externalIntegrations:[...(s.externalIntegrations||[]).filter(i=>i.id!==integration.id),integration]}))} onRemoveIntegration={id=>change(s=>({...s,externalIntegrations:s.externalIntegrations?.filter(i=>i.id!==id)}))}/>
     </CustomizeDialog>}
     {dialog === 'search' && <SearchDialog space={space} onClose={() => setDialog(null)} onOpen={openNode}/>}
