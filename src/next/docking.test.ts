@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {advanceDemoRuns, closeSessionTab, createSession, initialWorkbench, openSession, parseWorkbench, startDemoRun, updateWorkspace} from './core';
+import {advanceDemoRuns, closeSessionTab, createMapNode, createSession, initialWorkbench, mapGraph, openMapTab, openSession, parseWorkbench, startDemoRun, updateMapGraph, updateWorkspace} from './core';
 import {browserUrl, closeDockTab, closeEmptyGroup, focusedGroup, groups, initialDock, mergeDock, moveDockTab, openDockTab, resizeDock, selectDockTab, splitDockGroup, validateDock} from './docking';
 import {readReviewFile, reviewLines} from './ToolViews';
 
@@ -37,6 +37,37 @@ describe('workspace pane tree', () => {
     expect(mergeDock(dock).root).toMatchObject({tabs: ['workspace', 'browser'], activeId: 'browser'});
     const empty = splitDockGroup(initialDock(), 'main', 'row', 'empty');
     expect(groups(closeEmptyGroup(empty, 'empty').root)).toHaveLength(1);
+  });
+  it('opens an editable map in a new pane with its own view and shared workspace nodes', () => {
+    let state = initialWorkbench();
+    state = updateWorkspace(state, 'design', w => openMapTab({...w, dock: splitDockGroup(w.dock, 'main', 'row', 'right')}, 'right', 'map-2'));
+    const primaryGraph = structuredClone(state.spaces[0].graph);
+    state = createMapNode(state, 'design', 'act', 'new-idea', 'map-2');
+    let space = state.spaces[0];
+    expect(space.nodes.find(n => n.id === 'new-idea')).toMatchObject({parentId: 'act', title: '新节点', body: ''});
+    expect(mapGraph(space, 'map-2').selectedId).toBe('new-idea');
+    expect(space.graph).toEqual(primaryGraph);
+    state = updateWorkspace(state, 'design', w => updateMapGraph(w, {...mapGraph(w, 'map-2'), camera: {x: 42, y: 10, zoom: .7}, collapsed: ['think']}, 'map-2'));
+    state = parseWorkbench(JSON.parse(JSON.stringify(state)));
+    space = state.spaces[0];
+    expect(mapGraph(space, 'map-2')).toMatchObject({selectedId: 'new-idea', camera: {x: 42, y: 10, zoom: .7}, collapsed: ['think']});
+    expect(focusedGroup(space.dock).activeId).toBe('map-2');
+    expect(closeDockTab(space.dock, 'map-2').tabs.map(t => t.id)).toEqual(['workspace']);
+    expect(space.nodes.some(n => n.id === 'new-idea')).toBe(true);
+    expect(createMapNode(state, 'design', 'act', 'invalid', 'missing-map')).toBe(state);
+  });
+  it('rejects invalid map views while preserving the protected workspace map', () => {
+    const state = initialWorkbench();
+    state.spaces[0] = openMapTab(state.spaces[0], 'main', 'map-2');
+    for (const graph of [undefined, {selectedId: 'foreign-node', focusId: null, collapsed: [], camera: null}, {selectedId: null, focusId: null, collapsed: [], camera: {x: 0, y: 0, zoom: 0}}]) {
+      const bad = structuredClone(state);
+      const tab = bad.spaces[0].dock.tabs.find(t => t.id === 'map-2')!;
+      if (tab.kind === 'map') tab.graph = graph;
+      expect(() => parseWorkbench(bad)).toThrow();
+    }
+    const bad = structuredClone(state);
+    bad.spaces[0].dock.tabs.find(t => t.id === 'workspace')!.kind = 'events';
+    expect(() => parseWorkbench(bad)).toThrow();
   });
   it('closes a pane to the last used surviving tab without stopping an agent', () => {
     let state = createSession(initialWorkbench(), 'design', null, 'agent', 0);

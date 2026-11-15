@@ -3,16 +3,14 @@ import type {WidgetWindowRect} from '../workspace-layout';
 import type {LayoutTemplate} from './composition';
 import {parseIntegration,type ExternalIntegration} from './integration-manifest';
 import {boundedText} from './text';
+import {emptyGraph, validGraph, type GraphState} from './graph-state';
+export type {GraphState} from './graph-state';
 import {closeDockTab, groups, initialDock, moveDockTab, openDockTab, repairBrowserIds, selectDockTab, validateDock, type DockState} from './docking';
 
 export type RunState = 'running' | 'needs_input' | 'succeeded' | 'failed' | 'cancelled';
 export type DemoOutcome = 'succeeded' | 'needs_input' | 'failed';
 export interface Surface {id: string; integrationId: string; title: string; resourceId?: string; text?: string; url?: string}
 export interface Pane {id: string; tabs: string[]; activeId: string}
-export interface GraphState {
-  selectedId: string | null; focusId: string | null; collapsed: string[];
-  camera: {x: number; y: number; zoom: number} | null;
-}
 export interface Workspace extends Space {
   surfaces: Surface[];
   layout: {panes: Pane[]; activePaneId: string; ratio: number};
@@ -76,10 +74,24 @@ export function initialWorkbench(legacy: DesignState = seedState()): WorkbenchSt
 export function updateWorkspace(state: WorkbenchState, id: string, update: (space: Workspace) => Workspace): WorkbenchState {
   return {...state, spaces: state.spaces.map(space => space.id === id ? update(space) : space)};
 }
-export function createMapNode(state: WorkbenchState, workspaceId: string, parentId: string, id: string): WorkbenchState {
+export function mapGraph(space: Workspace, tabId = 'workspace'): GraphState {
+  const tab = space.dock.tabs.find(t => t.id === tabId);
+  return tab?.kind === 'map' && tab.id !== 'workspace' ? tab.graph! : space.graph;
+}
+export function updateMapGraph(space: Workspace, graph: GraphState, tabId = 'workspace'): Workspace {
+  if (tabId === 'workspace') return {...space, graph};
+  return {...space, dock: {...space.dock, tabs: space.dock.tabs.map(tab => tab.id === tabId && tab.kind === 'map' ? {...tab, graph} : tab)}};
+}
+export function openMapTab(space: Workspace, groupId: string, id: string): Workspace {
+  return {...space, dock: openDockTab(space.dock, {id, kind: 'map', title: '思维导图', graph: emptyGraph()}, groupId)};
+}
+export function createMapNode(state: WorkbenchState, workspaceId: string, parentId: string, id: string, tabId = 'workspace'): WorkbenchState {
   const space = state.spaces.find(w => w.id === workspaceId);
-  if (!space || space.nodes.length >= 250 || !space.nodes.some(n => n.id === parentId) || space.nodes.some(n => n.id === id)) return state;
-  return updateWorkspace(state, workspaceId, w => ({...w, nodes: [...w.nodes, {id, parentId, side: 1, kind: 'idea', title: '新节点', body: '', progress: 0, due: '', steps: []}], graph: {...w.graph, selectedId: id, focusId: null, collapsed: w.graph.collapsed.filter(value => value !== parentId), camera: null}}));
+  if (!space || !space.dock.tabs.some(t => t.id === tabId && t.kind === 'map') || space.nodes.length >= 250 || !space.nodes.some(n => n.id === parentId) || space.nodes.some(n => n.id === id)) return state;
+  return updateWorkspace(state, workspaceId, w => {
+    const graph = mapGraph(w, tabId);
+    return updateMapGraph({...w, nodes: [...w.nodes, {id, parentId, side: 1, kind: 'idea', title: '新节点', body: '', progress: 0, due: '', steps: []}]}, {...graph, selectedId: id, focusId: null, collapsed: graph.collapsed.filter(value => value !== parentId), camera: null}, tabId);
+  });
 }
 export function addSurface(space: Workspace, surface: Surface): Workspace {
   if (space.layout.panes.some(p => p.tabs.includes(surface.id))) return space;
@@ -264,12 +276,12 @@ export function parseWorkbench(value: unknown): WorkbenchState {
     if (space.cwd !== undefined && typeof space.cwd !== 'string') return fail();
     if (space.review != null && (typeof space.review.url !== 'string' || !reviewUrl(space.review.url))) return fail();
     if (space.materialRoots !== undefined && (!Array.isArray(space.materialRoots) || space.materialRoots.length > 20 || space.materialRoots.some(root => !root || typeof root.name !== 'string' || !root.name.trim() || typeof root.path !== 'string' || !root.path.trim()))) return fail();
-    const graph = space.graph;
     const window = space.sessionWindow;
     const tabs = space.sessionTabs;
     if (!tabs || !Array.isArray(tabs.ids) || new Set(tabs.ids).size !== tabs.ids.length || tabs.ids.some(id => !state.sessions.some(s => s.id === id && s.workspaceId === space.id)) || (tabs.activeId !== 'workspace' && !tabs.ids.includes(tabs.activeId)) || !Array.isArray(tabs.recent) || new Set(tabs.recent).size !== tabs.recent.length || tabs.recent.some(id => id !== 'workspace' && !tabs.ids.includes(id))) return fail();
     if (typeof space.sessionPanelOpen !== 'boolean' || !window || typeof window.maximized !== 'boolean' || !window.rect || ![window.rect.x, window.rect.y, window.rect.width, window.rect.height].every(Number.isFinite) || window.rect.width < 160 || window.rect.height < 160 || (window.sessionId !== null && !state.sessions.some(s => s.id === window.sessionId && s.workspaceId === space.id))) return fail();
-    if (!graph || !Array.isArray(graph.collapsed) || graph.collapsed.some(id => !space.nodes.some(n => n.id === id)) || [graph.selectedId, graph.focusId].some(id => id !== null && !space.nodes.some(n => n.id === id)) || (graph.camera !== null && (!graph.camera || ![graph.camera.x, graph.camera.y, graph.camera.zoom].every(Number.isFinite) || graph.camera.zoom < .2 || graph.camera.zoom > 2))) return fail();
+    const nodeIds = space.nodes.map(n => n.id);
+    if (!validGraph(space.graph, nodeIds) || space.dock.tabs.some(tab => tab.kind === 'map' && tab.graph !== undefined && !validGraph(tab.graph, nodeIds))) return fail();
   }
   for (const session of state.sessions) {
     const space = state.spaces.find(s => s.id === session.workspaceId);

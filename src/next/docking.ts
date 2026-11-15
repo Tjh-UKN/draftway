@@ -1,7 +1,8 @@
 import {isBusinessPage,type BusinessPage} from '../business-components';
+import {validGraph, type GraphState} from './graph-state';
 export interface ReviewFile {name: string; text: string}
 export type DockTab =
-  | {id: string; kind: 'map'; title: string}
+  | {id: string; kind: 'map'; title: string; graph?: GraphState}
   | {id: string; kind: 'events'; title: string}
   | {id: string; kind: 'session'; title: string; sessionId: string}
   | {id: string; kind: 'browser'; title: string; url: string}
@@ -122,7 +123,7 @@ export function validateDock(value: unknown, sessionIds: string[]): asserts valu
   if (groupIds.length > 8 || !groupIds.includes(dock.activeGroupId) || new Set(placed).size !== placed.length || placed.length !== dock.tabs.length || new Set(dock.tabs.map(t => t?.id)).size !== dock.tabs.length || dock.tabs.filter(t => t.kind === 'map' && t.id === 'workspace').length !== 1) return fail();
   for (const tab of dock.tabs) {
     if (!tab || typeof tab.id !== 'string' || !tab.id || !placed.includes(tab.id) || typeof tab.title !== 'string') return fail();
-    if (tab.kind === 'map') {if (tab.id !== 'workspace') return fail();}
+    if (tab.kind === 'map') {if ((tab.id !== 'workspace' || tab.graph !== undefined) && !validGraph(tab.graph)) return fail();}
     else if (tab.kind === 'events') {if (!tab.id) return fail();}
     else if (tab.kind === 'session') {if (tab.id !== tab.sessionId || !sessionIds.includes(tab.sessionId)) return fail();}
     else if (tab.kind === 'browser') {if (typeof tab.url !== 'string' || browserUrl(tab.url) === null) return fail();}

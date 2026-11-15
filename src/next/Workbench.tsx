@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useRef, useState, type ReactNode} from 'react';
 import {Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, Plus, Search, Settings2, Terminal, X} from 'lucide-react';
-import {closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, reviewUrl, sessionNodeIds, shellStorageKey, updateWorkspace, type AgentSession, type GraphState, type Notice, type Workspace} from './core';
+import {closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, mapGraph, openMapTab, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, reviewUrl, sessionNodeIds, shellStorageKey, updateMapGraph, updateWorkspace, type AgentSession, type GraphState, type Notice, type Workspace} from './core';
 import {reconcileSessions} from './adapters';
 import {GraphView, NodeGlyph, NodeInspector, NodeOverview, TasksView} from './Graph';
 import {agentNames, integrations} from './integrations';
@@ -44,7 +44,8 @@ export default function Workbench() {
   const [newNodeId, setNewNodeId] = useState<string | null>(null);
   const [inbox, setInbox] = useState(false);
   const space = state.spaces.find(s => s.id === state.activeId)!;
-  const selected = space.nodes.find(n => n.id === space.graph.selectedId);
+  const focusedTabId = focusedGroup(space.dock).activeId;
+  const selected = space.nodes.find(n => n.id === mapGraph(space, focusedTabId).selectedId);
   const sessions = state.sessions.filter(s => s.workspaceId === space.id);
   const unread = state.notices.filter(n => !n.read).length;
   const change: ChangeState = useCallback(update => setState(update), []);
@@ -84,7 +85,7 @@ export default function Workbench() {
     if (agents) agents.create({id, workspaceId: space.id, nodeId, backend: agentId || 'codex', title, cwd: space.cwd});
     setInbox(false);
   }
-  function changeGraph(graph: GraphState) {if (graph.selectedId !== newNodeId) setNewNodeId(null); updateSpace(s => ({...s, graph}));}
+  function changeGraph(graph: GraphState, tabId = focusedTabId) {if (graph.selectedId !== newNodeId) setNewNodeId(null); updateSpace(s => updateMapGraph(s, graph, tabId));}
   function openNode(id: string) {
     setNewNodeId(null);
     change(s=>{const target=s.spaces.find(w=>w.id===space.id);if(!target?.nodes.some(node=>node.id===id))return s;return updateWorkspace(selectWorkspaceTab(s,space.id),space.id,w=>({...w,graph:{...w.graph,selectedId:id,focusId:null,collapsed:[],camera:null}}));});
@@ -101,7 +102,8 @@ export default function Workbench() {
     else updateSpace(w => ({...w, dock: closeDockTab(w.dock, id)}));
   }
   function openBusiness(page: BusinessPage, groupId?: string) {updateSpace(w=>({...w,dock:openDockTab(w.dock,{id:!groupId?w.dock.tabs.find(t=>t.kind==='business'&&t.page===page)?.id||crypto.randomUUID():crypto.randomUUID(),kind:'business',page,title:businessComponents.find(item=>item.id===page)!.title},groupId)}));}
-  function createTab(kind: 'browser' | 'review' | 'events' | NonNullable<AgentSession['agentId']> | `business:${BusinessPage}` | `integration:${string}`, groupId: string) {
+  function createTab(kind: 'map' | 'browser' | 'review' | 'events' | NonNullable<AgentSession['agentId']> | `business:${BusinessPage}` | `integration:${string}`, groupId: string) {
+    if(kind==='map'){updateSpace(w=>openMapTab(w,groupId,crypto.randomUUID()));return;}
     if(kind==='events'){updateSpace(w=>({...w,dock:openDockTab(w.dock,{id:crypto.randomUUID(),kind:'events',title:'工作区事件'},groupId)}));return;}
     if(kind.startsWith('integration:')){const [id,surfaceId]=kind.slice(12).split(':');const integration=state.externalIntegrations?.find(i=>i.id===id);const surface=integration?.surfaces.find(s=>s.id===surfaceId);if(surface)updateSpace(w=>({...w,dock:openDockTab(w.dock,{id:crypto.randomUUID(),kind:'browser',title:surface.title||integration!.name,url:surface.entry},groupId)}));return;}
     if (kind.startsWith('business:')) {const page=kind.slice(9);if(isBusinessPage(page))openBusiness(page,groupId);return;}
@@ -111,8 +113,8 @@ export default function Workbench() {
     updateSpace(w => ({...w, dock: openDockTab(w.dock, tab, groupId)}));
   }
   function updateTab(tab: DockTab) {updateSpace(w => ({...w, dock: {...w.dock, tabs: w.dock.tabs.map(t => t.id === tab.id ? tab : t)}}));}
-  function openMaterial(material: NodeMaterial) {
-    if (!selected) return;const parsed=parseMaterialTarget(material.target);
+  function openMaterial(material: NodeMaterial, selected: MindNode) {
+    const parsed=parseMaterialTarget(material.target);
     const tab: DockTab=parsed.kind==='web' ? {id:crypto.randomUUID(),kind:'browser',title:material.title || parsed.title,url:parsed.target} : {id:`material:${selected.id}:${material.id}`,kind:'material',title:material.title || parsed.title,nodeId:selected.id,materialId:material.id};
     updateSpace(w=>({...w,dock:openDockTab(w.dock,tab)}));
   }
@@ -140,27 +142,32 @@ export default function Workbench() {
       if (event.key === 'Escape') {
         if (inbox) setInbox(false);
         else if (space.sessionPanelOpen) updateSpace(w => ({...w, sessionPanelOpen: false}));
-        else changeGraph({...space.graph, selectedId: null});
+        else changeGraph({...mapGraph(space, focusedTabId), selectedId: null});
       }
     };
     const release = (event: KeyboardEvent) => {if (event.key === 'Control') recentSwitch.current = null;};
     document.addEventListener('keydown', listener); document.addEventListener('keyup', release); return () => {document.removeEventListener('keydown', listener); document.removeEventListener('keyup', release);};
   }, [dialog, inbox, space]);
-  const nodeSessions = selected ? sessions.filter(s => sessionNodeIds(s).includes(selected.id) || selected.updates?.some(u=>u.sessionId===s.id)) : [];
   const nodeLinks=new Map<string,Set<string>>();const knownSessions=new Set(sessions.map(s=>s.id));
   for(const session of sessions)for(const id of sessionNodeIds(session)){const ids=nodeLinks.get(id)||new Set<string>();ids.add(session.id);nodeLinks.set(id,ids);}
   for(const node of space.nodes)for(const update of node.updates||[])if(update.sessionId&&knownSessions.has(update.sessionId)){const ids=nodeLinks.get(node.id)||new Set<string>();ids.add(update.sessionId);nodeLinks.set(node.id,ids);}
   const sessionCounts=Object.fromEntries([...nodeLinks].map(([id,sessions])=>[id,sessions.size]));
-  const mapView = <div className="workspace-map-scene">
-      <main className="workspace-map" aria-label="工作区"><GraphView key={space.id} space={space} onChange={changeGraph} onAdd={parentId => {if (space.nodes.length >= 250) return; const id = crypto.randomUUID(); change(s => createMapNode(s, space.id, parentId, id)); setNewNodeId(id);}} sessionCounts={sessionCounts}/></main>
-      {selected && <NodeInspector key={`${space.id}-${selected.id}`} space={space} node={selected} autoFocusTitle={newNodeId === selected.id} onChange={updateNode} onClose={() => changeGraph({...space.graph, selectedId: null})} onFocus={() => changeGraph({...space.graph, focusId: selected.id, selectedId: null, collapsed: [], camera: null})}>
+  function mapView(tab: Extract<DockTab, {kind: 'map'}>) {
+    const graph = mapGraph(space, tab.id);
+    const selected = space.nodes.find(n => n.id === graph.selectedId);
+    const nodeSessions = selected ? sessions.filter(s => sessionNodeIds(s).includes(selected.id) || selected.updates?.some(u=>u.sessionId===s.id)) : [];
+    const changeView = (graph: GraphState) => changeGraph(graph, tab.id);
+    return <div className="workspace-map-scene">
+      <main className="workspace-map" aria-label="工作区"><GraphView key={`${space.id}-${tab.id}`} space={{...space, graph}} onChange={changeView} onAdd={parentId => {if (space.nodes.length >= 250) return; const id = crypto.randomUUID(); change(s => createMapNode(s, space.id, parentId, id, tab.id)); setNewNodeId(id);}} sessionCounts={sessionCounts}/></main>
+      {selected && <NodeInspector key={`${space.id}-${selected.id}`} space={space} node={selected} autoFocusTitle={newNodeId === selected.id} onChange={updateNode} onClose={() => changeView({...graph, selectedId: null})} onFocus={() => changeView({...graph, focusId: selected.id, selectedId: null, collapsed: [], camera: null})}>
         <div className="inspector-scroll unified-node-details"><div className="node-content-summary"><NodeGlyph kind={selected.kind} size={19}/><p>{selected.body || '在这里留下想法、内容或完成条件。'}</p></div><details className="node-edit-section"><summary>编辑节点内容</summary><NodeOverview key={selected.id} node={selected} onChange={updateNode}/></details>
-          <NodeMaterials key={selected.id} node={selected} onChange={updateNode} onOpen={openMaterial}/>
+          <NodeMaterials key={selected.id} node={selected} onChange={updateNode} onOpen={material => openMaterial(material, selected)}/>
           <section className="node-detail-section"><div className="detail-section-heading"><h3>关联会话（{nodeSessions.length}）</h3></div><BackendPicker text="新建会话" label={`在${selected.title}中新建会话`} onChoose={agent => startSession(agent, selected.id)} onOpen={() => {setInbox(false); updateSpace(w => ({...w, sessionPanelOpen: false}));}} onLink={() => setDialog('link')}/>{nodeSessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!nodeSessions.length && <p className="quiet-note">还没有关联会话</p>}</section>
           <section className="node-detail-section"><div className="detail-section-heading"><h3>更新记录</h3></div><div className="node-timeline">{[...(selected.updates || [])].reverse().map(update => {const source = sessions.find(s => s.id === update.sessionId); return <div key={update.id}><strong>{update.text}</strong><small>{new Date(update.at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})} · {source ? `${agentNames[source.agentId || 'codex']}${source.integrationId === 'demo-agent' ? '（模拟）' : ''}` : '我'}</small>{source && <button className="text-button" onClick={() => openAgent(source.id)}>查看来源会话<ChevronRight size={12}/></button>}</div>;})}{!selected.updates?.length && <p className="quiet-note">执行结果与手动记录会留在这里</p>}</div><ProgressForm onSubmit={text => {const id = crypto.randomUUID(); const at = Date.now(); updateNode({...selected, updates: [...(selected.updates || []), {id, text, at}]});}}/></section>
         </div>
       </NodeInspector>}
     </div>;
+  }
   if (!persistence.ready) return <div className="workbench-loading">正在恢复工作区…</div>;
   return <AgentRuntimeContext.Provider value={agents?{...agents,readOnly:persistence.readOnly,backends:persistence.readOnly?[]:agents.backends}:null}><div className="workbench-shell map-first-shell">
     <aside className="shell-sidebar" aria-label="主导航"><div className="sidebar-brand"><Star/><span>北极星</span></div>
@@ -174,7 +181,7 @@ export default function Workbench() {
     <div className="shell-body"><header className="workspace-heading dock-workspace-heading"><div className="workspace-title-row"><h1>{space.name}</h1><div className="workspace-actions"><button className={`session-panel-toggle ${space.sessionPanelOpen ? 'active' : ''}`} aria-expanded={space.sessionPanelOpen} aria-controls="workspace-session-panel" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: !w.sessionPanelOpen}))}>会话记录（{sessions.length}）<ChevronDown size={14}/>{sessions.some(s => s.unread) && <i className="unread-dot"/>}</button><span className="vertical-divider"/><button className="icon-button bell-button" aria-label={`通知${unread ? `，${unread}条未读` : ''}`} aria-expanded={inbox} onClick={() => setInbox(v => !v)}><Bell size={18}/>{!!unread && <span>{unread}</span>}</button><button className="text-button" onClick={() => setDialog('customize')}><Settings2 size={16}/><span>自定工作区</span></button></div></div></header>
     <div className="workspace-body workspace-map-body dock-workspace-body">
       <DockLayout key={space.id} state={state} space={space} onChange={update => updateSpace(w => ({...w, dock: update(w.dock)}))} onSelect={selectTab} onClose={closeTab} onCreate={createTab} render={(tab, active) => {
-        if (tab.kind === 'map') return mapView;
+        if (tab.kind === 'map') return mapView(tab);
         if (tab.kind === 'events') return <TasksView space={space} onOpen={openNode}/>;
         if (tab.kind === 'browser') return <BrowserView tab={tab} active={active} onChange={updateTab} native={nativeBrowsers}/>;
         if (tab.kind === 'review') return <ReviewView workspaceId={space.id} tab={tab} onChange={updateTab}/>;

@@ -103,6 +103,7 @@ export function NodeOverview({node, onChange}: {node: MindNode; onChange: (node:
 
 export function NodeInspector({space, node, onChange, onClose, onFocus, children, autoFocusTitle = false}: {space: Workspace; node: MindNode; autoFocusTitle?: boolean; onChange: (node: MindNode) => void; onClose: () => void; onFocus: () => void; children: React.ReactNode}) {
   const [title, setTitle] = useState(node.title);
+  useEffect(() => {setTitle(current => current.trim() === node.title ? current : node.title);}, [node.title]);
   const titleEditor = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {if (autoFocusTitle) {titleEditor.current?.focus(); titleEditor.current?.select();}}, [autoFocusTitle, node.id]);
   const commit = () => {if (title.trim()) onChange({...node, title: title.trim()}); else setTitle(node.title);};
