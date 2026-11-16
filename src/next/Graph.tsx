@@ -1,5 +1,5 @@
 import {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {ArrowLeft, Check, ChevronRight, Code2, Expand, FileText, Focus, Folder, Layers, Lightbulb, MessageSquare, Minus, Plus, ScanLine, X} from 'lucide-react';
+import {ArrowLeft, Check, ChevronRight, Code2, Expand, FileText, Focus, Folder, Info, Layers, Lightbulb, MessageSquare, Minus, Plus, ScanLine, X} from 'lucide-react';
 import {nodeProgress, placeNodes, type MindNode, type NodeKind} from './model';
 import type {GraphState, Workspace} from './core';
 
@@ -9,7 +9,7 @@ export function NodeGlyph({kind, size = 18}: {kind: NodeKind; size?: number}) {
   return <Icon size={size}/>;
 }
 export const placeWorkspaceNodes = (space: Workspace) => placeNodes(space.nodes.map(n => ({...n, side: 1 as const})), space.graph.collapsed, space.graph.focusId);
-export function GraphView({space, onChange, onAdd, sessionCounts}: {space: Workspace; onChange: (graph: GraphState) => void; onAdd: (parentId: string) => void; sessionCounts: Record<string, number>}) {
+export function GraphView({space, onChange, onAdd, onRename, autoEditId, sessionCounts}: {space: Workspace; onChange: (graph: GraphState) => void; onAdd: (parentId: string) => void; onRename: (id: string, title: string) => void; autoEditId?: string | null; sessionCounts: Record<string, number>}) {
   const frame = useRef<HTMLDivElement>(null);
   const drag = useRef<{x: number; y: number; originX: number; originY: number} | null>(null);
   const [panning, setPanning] = useState(false);
@@ -49,7 +49,7 @@ export function GraphView({space, onChange, onAdd, sessionCounts}: {space: Works
   function zoom(delta: number) {onChange({...graph, camera: {...camera, zoom: Math.max(.2, Math.min(2, Math.round((camera.zoom + delta) * 100) / 100))}});}
   return <div className={`graph-view workspace-graph ${panning ? 'panning' : ''}`} ref={frame} aria-label="工作区地图"
     onPointerDown={event => {
-      if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
+      if (event.button !== 0 || (event.target as HTMLElement).closest('button,input,textarea')) return;
       drag.current = {x: event.clientX, y: event.clientY, originX: camera.x, originY: camera.y};
       event.currentTarget.setPointerCapture(event.pointerId);
     }}
@@ -71,26 +71,56 @@ export function GraphView({space, onChange, onAdd, sessionCounts}: {space: Works
         const count = sessionCounts[node.id] || 0;
         const children = space.nodes.some(n => n.parentId === node.id);
         return <div key={node.id} className={`graph-node kind-${node.kind} ${index === 0 ? 'root-node' : ''} ${graph.selectedId === node.id ? 'selected' : ''}`} style={{left: x - width / 2, top: y - height / 2, width, minHeight: height}}>
-          <button className="graph-node-content" aria-label={`${nodeKindNames[node.kind]}：${node.title}`} onClick={() => onChange({...graph, selectedId: node.id})}>
-            <span className="map-node-heading"><NodeGlyph kind={node.kind}/><strong title={node.title}>{node.title}</strong>{(node.completed || (node.kind === 'event' && progress === 100)) && <Check size={13} className="node-completed"/>}</span>
-            {node.kind === 'event' && <span className="map-node-progress"><span className="progress-track"><i style={{width: `${progress}%`}}/></span><small>{progress}%</small></span>}
-            {!!count && <span className="node-session-count"><MessageSquare size={12}/>关联会话 {count}<ChevronRight size={12}/></span>}
-          </button>
+          <MapNodeContent node={node} progress={progress} count={count} autoEdit={autoEditId === node.id} onBeginEdit={() => onChange({...graph, selectedId: null})} onRename={title => onRename(node.id, title)} onInspect={() => onChange({...graph, selectedId: node.id})}/>
+          <button className="graph-node-details" aria-label={`查看${node.title}详情`} title="查看内容、材料、会话与进度" onClick={() => onChange({...graph, selectedId: node.id})}><Info size={13}/></button>
           <button className="graph-node-add" aria-label={`在${node.title}下添加节点`} onClick={() => onAdd(node.id)}><Plus size={13}/></button>
           {children && <button className="graph-node-collapse" aria-label={`${graph.collapsed.includes(node.id) ? '展开' : '收起'}${node.title}分支`} onClick={() => onChange({...graph, collapsed: graph.collapsed.includes(node.id) ? graph.collapsed.filter(id => id !== node.id) : [...graph.collapsed, node.id]})}>{graph.collapsed.includes(node.id) ? '+' : '−'}</button>}
         </div>;
       })}
     </div>
-    <span className="graph-hint">拖动地图 · 点击节点查看内容</span>
+    <span className="graph-hint">点节点直接改字 · ⓘ 查看详情 · 拖动空白移动</span>
     <div className="graph-tools"><button className="text-button" onClick={() => onChange({...graph, collapsed: graph.collapsed.length ? [] : [space.nodes.find(n => !n.parentId)!.id], camera: null})}><ScanLine size={14}/>归一</button><button className="icon-button" aria-label="适合画布" onClick={fit}><Expand size={15}/></button><span className="zoom-controls"><button className="icon-button" aria-label="缩小画布" onClick={() => zoom(-.1)}><Minus size={14}/></button><button aria-label="恢复百分之百" onClick={() => onChange({...graph, camera: {...camera, zoom: 1}})}>{Math.round(camera.zoom * 100)}%</button><button className="icon-button" aria-label="放大画布" onClick={() => zoom(.1)}><Plus size={14}/></button></span></div>
   </div>;
+}
+
+function MapNodeContent({node, progress, count, autoEdit, onBeginEdit, onRename, onInspect}: {node: MindNode; progress: number; count: number; autoEdit: boolean; onBeginEdit: () => void; onRename: (title: string) => void; onInspect: () => void}) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(node.title);
+  const input = useRef<HTMLInputElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const active = useRef(false);
+  const returnFocus = useRef(false);
+  const draft = useRef({title, onRename}); draft.current = {title, onRename};
+  useEffect(() => () => {if (active.current) draft.current.onRename(draft.current.title);}, []);
+  function begin() {active.current = true; setTitle(node.title); setEditing(true); onBeginEdit();}
+  function finish(save: boolean, focus = false) {
+    if (!active.current) return;
+    active.current = false; returnFocus.current = focus;
+    if (save) onRename(title);
+    setEditing(false);
+  }
+  useEffect(() => {if (autoEdit) begin();}, [autoEdit]);
+  useLayoutEffect(() => {
+    if (editing) {input.current?.focus(); input.current?.select();}
+    else if (returnFocus.current) {returnFocus.current = false; button.current?.focus();}
+  }, [editing]);
+  const content = <>
+    <span className="map-node-heading"><NodeGlyph kind={node.kind}/>{editing ? <input ref={input} className="map-node-input" aria-label="节点文字" value={title} maxLength={120} onChange={event => setTitle(event.target.value)} onBlur={() => finish(true)} onKeyDown={event => {
+      if (event.key === 'Enter' || event.key === 'Escape') event.stopPropagation();
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Enter' || event.key === 'Escape') {event.preventDefault(); finish(event.key === 'Enter', true);}
+    }}/> : <strong title={node.title}>{node.title}</strong>}{(node.completed || (node.kind === 'event' && progress === 100)) && <Check size={13} className="node-completed"/>}</span>
+    {node.kind === 'event' && <span className="map-node-progress"><span className="progress-track"><i style={{width: `${progress}%`}}/></span><small>{progress}%</small></span>}
+    {!!count && <span className="node-session-count" onClick={event => {event.stopPropagation(); onInspect();}}><MessageSquare size={12}/>关联会话 {count}<ChevronRight size={12}/></span>}
+  </>;
+  return editing ? <div className="graph-node-content editing">{content}</div> : <button ref={button} className="graph-node-content" aria-label={`${nodeKindNames[node.kind]}：${node.title}`} title="点击直接编辑文字" onClick={begin} onKeyDown={event => {if (event.key === 'F2') {event.preventDefault(); begin();}}}>{content}</button>;
 }
 
 export function NodeOverview({node, onChange}: {node: MindNode; onChange: (node: MindNode) => void}) {
   const [stepTitle, setStepTitle] = useState('');
   return <div className="node-overview">
-    {node.kind !== 'root' && <label className="field">节点类型<select aria-label="节点类型" value={node.kind} onChange={event => onChange({...node, kind: event.target.value as NodeKind})}>{Object.entries(nodeKindNames).filter(([id]) => id !== 'root').map(([id, title]) => <option key={id} value={id}>{title}</option>)}</select></label>}
     <label className="field">说明<textarea aria-label="节点描述" rows={5} value={node.body} placeholder="留下想法、分析或完成条件" onChange={event => onChange({...node, body: event.target.value})}/></label>
+    {node.kind !== 'root' && <label className="field">节点类型<select aria-label="节点类型" value={node.kind} onChange={event => onChange({...node, kind: event.target.value as NodeKind})}>{Object.entries(nodeKindNames).filter(([id]) => id !== 'root').map(([id, title]) => <option key={id} value={id}>{title}</option>)}</select></label>}
     {['document', 'code', 'artifact'].includes(node.kind) && <label className="completion-toggle"><input type="checkbox" checked={!!node.completed} onChange={event => onChange({...node, completed: event.target.checked})}/>标记为完成</label>}
     {node.kind === 'event' && <>
       <label className="field">任务进度 <span>{node.progress}%{node.steps.length > 0 ? ' · 随步骤同步' : ''}</span><input aria-label="任务进度" type="range" min="0" max="100" step="5" disabled={node.steps.length > 0} value={node.progress} onChange={event => onChange({...node, progress: Number(event.target.value)})}/></label>

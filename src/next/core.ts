@@ -74,6 +74,12 @@ export function initialWorkbench(legacy: DesignState = seedState()): WorkbenchSt
 export function updateWorkspace(state: WorkbenchState, id: string, update: (space: Workspace) => Workspace): WorkbenchState {
   return {...state, spaces: state.spaces.map(space => space.id === id ? update(space) : space)};
 }
+export function renameMapNode(state: WorkbenchState, workspaceId: string, nodeId: string, value: string): WorkbenchState {
+  const title = boundedText(value.trim(), 120);
+  const node = state.spaces.find(w => w.id === workspaceId)?.nodes.find(n => n.id === nodeId);
+  if (!title || !node || node.title === title) return state;
+  return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, title} : n)}));
+}
 export function mapGraph(space: Workspace, tabId = 'workspace'): GraphState {
   const tab = space.dock.tabs.find(t => t.id === tabId);
   return tab?.kind === 'map' && tab.id !== 'workspace' ? tab.graph! : space.graph;
