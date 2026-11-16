@@ -98,10 +98,10 @@ export function migrateNodePrimitives(nodes: MindNode[]): MindNode[] {
   return normalized.map(node => {
     const old = nodes.find(n => n.id === node.id) as LegacyNode | undefined;
     if (!old) return node;
-    const changedSteps = !!old.steps?.length && old.progress !== node.progress;
+    const changedProgress = (!!old.steps?.length || isTask(old)) && old.progress !== node.progress;
     const changedCompletion = old.completed !== undefined && old.completed !== (node.progress === 100);
     const conflictingProgress = old.completed === true && old.progress !== 0 && old.progress !== 100;
-    if (!changedSteps && !changedCompletion && !conflictingProgress) return node;
+    if (!changedProgress && !changedCompletion && !conflictingProgress) return node;
     return {...node,updates:[...(node.updates||[]),{id:'migration-task-state',text:`迁移前进度：${old.progress}%${old.completed === undefined ? '' : '；完成标记：'+(old.completed?'已完成':'未完成')}。当前进度：${node.progress}%，以任务进度和子任务为准。`,at:0}]};
   });
 }

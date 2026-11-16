@@ -26,6 +26,13 @@ describe('canonical node primitives', () => {
     expect(migrated).toMatchObject({kind:'artifact',task:true,progress:100,sourceArtifactId:'retained-result'});
     expect(migrated).not.toHaveProperty('completed');
   });
+  it('keeps the former manual progress in history when nested tasks begin rolling up', () => {
+    const old=seedState();const parent=old.spaces[0].nodes.find(n=>n.id==='link')!;
+    old.spaces[0].nodes.push({...parent,id:'existing-child',parentId:parent.id,progress:100,title:'Existing nested task'});
+    const next=parseState(old);const migrated=next.spaces[0].nodes.find(n=>n.id===parent.id)!;
+    expect(migrated.progress).toBe(100);expect(migrated.updates?.some(u=>u.text.includes('75%'))).toBe(true);
+    expect(parseState(next)).toEqual(next);
+  });
   it('migrates and deduplicates references, preserving already-open material tabs', () => {
     const old=initialWorkbench();const node=old.spaces[0].nodes[0];
     node.materials=[{id:'first',title:'Docs',target:'https://example.com/'},{id:'duplicate',title:'Same docs',target:'https://example.com'}];
