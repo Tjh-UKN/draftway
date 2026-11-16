@@ -117,15 +117,16 @@ function MapNodeContent({node, progress, count, autoEdit, onRename, onInspect}: 
   return <div className={`graph-node-content ${editing ? 'editing' : ''}`} onClick={onInspect}>{content}</div>;
 }
 
-export function NodeOverview({space, node, onTask, onProgress, onDue, onOpen, onAdd}: {space: Workspace; node: MindNode; onTask: (enabled: boolean) => void; onProgress: (id: string, progress: number) => void; onDue: (value: string) => void; onOpen: (id: string) => void; onAdd: () => void}) {
+export function NodeOverview({space, node, onProgress, onDue, onOpen, onAdd}: {space: Workspace; node: MindNode; onProgress: (id: string, progress: number) => void; onDue: (value: string) => void; onOpen: (id: string) => void; onAdd: () => void}) {
   const tasks = taskChildren(space.nodes, node.id);
   const progress = nodeProgress(space.nodes, node.id);
-  return <section className="node-task-capability"><label className="completion-toggle"><input type="checkbox" checked={isTask(node)} onChange={event => onTask(event.target.checked)}/>跟踪任务进度</label>{isTask(node) && <>
-    <label className="field">进度 <span>{progress}%{tasks.length ? ' · 随子任务同步' : ''}</span><input aria-label="任务进度" type="range" min="0" max="100" step="5" disabled={!!tasks.length} value={progress} onChange={event => onProgress(node.id, Number(event.target.value))}/></label>
+  return <section className="node-task-capability">{isTask(node) && <>
+    <div className="field">进度 <span>{progress}%{tasks.length ? ' · 随子任务同步' : ''}</span></div>
     <label className="field">计划完成<input aria-label="计划完成日期" type="date" value={node.due} onChange={event => onDue(event.target.value)}/></label>
+  </>}
     <div className="detail-section-heading"><h3>子任务（{tasks.length}）</h3><button className="text-button" disabled={space.nodes.length >= 250} onClick={onAdd}><Plus size={13}/>添加子任务</button></div>
     <div className="node-subtasks">{tasks.map(task => {const value = nodeProgress(space.nodes, task.id);return <div key={task.id}><input type="checkbox" aria-label={`完成子任务：${task.title}`} checked={value === 100} disabled={!!taskChildren(space.nodes, task.id).length} onChange={event => onProgress(task.id, event.target.checked ? 100 : 0)}/><button className="text-button" onClick={() => onOpen(task.id)}>{task.title}<span>{value}%</span><ChevronRight size={12}/></button></div>;})}</div>
-  </>}</section>;
+  </section>;
 }
 
 export function NodeInspector({space, node, onEditBody, onClose, onFocus, children}: {space: Workspace; node: MindNode; onEditBody: (value: string) => void; onClose: () => void; onFocus: () => void; children: React.ReactNode}) {
@@ -138,5 +139,5 @@ export function NodeInspector({space, node, onEditBody, onClose, onFocus, childr
 
 export function TasksView({space, onOpen}: {space: Workspace; onOpen: (nodeId: string) => void}) {
   const tasks = space.nodes.filter(isTask);
-  return <div className="content-page"><div className="page-heading"><h2>任务</h2><span className="muted">与图谱使用同一条记录</span></div>{tasks.map(node => <button className="task-row" key={node.id} onClick={() => onOpen(node.id)}><Lightbulb size={16}/><span><strong>{node.title}</strong><small>{node.body || ''}</small></span><span>{nodeProgress(space.nodes, node.id)}%</span><ChevronRight size={15}/></button>)}{!tasks.length && <p className="muted">在图谱中添加任务节点，或将已有节点转为任务。</p>}</div>;
+  return <div className="content-page"><div className="page-heading"><h2>任务</h2><span className="muted">与图谱使用同一条记录</span></div>{tasks.map(node => <button className="task-row" key={node.id} onClick={() => onOpen(node.id)}><Lightbulb size={16}/><span><strong>{node.title}</strong><small>{node.body || ''}</small></span><span>{nodeProgress(space.nodes, node.id)}%</span><ChevronRight size={15}/></button>)}{!tasks.length && <p className="muted">在节点信息中添加子任务，完成状态会同步到地图。</p>}</div>;
 }

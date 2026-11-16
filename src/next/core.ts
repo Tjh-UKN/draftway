@@ -86,9 +86,6 @@ export function editNodeBody(state: WorkbenchState, workspaceId: string, nodeId:
   if (!node || node.body === body) return state;
   return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, body} : n)}));
 }
-export function setNodeTask(state: WorkbenchState, workspaceId: string, nodeId: string, enabled: boolean): WorkbenchState {
-  return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, kind: n.kind === 'event' ? 'idea' : n.kind, task: enabled} : n)}));
-}
 export function addSubtask(state: WorkbenchState, workspaceId: string, parentId: string, id: string): WorkbenchState {
   const space = state.spaces.find(w => w.id === workspaceId);const parent = space?.nodes.find(n => n.id === parentId);
   if (!space || !parent || space.nodes.length >= 250 || space.nodes.some(n => n.id === id)) return state;

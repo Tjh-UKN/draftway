@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {addSubtask, initialWorkbench, parseWorkbench, setNodeTask, setTaskProgress} from './core';
+import {addSubtask, initialWorkbench, parseWorkbench, setTaskProgress} from './core';
 import {contentFields, hasLegacyNodePrimitives, isTask, nodeProgress, parseState, seedState} from './model';
 import {openDockTab} from './docking';
 
@@ -60,8 +60,8 @@ describe('canonical node primitives', () => {
     expect(fields.body).toContain('\n  indented body\n');
 
   });
-  it('adds progress to any node and rolls real child task progress up through its ancestors', () => {
-    let state=initialWorkbench();state=setNodeTask(state,'design','think',true);
+  it('adds tasks directly to any node and rolls child completion up through its ancestors', () => {
+    let state=initialWorkbench();
     state=addSubtask(state,'design','think','child-one');state=addSubtask(state,'design','think','child-two');
     state=setTaskProgress(state,'design','child-one',100);
     expect(state.spaces[0].nodes.find(n=>n.id==='think')).toMatchObject({task:true,progress:50});
@@ -70,8 +70,9 @@ describe('canonical node primitives', () => {
     expect(nodeProgress(state.spaces[0].nodes,'think')).toBe(100);
     expect(isTask(state.spaces[0].nodes.find(n=>n.id==='child-one')!)).toBe(true);
     state.spaces[0].nodes.find(n=>n.id==='child-one')!.due='2026-12-01';
-    state=setNodeTask(state,'design','child-one',false);state=setNodeTask(state,'design','child-one',true);
-    expect(state.spaces[0].nodes.find(n=>n.id==='child-one')).toMatchObject({progress:100,due:'2026-12-01'});
+    state=setTaskProgress(state,'design','child-one',0);
+    expect(state.spaces[0].nodes.find(n=>n.id==='child-one')).toMatchObject({progress:0,due:'2026-12-01'});
+    expect(nodeProgress(state.spaces[0].nodes,'think')).toBe(50);
     expect(()=>parseWorkbench(state)).not.toThrow();
   });
   it('fails atomically instead of silently discarding old steps at the node limit', () => {
