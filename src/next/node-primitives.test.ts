@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest';
-import {addSubtask, editNodeContent, initialWorkbench, parseWorkbench, setNodeTask, setTaskProgress} from './core';
-import {contentFields, hasLegacyNodePrimitives, isTask, nodeContent, nodeProgress, parseState, seedState} from './model';
+import {addSubtask, initialWorkbench, parseWorkbench, setNodeTask, setTaskProgress} from './core';
+import {contentFields, hasLegacyNodePrimitives, isTask, nodeProgress, parseState, seedState} from './model';
 import {openDockTab} from './docking';
 
 describe('canonical node primitives', () => {
@@ -53,16 +53,12 @@ describe('canonical node primitives', () => {
     expect(next.spaces[0].nodes[0].body).toContain('引用：old relative note.md');
     expect(next.spaces[0].dock.tabs.find(t=>t.id==='old-ref')).toMatchObject({kind:'map',graph:{selectedId:node.id}});
   });
-  it('uses a single content editor without truncating long first lines or changing stored body text', () => {
-    const node=seedState().spaces[0].nodes[0];
-    expect(contentFields(nodeContent(node))).toEqual({title:node.title,body:node.body});
+  it('preserves all text when a long legacy step becomes a task node', () => {
     const heading='🚀'.repeat(100);const fields=contentFields(heading+'\n  indented body\n')!;
     expect(fields.title.length).toBeLessThanOrEqual(120);
     expect(fields.title+fields.body.split('\n')[0]).toBe(heading);
     expect(fields.body).toContain('\n  indented body\n');
-    const state=initialWorkbench();const next=editNodeContent(state,'design','northstar','一个节点\n完整内容');
-    expect(next.spaces[0].nodes[0]).toMatchObject({title:'一个节点',body:'完整内容'});
-    expect(editNodeContent(next,'design','northstar','   ')).toBe(next);
+
   });
   it('adds progress to any node and rolls real child task progress up through its ancestors', () => {
     let state=initialWorkbench();state=setNodeTask(state,'design','think',true);

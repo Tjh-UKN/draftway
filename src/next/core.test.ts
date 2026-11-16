@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {addSurface, advanceDemoRuns, applyRunMapChange, cancelDemoRun, closeSessionTab, closeSurface, createMapNode, createSession, initialWorkbench, mergePanes, moveSurface, openSession, parseWorkbench, placeArtifact, editNodeContent, resumeDemoRun, reorderSessionTab, selectWorkspaceTab, sessionNodeIds, splitSurface, startDemoRun, updateWorkspace} from './core';
+import {addSurface, advanceDemoRuns, applyRunMapChange, cancelDemoRun, closeSessionTab, closeSurface, createMapNode, createSession, initialWorkbench, mergePanes, moveSurface, openSession, parseWorkbench, placeArtifact, renameMapNode, resumeDemoRun, reorderSessionTab, selectWorkspaceTab, sessionNodeIds, splitSurface, startDemoRun, updateWorkspace} from './core';
 import {sessionAdapter} from './adapters';
 import {seedState} from './model';
 
@@ -266,15 +266,15 @@ describe('workspace shell records and lifecycle', () => {
     expect(createMapNode(next, 'design', 'missing', 'bad')).toBe(next);
     expect(createMapNode(next, 'review', 'act', 'cross')).toBe(next);
   });
-  it('edits one node content while preserving other attributes and associations', () => {
+  it('renames a node while preserving its latest body and associations', () => {
     const state = createSession(initialWorkbench(), 'design', 'act', 'inline-session', 0);
     state.spaces[0].nodes.find(n => n.id === 'act')!.body = 'Latest AI update';
-    const next = editNodeContent(state, 'design', 'act', '直接修改节点\nLatest AI update');
+    const next = renameMapNode(state, 'design', 'act', '直接修改节点');
     expect(next.spaces[0].nodes.find(n => n.id === 'act')).toEqual({...state.spaces[0].nodes.find(n => n.id === 'act'), title: '直接修改节点'});
     expect(next.sessions).toEqual(state.sessions);
-    expect(editNodeContent(next, 'design', 'act', '   ')).toBe(next);
-    expect(editNodeContent(next, 'review', 'act', 'Foreign workspace')).toBe(next);
-    const unicode = editNodeContent(next, 'design', 'act', 'a' + '🚀'.repeat(100));
+    expect(renameMapNode(next, 'design', 'act', '   ')).toBe(next);
+    expect(renameMapNode(next, 'review', 'act', 'Foreign workspace')).toBe(next);
+    const unicode = renameMapNode(next, 'design', 'act', 'a' + '🚀'.repeat(100));
     expect(() => parseWorkbench(JSON.parse(JSON.stringify(unicode)))).not.toThrow();
     expect(unicode.spaces[0].nodes.find(n => n.id === 'act')!.title.length).toBeLessThanOrEqual(120);
   });

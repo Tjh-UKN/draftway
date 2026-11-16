@@ -1,4 +1,4 @@
-import {contentFields, isTask, newSpace, parseState, seedState, syncTaskProgress, taskChildren, type DesignState, type MindNode, type Space} from './model';
+import {isTask, newSpace, parseState, seedState, syncTaskProgress, taskChildren, type DesignState, type MindNode, type Space} from './model';
 import type {WidgetWindowRect} from '../workspace-layout';
 import type {LayoutTemplate} from './composition';
 import {parseIntegration,type ExternalIntegration} from './integration-manifest';
@@ -75,10 +75,16 @@ export function initialWorkbench(legacy: DesignState = seedState()): WorkbenchSt
 export function updateWorkspace(state: WorkbenchState, id: string, update: (space: Workspace) => Workspace): WorkbenchState {
   return {...state, spaces: state.spaces.map(space => {if (space.id !== id) return space;const next = update(space);return next.nodes === space.nodes ? next : {...next, nodes: syncTaskProgress(next.nodes)};})};
 }
-export function editNodeContent(state: WorkbenchState, workspaceId: string, nodeId: string, value: string): WorkbenchState {
-  const fields = contentFields(value); const node = state.spaces.find(w => w.id === workspaceId)?.nodes.find(n => n.id === nodeId);
-  if (!fields || !node || (fields.title === node.title && fields.body === node.body)) return state;
-  return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, ...fields} : n)}));
+export function renameMapNode(state: WorkbenchState, workspaceId: string, nodeId: string, value: string): WorkbenchState {
+  const title = boundedText(value.replace(/[\r\n]+/g, ' ').trim(), 120);
+  const node = state.spaces.find(w => w.id === workspaceId)?.nodes.find(n => n.id === nodeId);
+  if (!title || !node || node.title === title) return state;
+  return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, title} : n)}));
+}
+export function editNodeBody(state: WorkbenchState, workspaceId: string, nodeId: string, body: string): WorkbenchState {
+  const node = state.spaces.find(w => w.id === workspaceId)?.nodes.find(n => n.id === nodeId);
+  if (!node || node.body === body) return state;
+  return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, body} : n)}));
 }
 export function setNodeTask(state: WorkbenchState, workspaceId: string, nodeId: string, enabled: boolean): WorkbenchState {
   return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, kind: n.kind === 'event' ? 'idea' : n.kind, task: enabled} : n)}));

@@ -52,7 +52,6 @@ export function taskChildren(nodes: MindNode[], id: string): MindNode[] {
 export function syncTaskProgress(nodes: MindNode[]): MindNode[] {
   return nodes.map(node => {const progress = nodeProgress(nodes, node.id); return isTask(node) && progress !== node.progress ? {...node, progress} : node;});
 }
-export const nodeContent = (node: MindNode) => node.title + (node.body ? '\n' + node.body : '');
 export function contentFields(value: string): Pick<MindNode, 'title' | 'body'> | null {
   const lines = value.replace(/\r\n/g, '\n').trimStart().split('\n');
   if (!lines[0]?.trim()) return null;
