@@ -1,11 +1,12 @@
-import {newSpace, parseState, seedState, type DesignState, type Space} from './model';
+import {contentFields, isTask, newSpace, parseState, seedState, syncTaskProgress, taskChildren, type DesignState, type MindNode, type Space} from './model';
 import type {WidgetWindowRect} from '../workspace-layout';
 import type {LayoutTemplate} from './composition';
 import {parseIntegration,type ExternalIntegration} from './integration-manifest';
 import {boundedText} from './text';
+import {parseMaterialTarget} from './material-target';
 import {emptyGraph, validGraph, type GraphState} from './graph-state';
 export type {GraphState} from './graph-state';
-import {closeDockTab, groups, initialDock, moveDockTab, openDockTab, repairBrowserIds, selectDockTab, validateDock, type DockState} from './docking';
+import {closeDockTab, groups, initialDock, moveDockTab, openDockTab, repairBrowserIds, selectDockTab, validateDock, type DockState, type DockTab} from './docking';
 
 export type RunState = 'running' | 'needs_input' | 'succeeded' | 'failed' | 'cancelled';
 export type DemoOutcome = 'succeeded' | 'needs_input' | 'failed';
@@ -72,13 +73,26 @@ export function initialWorkbench(legacy: DesignState = seedState()): WorkbenchSt
 }
 
 export function updateWorkspace(state: WorkbenchState, id: string, update: (space: Workspace) => Workspace): WorkbenchState {
-  return {...state, spaces: state.spaces.map(space => space.id === id ? update(space) : space)};
+  return {...state, spaces: state.spaces.map(space => {if (space.id !== id) return space;const next = update(space);return next.nodes === space.nodes ? next : {...next, nodes: syncTaskProgress(next.nodes)};})};
 }
-export function renameMapNode(state: WorkbenchState, workspaceId: string, nodeId: string, value: string): WorkbenchState {
-  const title = boundedText(value.trim(), 120);
-  const node = state.spaces.find(w => w.id === workspaceId)?.nodes.find(n => n.id === nodeId);
-  if (!title || !node || node.title === title) return state;
-  return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, title} : n)}));
+export function editNodeContent(state: WorkbenchState, workspaceId: string, nodeId: string, value: string): WorkbenchState {
+  const fields = contentFields(value); const node = state.spaces.find(w => w.id === workspaceId)?.nodes.find(n => n.id === nodeId);
+  if (!fields || !node || (fields.title === node.title && fields.body === node.body)) return state;
+  return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, ...fields} : n)}));
+}
+export function setNodeTask(state: WorkbenchState, workspaceId: string, nodeId: string, enabled: boolean): WorkbenchState {
+  return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, kind: n.kind === 'event' ? 'idea' : n.kind, task: enabled} : n)}));
+}
+export function addSubtask(state: WorkbenchState, workspaceId: string, parentId: string, id: string): WorkbenchState {
+  const space = state.spaces.find(w => w.id === workspaceId);const parent = space?.nodes.find(n => n.id === parentId);
+  if (!space || !parent || space.nodes.length >= 250 || space.nodes.some(n => n.id === id)) return state;
+  const child: MindNode = {id, parentId, side: parent.side, kind: 'idea', title: '新节点', body: '', task: true, progress: 0, due: ''};
+  return updateWorkspace(state, workspaceId, w => ({...w, nodes: [...w.nodes.map(n => n.id === parentId ? {...n, task: true} : n), child]}));
+}
+export function setTaskProgress(state: WorkbenchState, workspaceId: string, nodeId: string, progress: number): WorkbenchState {
+  const space = state.spaces.find(w => w.id === workspaceId);const node = space?.nodes.find(n => n.id === nodeId);
+  if (!space || !node || !isTask(node) || taskChildren(space.nodes, nodeId).length || !Number.isFinite(progress)) return state;
+  return updateWorkspace(state, workspaceId, w => ({...w, nodes: w.nodes.map(n => n.id === nodeId ? {...n, progress: Math.min(100, Math.max(0, progress))} : n)}));
 }
 export function mapGraph(space: Workspace, tabId = 'workspace'): GraphState {
   const tab = space.dock.tabs.find(t => t.id === tabId);
@@ -91,12 +105,22 @@ export function updateMapGraph(space: Workspace, graph: GraphState, tabId = 'wor
 export function openMapTab(space: Workspace, groupId: string, id: string): Workspace {
   return {...space, dock: openDockTab(space.dock, {id, kind: 'map', title: '思维导图', graph: emptyGraph()}, groupId)};
 }
+function migrateMaterialTabs(dock: DockState, oldSpace: Workspace, space: Workspace): DockState {
+  return {...dock, tabs: dock.tabs.map((tab): DockTab => {
+    if (tab.kind !== 'material') return tab;
+    const old = oldSpace.nodes.find(n => n.id === tab.nodeId) as (MindNode & {reference?: string}) | undefined;
+    const target = (tab.materialId === 'legacy-reference' ? old?.reference : undefined) || old?.materials?.find(m => m.id === tab.materialId)?.target;
+    if (!target) return tab;
+    try {const canonical = parseMaterialTarget(target).target;const material = space.nodes.find(n => n.id === tab.nodeId)?.materials?.find(m => m.target === canonical);return material ? {...tab, materialId: material.id} : tab;}
+    catch {return {id:tab.id,title:tab.title,kind:'map',graph:{...emptyGraph(),selectedId:tab.nodeId}};}
+  })};
+}
 export function createMapNode(state: WorkbenchState, workspaceId: string, parentId: string, id: string, tabId = 'workspace'): WorkbenchState {
   const space = state.spaces.find(w => w.id === workspaceId);
   if (!space || !space.dock.tabs.some(t => t.id === tabId && t.kind === 'map') || space.nodes.length >= 250 || !space.nodes.some(n => n.id === parentId) || space.nodes.some(n => n.id === id)) return state;
   return updateWorkspace(state, workspaceId, w => {
     const graph = mapGraph(w, tabId);
-    return updateMapGraph({...w, nodes: [...w.nodes, {id, parentId, side: 1, kind: 'idea', title: '新节点', body: '', progress: 0, due: '', steps: []}]}, {...graph, selectedId: id, focusId: null, collapsed: graph.collapsed.filter(value => value !== parentId), camera: null}, tabId);
+    return updateMapGraph({...w, nodes: [...w.nodes, {id, parentId, side: 1, kind: 'idea', title: '新节点', body: '', progress: 0, due: ''}]}, {...graph, selectedId: id, focusId: null, collapsed: graph.collapsed.filter(value => value !== parentId), camera: null}, tabId);
   });
 }
 export function addSurface(space: Workspace, surface: Surface): Workspace {
@@ -235,7 +259,7 @@ export function placeArtifact(state: WorkbenchState, artifactId: string, at: num
   const next = updateWorkspace(state, session.workspaceId, space => {
     if (space.nodes.length >= 250 || space.nodes.some(n => n.sourceArtifactId === artifact.id)) return space;
     const parent = space.nodes.find(n => n.id === session.nodeId) || space.nodes.find(n => !n.parentId)!;
-    return {...space, nodes: [...space.nodes, {id: `artifact-${artifact.id}`, parentId: parent.id, side: parent.side, kind: 'artifact', title: boundedText(artifact.title,120)||'产物', body: artifact.text, progress: 0, due: '', steps: [], completed: false, sourceArtifactId: artifact.id, updates: [{id: `created-${artifact.id}`, text: session.integrationId === 'demo-agent' ? '从会话保留产物（模拟结果）' : '从会话保留产物', at, sessionId: session.id}]}], graph: {...space.graph, collapsed: space.graph.collapsed.filter(id => id !== parent.id)}};
+    return {...space, nodes: [...space.nodes, {id: `artifact-${artifact.id}`, parentId: parent.id, side: parent.side, kind: 'artifact', title: boundedText(artifact.title,120)||'产物', body: artifact.text, progress: 0, due: '', sourceArtifactId: artifact.id, updates: [{id: `created-${artifact.id}`, text: session.integrationId === 'demo-agent' ? '从会话保留产物（模拟结果）' : '从会话保留产物', at, sessionId: session.id}]}], graph: {...space.graph, collapsed: space.graph.collapsed.filter(id => id !== parent.id)}};
   });
   return {...next, sessions: next.sessions.map(s => s.id === session.id ? {...s, linkedNodeIds: [...new Set([...(s.linkedNodeIds || []), nodeId])]} : s)};
 }
@@ -254,20 +278,21 @@ export const latestRun = (state: WorkbenchState, sessionId: string) => [...state
 export const statusNames: Record<RunState | 'idle', string> = {idle: '未开始', running: '运行中', needs_input: '需要输入', succeeded: '已完成', failed: '失败', cancelled: '已停止'};
 
 export function parseWorkbench(value: unknown): WorkbenchState {
-  const raw = value as WorkbenchState;
+  const raw = structuredClone(value) as WorkbenchState;
   const fail = () => {throw new Error('工作台数据无效，原始内容已保留。');};
   if (!raw || ![1, 2].includes(raw.version) || !Array.isArray(raw.sessions) || !Array.isArray(raw.runs) || !Array.isArray(raw.artifacts) || !Array.isArray(raw.notices)) return fail();
   if (raw.graphCursor !== undefined && (!Number.isSafeInteger(raw.graphCursor) || raw.graphCursor < 0)) return fail();
   if(raw.templates!==undefined){if(!Array.isArray(raw.templates)||raw.templates.length>30||new Set(raw.templates.map(t=>t.id)).size!==raw.templates.length)return fail();for(const template of raw.templates){if(!template || typeof template.id!=='string' || typeof template.name!=='string' || !template.name.trim() || template.dock.tabs.some(t=>!['map','events','business','review','browser'].includes(t.kind)))return fail();validateDock(template.dock,[]);}}
   if(raw.externalIntegrations!==undefined){if(!Array.isArray(raw.externalIntegrations)||raw.externalIntegrations.length>30||new Set(raw.externalIntegrations.map(i=>i.id)).size!==raw.externalIntegrations.length)return fail();raw.externalIntegrations.forEach(parseIntegration);}
-  parseState({version: 2, activeId: raw.activeId, spaces: raw.spaces});
+  const oldSpaces = raw.spaces;
+  raw.spaces = parseState({version: 2, activeId: raw.activeId, spaces: raw.spaces}).spaces as Workspace[];
   const browserIds=new Set<string>();
   const state: WorkbenchState = {...raw, version: 2, spaces: raw.spaces.map(space => {
     const activeTab = space.layout?.panes?.find(p => p.id === space.layout.activePaneId)?.activeId;
     const legacySession = space.surfaces?.find(s => s.id === activeTab && s.integrationId === 'session')?.resourceId;
     const window = space.sessionWindow ?? {...defaultSessionWindow(), sessionId: legacySession || null};
     const sessionTabs = space.sessionTabs ?? {ids: window.sessionId ? [window.sessionId] : [], activeId: window.sessionId || 'workspace', recent: window.sessionId ? ['workspace', window.sessionId] : ['workspace']};
-    return {...space, review: space.review === undefined && space.website === 'http://127.0.0.1:8765/' ? {url: space.website} : space.review ?? null, graph: {...space.graph, ...((raw.version as number) === 1 ? {camera: null} : {})}, sessionPanelOpen: space.sessionPanelOpen ?? false, sessionWindow: window, sessionTabs, dock: repairBrowserIds(space.dock ?? initialDock(sessionTabs.ids, sessionTabs.activeId, sessionTabs.recent),browserIds)};
+    return {...space, review: space.review === undefined && space.website === 'http://127.0.0.1:8765/' ? {url: space.website} : space.review ?? null, graph: {...space.graph, ...((raw.version as number) === 1 ? {camera: null} : {})}, sessionPanelOpen: space.sessionPanelOpen ?? false, sessionWindow: window, sessionTabs, dock: migrateMaterialTabs(repairBrowserIds(space.dock ?? initialDock(sessionTabs.ids, sessionTabs.activeId, sessionTabs.recent),browserIds), oldSpaces.find(w=>w.id===space.id)!, space)};
   })};
   parseState({version: 2, activeId: state.activeId, spaces: state.spaces});
   const unique = (items: {id: string}[]) => items.every(i => i && typeof i.id === 'string' && i.id.length > 0) && new Set(items.map(i => i.id)).size === items.length;

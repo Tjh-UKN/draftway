@@ -29,12 +29,13 @@ describe('node material references', () => {
   it('persists multiple materials and keeps the old reference without mutating the source', () => {
     const state = initialWorkbench();
     const node = state.spaces[0].nodes[0];
-    node.reference = 'old/path.md';
+    Object.assign(node,{reference:'old/path.md'});
     node.materials = [{id: 'note-1', title: 'Design', target: 'obsidian://open?vault=Notes&file=Design'}, {id: 'web-1', title: 'Reference', target: 'https://example.com/'}];
     const saved = JSON.stringify(state);
     const restored = parseWorkbench(JSON.parse(saved));
     expect(restored.spaces[0].nodes[0].materials).toEqual(node.materials);
-    expect(restored.spaces[0].nodes[0].reference).toBe('old/path.md');
+    expect(restored.spaces[0].nodes[0].body).toContain('引用：old/path.md');
+    expect(restored.spaces[0].nodes[0]).not.toHaveProperty('reference');
     expect(JSON.stringify(state)).toBe(saved);
     restored.spaces[0].nodes[0].materials![0].target = 'javascript:alert(1)';
     expect(() => parseWorkbench(restored)).toThrow('关联材料格式无效');

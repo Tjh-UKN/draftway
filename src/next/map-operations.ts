@@ -15,7 +15,7 @@ export function applyMapOperations(state: WorkbenchState, operations: MapOperati
       if(op.kind==='artifact'){
         const id=`artifact-${op.seq}`;
         if(nodes.length>=250)text='AI 产物未放入地图：节点数量已达上限。';
-        else {const artifact:MindNode={id,parentId:node.id,side:node.side,kind:'artifact',title:op.payload.title||'AI 产物',body:op.payload.body||'',progress:0,due:'',steps:[],updates:[{id:op.id,text:'从 AI 执行保留产物',at:op.at,sessionId:op.sessionId}]};if(!nodes.some(n=>n.id===id))nodes.push(artifact);text=`保留产物：${artifact.title}`;}
+        else {const artifact:MindNode={id,parentId:node.id,side:node.side,kind:'artifact',title:op.payload.title||'AI 产物',body:op.payload.body||'',progress:0,due:'',updates:[{id:op.id,text:'从 AI 执行保留产物',at:op.at,sessionId:op.sessionId}]};if(!nodes.some(n=>n.id===id))nodes.push(artifact);text=`保留产物：${artifact.title}`;}
       }
       return {...space,nodes:nodes.map(n=>n.id===node.id?{...n,body,updates:[...(n.updates||[]),{id:op.id,text,at:op.at,sessionId:op.sessionId}]}:n)};
     })};

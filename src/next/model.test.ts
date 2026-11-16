@@ -21,7 +21,7 @@ describe('the new workspace model', () => {
   });
   it('places siblings without overlapping at increasing tree depths', () => {
     const {nodes} = seedState().spaces[0];
-    nodes.push({id: 'deeper', parentId: 'link', side: 1, kind: 'event', title: 'A deeper step', body: '', progress: 0, due: '', steps: []});
+    nodes.push({id: 'deeper', parentId: 'link', side: 1, kind: 'event', title: 'A deeper step', body: '', progress: 0, due: ''});
     const placed = placeNodes(nodes);
     for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) {
       const a = placed[i]; const b = placed[j];

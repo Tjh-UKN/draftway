@@ -1,12 +1,12 @@
-import {validMaterial, type NodeMaterial} from './material-target';
+import {parseMaterialTarget, validMaterial, type NodeMaterial} from './material-target';
+import {boundedText} from './text';
 export type NodeKind = 'root' | 'idea' | 'analysis' | 'event' | 'document' | 'code' | 'artifact';
 export interface NodeUpdate {id: string; text: string; at: number; sessionId?: string}
 export type ViewKind = 'map' | 'events' | 'notes' | 'web';
-export interface Step {id: string; title: string; done: boolean}
 export interface MindNode {
   id: string; parentId: string | null; side: -1 | 1; kind: NodeKind;
-  title: string; body: string; progress: number; due: string; steps: Step[];
-  completed?: boolean; reference?: string; materials?: NodeMaterial[]; updates?: NodeUpdate[]; sourceArtifactId?: string;
+  title: string; body: string; progress: number; due: string; task?: boolean;
+  materials?: NodeMaterial[]; updates?: NodeUpdate[]; sourceArtifactId?: string;
 }
 export interface Space {
   id: string; name: string; intent: string; symbol: 'star' | 'code' | 'book';
@@ -17,7 +17,7 @@ export interface PlacedNode {node: MindNode; x: number; y: number; width: number
 export const storageKey = 'northstar-design-v2';
 export const viewNames: Record<ViewKind, string> = {map: '思维', events: '事件', notes: '随记', web: '网页'};
 export const viewDescriptions: Record<ViewKind, string> = {map: '让想法围绕一个中心生长', events: '从节点延伸，持续推进每一件事', notes: '留下还没有成形的灵感', web: '接入你已经在使用的工具'};
-const node = (id: string, parentId: string | null, title: string, side: -1 | 1 = 1, kind: NodeKind = 'idea', progress = 0, body = ''): MindNode => ({id, parentId, title, side, kind, progress, body, due: '', steps: []});
+const node = (id: string, parentId: string | null, title: string, side: -1 | 1 = 1, kind: NodeKind = 'idea', progress = 0, body = ''): MindNode => ({id, parentId, title, side, kind: kind === 'event' ? 'idea' : kind, ...(kind === 'event' ? {task: true} : {}), progress, body, due: ''});
 
 export function seedState(): DesignState {
   const design: Space = {
@@ -29,7 +29,7 @@ export function seedState(): DesignState {
       node('simplicity', 'think', '一个中心，逐层展开', -1, 'idea', 0, '首屏只保留一个中心。复杂度随人的意图出现，而不是一开始堆在眼前。'),
       node('composition', 'think', '工具围绕事情组织', -1, 'idea', 0, '工作区属于业务；组件属于工作区。不同的事情，有不同的工具组合。'),
       node('act', 'northstar', '做出来', 1, 'idea', 0, '每个值得付诸行动的想法，都可以成为一件有进展的事。'),
-      {...node('link', 'act', '连接想法与事件', 1, 'event', 75, '点击思维节点就能编辑事件。思维图和事件列表使用同一条记录，进度随时同步。'), steps: [{id: 's1', title: '建立节点与事件的关联', done: true}, {id: 's2', title: '在节点中编辑事件', done: true}, {id: 's3', title: '让进度回到思维图', done: true}, {id: 's4', title: '完成一次完整体验', done: false}]},
+      node('link', 'act', '连接想法与事件', 1, 'event', 75, '点击思维节点就能编辑事件。思维图和事件列表使用同一条记录，进度随时同步。'),
       node('spaces', 'act', '工作区自由组合', 1, 'event', 40, '切换业务的同时，切换思维、事件、随记和网页入口。每个工作区都可以调整组件和顺序。'),
       node('experience', 'act', '打磨界面与动效', 1, 'event', 20, '留白、层级与节奏。让注意力始终停留在正在做的那件事。'),
     ],
@@ -42,9 +42,68 @@ export function seedState(): DesignState {
 export function nodeProgress(nodes: MindNode[], id: string): number {
   const current = nodes.find(n => n.id === id);
   if (!current) return 0;
-  if (current.kind === 'event') return current.progress;
-  const events = descendants(nodes, id).filter(n => n.kind === 'event');
-  return events.length ? Math.round(events.reduce((sum, n) => sum + n.progress, 0) / events.length) : 0;
+  const children = taskChildren(nodes, id);
+  return children.length ? Math.round(children.reduce((sum, n) => sum + nodeProgress(nodes, n.id), 0) / children.length) : isTask(current) ? current.progress : 0;
+}
+export const isTask = (node: MindNode) => node.task === true || node.kind === 'event';
+export function taskChildren(nodes: MindNode[], id: string): MindNode[] {
+  return nodes.filter(n => n.parentId === id).flatMap(n => isTask(n) ? [n] : taskChildren(nodes, n.id));
+}
+export function syncTaskProgress(nodes: MindNode[]): MindNode[] {
+  return nodes.map(node => {const progress = nodeProgress(nodes, node.id); return isTask(node) && progress !== node.progress ? {...node, progress} : node;});
+}
+export const nodeContent = (node: MindNode) => node.title + (node.body ? '\n' + node.body : '');
+export function contentFields(value: string): Pick<MindNode, 'title' | 'body'> | null {
+  const lines = value.replace(/\r\n/g, '\n').trimStart().split('\n');
+  if (!lines[0]?.trim()) return null;
+  const heading = lines.shift()!.trim(); const title = boundedText(heading, 120);
+  const overflow = heading.slice(title.length);
+  return {title, body: (overflow ? [overflow, ...lines] : lines).join('\n')};
+}
+
+type LegacyNode = MindNode & {steps?: {id: string; title: string; done: boolean}[]; reference?: string; completed?: boolean};
+export const nodeMigrationBackupKey = 'northstar-shell-before-node-primitives-v1';
+export function hasLegacyNodePrimitives(value: unknown): boolean {
+  const spaces = (value as {spaces?: Space[]})?.spaces;
+  return Array.isArray(spaces) && spaces.some(space => Array.isArray(space?.nodes) && space.nodes.some(node => node && (node.kind === 'event' || ['steps','reference','completed'].some(key => Object.hasOwn(node, key)))));
+}
+export function migrateNodePrimitives(nodes: MindNode[]): MindNode[] {
+  const used = new Set(nodes.map(node => node.id)); const children: MindNode[] = [];
+  const migrated = nodes.map(value => {
+    const {steps, reference, completed, ...node} = value as LegacyNode;
+    if (node.kind === 'event') {node.kind = 'idea'; node.task = true;}
+    if (completed !== undefined) {node.task = true; if (completed) node.progress = 100;}
+    const materials: NodeMaterial[] = []; const targets = new Set<string>();
+    for (const material of node.materials || []) {const target = parseMaterialTarget(material.target).target;if (!targets.has(target)) {materials.push({...material, target});targets.add(target);}else if (materials.find(m=>m.target===target)!.title !== material.title) node.updates=[...(node.updates||[]),{id:'migration-material-'+material.id,text:`合并同一材料的名称：${material.title}\n${material.target}`,at:0}];}
+    if (reference?.trim()) {
+      try {
+        const parsed = parseMaterialTarget(reference);
+        if (!targets.has(parsed.target)) {
+          let id = 'legacy-reference'; while (materials.some(m => m.id === id)) id += '-1';
+          materials.push({id, title: boundedText(parsed.title || '引用材料', 240), target: parsed.target});
+        }
+      } catch {node.body += (node.body ? '\n\n' : '') + '引用：' + reference;}
+    }
+    if (node.materials || materials.length) node.materials = materials;
+    for (const [index, step] of (steps || []).entries()) {
+      let hash = 2166136261; for (const character of node.id + ':' + step.id + ':' + index) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+      let id = 'step-' + (hash >>> 0).toString(16); while (used.has(id)) id += '-1'; used.add(id);
+      const fields = contentFields(step.title) || {title: '未命名子任务', body: step.title};
+      children.push({id, parentId: node.id, side: node.side, kind: 'idea', task: true, ...fields, progress: step.done ? 100 : 0, due: ''});
+    }
+    return node;
+  });
+  if (migrated.length + children.length > 250) throw new Error('迁移旧步骤后将超过 250 个节点，原始数据已保留，请先拆分工作区。');
+  const normalized = syncTaskProgress([...migrated, ...children]);
+  return normalized.map(node => {
+    const old = nodes.find(n => n.id === node.id) as LegacyNode | undefined;
+    if (!old) return node;
+    const changedSteps = !!old.steps?.length && old.progress !== node.progress;
+    const changedCompletion = old.completed !== undefined && old.completed !== (node.progress === 100);
+    const conflictingProgress = old.completed === true && old.progress !== 0 && old.progress !== 100;
+    if (!changedSteps && !changedCompletion && !conflictingProgress) return node;
+    return {...node,updates:[...(node.updates||[]),{id:'migration-task-state',text:`迁移前进度：${old.progress}%${old.completed === undefined ? '' : '；完成标记：'+(old.completed?'已完成':'未完成')}。当前进度：${node.progress}%，以任务进度和子任务为准。`,at:0}]};
+  });
 }
 
 export function descendants(nodes: MindNode[], id: string): MindNode[] {
@@ -65,7 +124,7 @@ export function placeNodes(nodes: MindNode[], collapsed: string[] = [], focusId?
   const height = (id: string): number => Math.max(108, children(id).reduce((sum, n) => sum + height(n.id), 0));
   const placed: PlacedNode[] = [{node: root, x: 0, y: 0, width: 196, height: 120}];
   function branch(current: MindNode, depth: number, y: number, side: -1 | 1) {
-    placed.push({node: current, x: side * (depth === 1 ? 278 : 554 + (depth - 2) * 276), y, width: current.kind === 'event' ? 226 : 208, height: current.kind === 'event' ? 86 : 68});
+    placed.push({node: current, x: side * (depth === 1 ? 278 : 554 + (depth - 2) * 276), y, width: isTask(current) ? 226 : 208, height: isTask(current) ? 86 : 68});
     const items = children(current.id);
     let top = y - items.reduce((sum, n) => sum + height(n.id), 0) / 2;
     for (const item of items) {const h = height(item.id); branch(item, depth + 1, top + h / 2, side); top += h;}
@@ -85,7 +144,7 @@ export function newSpace(name: string, preset: 'blank' | 'project' | 'web'): Spa
 }
 
 export function parseState(value: unknown): DesignState {
-  const result = value as DesignState;
+  const result = structuredClone(value) as DesignState;
   if (result?.version !== 2 || !Array.isArray(result.spaces) || !result.spaces.length || result.spaces.length > 20 || !result.spaces.some(s => s.id === result.activeId)) throw new Error('无法读取这份工作区数据。');
   const ids = new Set<string>();
   for (const space of result.spaces) {
@@ -95,12 +154,15 @@ export function parseState(value: unknown): DesignState {
     const nodeIds = new Set(space.nodes.map(n => n.id));
     if (nodeIds.size !== space.nodes.length) throw new Error('节点重复。');
     for (const n of space.nodes) {
-      if (typeof n.id !== 'string' || typeof n.title !== 'string' || !n.title.trim() || n.title.length > 120 || !['root', 'idea', 'analysis', 'event', 'document', 'code', 'artifact'].includes(n.kind) || ![-1, 1].includes(n.side) || typeof n.body !== 'string' || typeof n.due !== 'string' || !Number.isFinite(n.progress) || n.progress < 0 || n.progress > 100 || !Array.isArray(n.steps) || n.steps.length > 100 || n.steps.some(s => typeof s.id !== 'string' || typeof s.title !== 'string' || typeof s.done !== 'boolean') || (n.kind === 'root') !== (n.parentId === null) || (n.completed !== undefined && typeof n.completed !== 'boolean') || (n.reference !== undefined && typeof n.reference !== 'string') || (n.sourceArtifactId !== undefined && typeof n.sourceArtifactId !== 'string') || (n.updates !== undefined && (!Array.isArray(n.updates) || n.updates.some(u => !u || typeof u.id !== 'string' || typeof u.text !== 'string' || !Number.isFinite(u.at) || (u.sessionId !== undefined && typeof u.sessionId !== 'string'))))) throw new Error('节点内容不完整。');
+      if (typeof n.id !== 'string' || typeof n.title !== 'string' || !n.title.trim() || n.title.length > 120 || !['root', 'idea', 'analysis', 'event', 'document', 'code', 'artifact'].includes(n.kind) || ![-1, 1].includes(n.side) || typeof n.body !== 'string' || typeof n.due !== 'string' || !Number.isFinite(n.progress) || n.progress < 0 || n.progress > 100 || (n.kind === 'root') !== (n.parentId === null) || (n.task !== undefined && typeof n.task !== 'boolean') || (n.sourceArtifactId !== undefined && typeof n.sourceArtifactId !== 'string') || (n.updates !== undefined && (!Array.isArray(n.updates) || n.updates.some(u => !u || typeof u.id !== 'string' || typeof u.text !== 'string' || !Number.isFinite(u.at) || (u.sessionId !== undefined && typeof u.sessionId !== 'string'))))) throw new Error('节点内容不完整。');
+      const legacy = n as LegacyNode;
+      if ((legacy.steps !== undefined && (!Array.isArray(legacy.steps) || legacy.steps.length > 100 || legacy.steps.some(s => !s || typeof s.id !== 'string' || typeof s.title !== 'string' || typeof s.done !== 'boolean'))) || (legacy.reference !== undefined && typeof legacy.reference !== 'string') || (legacy.completed !== undefined && typeof legacy.completed !== 'boolean')) throw new Error('旧节点内容不完整。');
       if (n.materials !== undefined && (!Array.isArray(n.materials) || n.materials.length > 100 || !n.materials.every(validMaterial) || new Set(n.materials.map(m => m.id)).size !== n.materials.length)) throw new Error('关联材料格式无效。');
       let parent = n.parentId;
       const visited = new Set([n.id]);
       while (parent) {if (visited.has(parent) || !nodeIds.has(parent)) throw new Error('节点关系无效。'); visited.add(parent); parent = space.nodes.find(item => item.id === parent)!.parentId;}
     }
+    space.nodes = migrateNodePrimitives(space.nodes);
   }
   return result;
 }

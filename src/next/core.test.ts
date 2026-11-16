@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {addSurface, advanceDemoRuns, applyRunMapChange, cancelDemoRun, closeSessionTab, closeSurface, createMapNode, createSession, initialWorkbench, mergePanes, moveSurface, openSession, parseWorkbench, placeArtifact, renameMapNode, resumeDemoRun, reorderSessionTab, selectWorkspaceTab, sessionNodeIds, splitSurface, startDemoRun, updateWorkspace} from './core';
+import {addSurface, advanceDemoRuns, applyRunMapChange, cancelDemoRun, closeSessionTab, closeSurface, createMapNode, createSession, initialWorkbench, mergePanes, moveSurface, openSession, parseWorkbench, placeArtifact, editNodeContent, resumeDemoRun, reorderSessionTab, selectWorkspaceTab, sessionNodeIds, splitSurface, startDemoRun, updateWorkspace} from './core';
 import {sessionAdapter} from './adapters';
 import {seedState} from './model';
 
@@ -220,10 +220,11 @@ describe('workspace shell records and lifecycle', () => {
   });
   it('persists document, code and artifact contents and rejects malformed update records', () => {
     const state = initialWorkbench();
-    for (const kind of ['document', 'code', 'artifact'] as const) state.spaces[0].nodes.push({id: `new-${kind}`, parentId: 'northstar', side: 1, kind, title: kind, body: 'Saved content', progress: 0, due: '', steps: [], reference: 'kv_trace/', completed: true, updates: [{id: `u-${kind}`, text: 'Manual update', at: 1}]});
+    for (const kind of ['document', 'code', 'artifact'] as const) state.spaces[0].nodes.push({id: `new-${kind}`, parentId: 'northstar', side: 1, kind, title: kind, body: 'Saved content', progress: 0, due: '', ...{steps: [], reference: 'kv_trace/', completed: true}, updates: [{id: `u-${kind}`, text: 'Manual update', at: 1}]});
     const restored = parseWorkbench(JSON.parse(JSON.stringify(state)));
     expect(restored.spaces[0].nodes.slice(-3).map(n => n.kind)).toEqual(['document', 'code', 'artifact']);
-    expect(restored.spaces[0].nodes.at(-1)?.reference).toBe('kv_trace/');
+    expect(restored.spaces[0].nodes.at(-1)).toMatchObject({task:true,progress:100,body:'Saved content\n\n引用：kv_trace/'});
+    expect(restored.spaces[0].nodes.at(-1)).not.toHaveProperty('reference');
     restored.spaces[0].nodes.at(-1)!.updates![0].at = Number.NaN;
     expect(() => parseWorkbench(restored)).toThrow();
   });
@@ -258,22 +259,22 @@ describe('workspace shell records and lifecycle', () => {
   it('adds a node directly under the clicked parent with no content or placement form', () => {
     const state = initialWorkbench();
     const next = createMapNode(state, 'design', 'act', 'direct-node');
-    expect(next.spaces[0].nodes.at(-1)).toMatchObject({id: 'direct-node', parentId: 'act', title: '新节点', body: '', kind: 'idea', steps: []});
+    expect(next.spaces[0].nodes.at(-1)).toMatchObject({id: 'direct-node', parentId: 'act', title: '新节点', body: '', kind: 'idea'});
     expect(next.spaces[0].graph.selectedId).toBe('direct-node');
     expect(next.sessions).toHaveLength(0);
     expect(state.spaces[0].nodes.some(n => n.id === 'direct-node')).toBe(false);
     expect(createMapNode(next, 'design', 'missing', 'bad')).toBe(next);
     expect(createMapNode(next, 'review', 'act', 'cross')).toBe(next);
   });
-  it('renames only the current node title and preserves concurrent content and associations', () => {
+  it('edits one node content while preserving other attributes and associations', () => {
     const state = createSession(initialWorkbench(), 'design', 'act', 'inline-session', 0);
     state.spaces[0].nodes.find(n => n.id === 'act')!.body = 'Latest AI update';
-    const next = renameMapNode(state, 'design', 'act', '  直接修改节点  ');
+    const next = editNodeContent(state, 'design', 'act', '直接修改节点\nLatest AI update');
     expect(next.spaces[0].nodes.find(n => n.id === 'act')).toEqual({...state.spaces[0].nodes.find(n => n.id === 'act'), title: '直接修改节点'});
     expect(next.sessions).toEqual(state.sessions);
-    expect(renameMapNode(next, 'design', 'act', '   ')).toBe(next);
-    expect(renameMapNode(next, 'review', 'act', 'Foreign workspace')).toBe(next);
-    const unicode = renameMapNode(next, 'design', 'act', 'a' + '🚀'.repeat(100));
+    expect(editNodeContent(next, 'design', 'act', '   ')).toBe(next);
+    expect(editNodeContent(next, 'review', 'act', 'Foreign workspace')).toBe(next);
+    const unicode = editNodeContent(next, 'design', 'act', 'a' + '🚀'.repeat(100));
     expect(() => parseWorkbench(JSON.parse(JSON.stringify(unicode)))).not.toThrow();
     expect(unicode.spaces[0].nodes.find(n => n.id === 'act')!.title.length).toBeLessThanOrEqual(120);
   });

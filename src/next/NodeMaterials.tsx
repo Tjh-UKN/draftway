@@ -9,8 +9,7 @@ export function NodeMaterials({node, onChange, onOpen}: {node: MindNode; onChang
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState('');
-  const materials: NodeMaterial[] = [...(node.materials || [])];
-  if (node.reference && !materials.some(m => m.target === node.reference)) materials.unshift({id: 'legacy-reference', title: '', target: node.reference});
+  const materials: NodeMaterial[] = node.materials || [];
   function add() {
     try {
       const parsed = parseMaterialTarget(input);
@@ -28,7 +27,7 @@ export function NodeMaterials({node, onChange, onOpen}: {node: MindNode; onChang
       return <div className="material-row" key={material.id}>
         {onOpen ? <button className="material-link" type="button" title={material.target} onClick={() => {try {onOpen(material);}catch(e){setError(String(e));}}}>{content}</button> : parsed.href ? <a className="material-link" href={parsed.href} target={parsed.kind === 'web' ? '_blank' : undefined} rel="noopener noreferrer" title={material.target}>{content}</a> : <span className="material-link" title={material.target}>{content}</span>}
         {parsed.kind === 'file' && <button className="icon-button" aria-label={`复制${title}路径`} title="复制文件路径" onClick={async () => {try {await navigator.clipboard.writeText(material.target); setCopied(material.id); setError('');} catch {setError('复制失败，请从材料文字中复制路径。');}}}>{copied === material.id ? <Check size={13}/> : <Copy size={13}/>}</button>}
-        <button className="icon-button material-remove" aria-label={`解除关联${title}`} title="解除关联" onClick={() => onChange(material.id === 'legacy-reference' ? {...node, reference: ''} : {...node, materials: (node.materials || []).filter(m => m.id !== material.id)})}><X size={13}/></button>
+        <button className="icon-button material-remove" aria-label={`解除关联${title}`} title="解除关联" onClick={() => onChange({...node, materials: materials.filter(m => m.id !== material.id)})}><X size={13}/></button>
       </div>;
     })}
     {!materials.length && !adding && <p className="quiet-note">笔记、网页或文件</p>}

@@ -1,6 +1,6 @@
 import {ExternalLink, Globe, Plus} from 'lucide-react';
 import type {ComponentType} from 'react';
-import {renameMapNode, type GraphState, type Surface, type WorkbenchState, type Workspace} from './core';
+import {editNodeContent, type GraphState, type Surface, type WorkbenchState, type Workspace} from './core';
 import {GraphView, TasksView} from './Graph';
 import {safeWebUrl} from './model';
 import {SessionView, type ChangeState} from './Sessions';
@@ -14,7 +14,7 @@ export interface SurfaceProps {
 function GraphSurface(props: SurfaceProps) {
   const counts: Record<string, number> = {};
   for (const session of props.state.sessions) if (session.workspaceId === props.space.id && session.nodeId) counts[session.nodeId] = (counts[session.nodeId] || 0) + 1;
-  return <GraphView space={props.space} onChange={props.onGraph} onAdd={props.onAddNode} onRename={(id,title)=>props.change(state=>renameMapNode(state,props.space.id,id,title))} sessionCounts={counts}/>;
+  return <GraphView space={props.space} onChange={props.onGraph} onAdd={props.onAddNode} onEditContent={(id,title)=>props.change(state=>editNodeContent(state,props.space.id,id,title))} sessionCounts={counts}/>;
 }
 function NoteSurface({surface, onSurface}: SurfaceProps) {
   return <div className="note-surface"><input aria-label="笔记标题" className="note-title" value={surface.title} maxLength={80} onChange={event => onSurface({...surface, title: event.target.value})}/><textarea aria-label="笔记正文" value={surface.text || ''} placeholder="留下一点想法。" onChange={event => onSurface({...surface, text: event.target.value})}/><span className="quiet-note">本地自动保存</span></div>;

@@ -20,7 +20,7 @@ pub fn apply(snapshot: &mut Value, op: &Operation) {
     if op.kind=="artifact" {
         let id=format!("artifact-{}",op.seq);
         if nodes.len()>=250 {text="AI 产物未放入地图：节点数量已达上限。".into();}
-        else {if !nodes.iter().any(|n|n["id"]==id) {let title=op.payload["title"].as_str().unwrap_or("AI 产物");nodes.push(json!({"id":id,"parentId":op.node_id,"side":nodes[index]["side"].as_i64().unwrap_or(1),"kind":"artifact","title":title,"body":op.payload["body"],"progress":0,"due":"","steps":[],"updates":[{"id":op.id,"text":"从 AI 执行保留产物","at":op.at,"sessionId":op.session_id}]}));}
+        else {if !nodes.iter().any(|n|n["id"]==id) {let title=op.payload["title"].as_str().unwrap_or("AI 产物");nodes.push(json!({"id":id,"parentId":op.node_id,"side":nodes[index]["side"].as_i64().unwrap_or(1),"kind":"artifact","title":title,"body":op.payload["body"],"progress":0,"due":"","updates":[{"id":op.id,"text":"从 AI 执行保留产物","at":op.at,"sessionId":op.session_id}]}));}
         text=format!("保留产物：{}",op.payload["title"].as_str().unwrap_or("AI 产物"));}
     }
     if !nodes[index]["updates"].is_array() {nodes[index]["updates"]=json!([]);}

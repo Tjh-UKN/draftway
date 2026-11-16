@@ -22,6 +22,11 @@ pub fn load(store: &Store) -> Result<Option<Value>> {
 pub fn save(store: &Store, value: &Value) -> Result<()> {
     validate(value)?;
     let mut db=store.write_db()?;let tx=db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(error)?;let value=crate::map_ops::merge(&tx,value)?;validate(&value)?;
+    let legacy=|snapshot:&Value|snapshot["spaces"].as_array().into_iter().flatten().flat_map(|space|space["nodes"].as_array().into_iter().flatten()).any(|node|node["kind"]=="event"||["steps","reference","completed"].iter().any(|key|node.get(*key).is_some()));
+    if !legacy(&value) {
+        let previous:Option<String>=tx.query_row("SELECT value FROM metadata WHERE key='workbench-shell-v2'",[],|row|row.get(0)).optional().map_err(error)?;
+        if let Some(previous)=previous {if serde_json::from_str::<Value>(&previous).ok().is_some_and(|snapshot|legacy(&snapshot)) {tx.execute("INSERT OR IGNORE INTO metadata(key,value) VALUES('workbench-shell-before-node-primitives-v1',?1)",[previous]).map_err(error)?;}}
+    }
     tx.execute("INSERT INTO metadata(key,value) VALUES('workbench-shell-v2',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [serde_json::to_string(&value).map_err(error)?]).map_err(error)?;tx.commit().map_err(error)?;
     Ok(())
 }
@@ -29,6 +34,14 @@ pub fn save(store: &Store, value: &Value) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn primitive_migration_keeps_the_original_snapshot_in_the_same_transaction() {
+        let root=std::env::temp_dir().join(format!("northstar-migration-backup-{}",uuid::Uuid::new_v4()));let store=Store::open(root).unwrap();
+        let old=json!({"version":2,"activeId":"w","spaces":[{"id":"w","name":"Work","nodes":[{"id":"n","body":"Original","steps":[{"id":"s","title":"Keep me","done":true}]}],"dock":{}}],"sessions":[],"runs":[],"artifacts":[],"notices":[]});
+        save(&store,&old).unwrap();let mut next=old.clone();next["spaces"][0]["nodes"][0].as_object_mut().unwrap().remove("steps");save(&store,&next).unwrap();
+        let raw:String=store.db.lock().unwrap().query_row("SELECT value FROM metadata WHERE key='workbench-shell-before-node-primitives-v1'",[],|row|row.get(0)).unwrap();assert_eq!(serde_json::from_str::<Value>(&raw).unwrap(),old);
+        assert_eq!(load(&store).unwrap(),Some(next));
+    }
     #[test]
     fn snapshot_roundtrip_rejects_invalid_overwrites_and_does_not_touch_business_records() {
         let dir = std::env::temp_dir().join(format!("northstar-shell-test-{}", uuid::Uuid::new_v4()));
