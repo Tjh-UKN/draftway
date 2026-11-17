@@ -50,6 +50,12 @@ pub fn material(store: &Store, workspace: &str, node: &str, id: &str) -> Result<
     let path=target(&space,value)?;Ok((space,path))
 }
 pub fn read_material(store: &Store, workspace: &str, node: &str, id: &str) -> Result<TextFile> {let (_,path)=material(store,workspace,node,id)?;read(path)}
+pub fn workspace_html(store:&Store,workspace:&str,value:&str)->Result<TextFile>{
+    if value.len()>32768||value.chars().any(char::is_control){return Err("文件路径无效".into());}
+    let space=space(store,workspace)?;let path=target(&space,value)?;
+    if !path.extension().and_then(|ext|ext.to_str()).is_some_and(|ext|["html","htm"].contains(&ext.to_ascii_lowercase().as_str())){return Err("内置浏览器预览支持 HTML 文件".into());}
+    let file=read(path)?;if file.text.len()>1_000_000{return Err("HTML 超过 1 MB".into());}Ok(file)
+}
 pub fn session_target(store:&Store,workspace:&str,cwd:&str,value:&str)->Result<PathBuf>{
     if value.len()>32768||value.chars().any(char::is_control){return Err("文件路径无效".into());}
     let mut space=space(store,workspace)?;
@@ -100,9 +106,13 @@ mod tests {
         assert_eq!(session_target(&store,"w",&owned.to_string_lossy(),&report.to_string_lossy()).unwrap(),report.canonicalize().unwrap());
         assert_eq!(session_target(&store,"w",&owned.to_string_lossy(),"PR 检视报告.html").unwrap(),report.canonicalize().unwrap());
         let uri=url::Url::from_file_path(&report).unwrap();assert!(session_target(&store,"w",&owned.to_string_lossy(),uri.as_str()).is_ok());
+        let page=workspace_html(&store,"w",&report.to_string_lossy()).unwrap();assert_eq!(page.name,"PR 检视报告.html");assert!(page.text.contains("<!doctype html>"));
+        assert!(workspace_html(&store,"w",uri.as_str()).is_ok());
         fs::write(root.join("outside.html"),"Outside").unwrap();assert!(session_target(&store,"w",&owned.to_string_lossy(),"../../../outside.html").is_err());
         assert!(session_target(&store,"w",&owned.to_string_lossy(),&root.join("outside.html").to_string_lossy()).is_err());
+        assert!(workspace_html(&store,"w",&root.join("outside.html").to_string_lossy()).is_err());
         fs::write(owned.join("run.cmd"),"echo not run").unwrap();assert!(session_target(&store,"w",&owned.to_string_lossy(),"run.cmd").is_err());
+        assert!(workspace_html(&store,"w",&owned.join("run.cmd").to_string_lossy()).is_err());
         assert!(session_target(&store,"w",&owned.to_string_lossy(),"missing.html").is_err());
     }
     #[test]

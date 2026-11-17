@@ -49,6 +49,10 @@ async fn agent_list(state: tauri::State<'_, Arc<native_agents::AgentHost>>) -> R
 #[tauri::command]
 async fn agent_get(state: tauri::State<'_, Arc<native_agents::AgentHost>>,id:String) -> Result<native_agents::AgentSession> {state.session(&id)}
 #[tauri::command]
+async fn read_workspace_html(state:tauri::State<'_,AppState>,workspace_id:String,path:String)->Result<resources::TextFile>{
+    let store=state.store.clone();tauri::async_runtime::spawn_blocking(move||resources::workspace_html(&store,&workspace_id,&path)).await.map_err(error)?
+}
+#[tauri::command]
 async fn open_session_path(state:tauri::State<'_,AppState>,agents:tauri::State<'_,Arc<native_agents::AgentHost>>,id:String,path:String)->Result<()>{
     let session=agents.session(&id)?;let store=state.store.clone();
     tauri::async_runtime::spawn_blocking(move||{let path=resources::session_target(&store,&session.workspace_id,&session.cwd,&path)?;open::that(resources::display_path(&path)).map_err(error)}).await.map_err(error)?
@@ -264,7 +268,7 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_get,open_session_path,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_get,read_workspace_html,open_session_path,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
                 if invoke.message.webview_ref().state::<AppState>().store.maintenance.load(Ordering::SeqCst)&&invoke.message.command()!="quit_app"{invoke.resolver.reject("正在恢复数据，暂时停止写入");return true;}

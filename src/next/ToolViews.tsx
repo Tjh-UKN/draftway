@@ -4,8 +4,11 @@ import {diffLines} from 'diff';
 import {browserUrl, type DockTab, type ReviewFile} from './docking';
 import type {NativeBrowserHost} from './native-browser';
 import {invoke, isTauri} from '@tauri-apps/api/core';
+import LocalFileBrowser from './LocalFileBrowser';
 
-export function BrowserView({tab, active, onChange, native}: {tab: Extract<DockTab, {kind: 'browser'}>; active: boolean; onChange: (tab: DockTab) => void; native?: NativeBrowserHost | null}) {
+type BrowserProps={tab: Extract<DockTab, {kind: 'browser'}>; active: boolean; onChange: (tab: DockTab) => void; native?: NativeBrowserHost | null};
+export function BrowserView(props:BrowserProps){return props.tab.localFile?<LocalFileBrowser tab={props.tab}/>:<WebBrowserView {...props}/>;}
+function WebBrowserView({tab, active, onChange, native}:BrowserProps) {
   const [address, setAddress] = useState(tab.url);
   const [error, setError] = useState('');
   const [history, setHistory] = useState({urls: [tab.url], index: 0});

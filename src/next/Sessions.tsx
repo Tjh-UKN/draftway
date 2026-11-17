@@ -8,6 +8,7 @@ import {useAgentRuntime} from './NativeAgents';
 import {invoke} from '@tauri-apps/api/core';
 import {SessionComposer} from './SessionComposer';
 import {SessionTranscript} from './SessionTranscript';
+import {isHtmlReport,openLocalReport} from './local-report';
 
 export type ChangeState = (update: (state: WorkbenchState) => WorkbenchState) => void;
 export function SessionStatus({state, session}: {state: WorkbenchState; session: AgentSession}) {
@@ -24,7 +25,7 @@ export function SessionView({state, session, change, onNode, active = true,visib
   const canSend = demo ? !!adapter : !!runtime && !runtime.readOnly && !!session.nativeRevision;
   const [linkError,setLinkError]=useState('');
   const openLink=useCallback((url:string)=>{setLinkError('');void invoke('open_external_url',{url}).catch(error=>setLinkError(String(error)));},[]);
-  const openLocalPath=useCallback((path:string)=>{setLinkError('');void invoke('open_session_path',{id:session.id,path}).catch(error=>setLinkError(String(error)));},[session.id]);
+  const openLocalPath=useCallback((path:string)=>{setLinkError('');if(isHtmlReport(path)){change(state=>openLocalReport(state,session.workspaceId,path));return;}void invoke('open_session_path',{id:session.id,path}).catch(error=>setLinkError(String(error)));},[session.id,session.workspaceId,change]);
   const run = latestRun(state, session.id);
   const busy = run?.state === 'running' || run?.state === 'needs_input';
   const space = state.spaces.find(s => s.id === session.workspaceId)!;
