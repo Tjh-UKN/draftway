@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, type ReactNode} from 'react';
+import {useEffect, useLayoutEffect, useRef, useState, type ReactNode} from 'react';
 import {createPortal} from 'react-dom';
 import {Columns2, FileCode2, Globe, GripVertical, Layers, MessageSquare, Network, Plus, Rows2, Terminal, X} from 'lucide-react';
 import {latestRun, statusNames, type AgentSession, type WorkbenchState, type Workspace} from './core';
@@ -23,6 +23,15 @@ export function DockLayout(props: Props) {
   const candidate=useRef<DragGesture|null>(null),cancelled=useRef<number|null>(null),skipClick=useRef(false);
   const current=useRef(props);current.current=props;
   const [drag,setDrag]=useState<{item:DockDragItem;drop:DockDrop|null}|null>(null);
+  const [slots,setSlots]=useState<Record<string,{left:number;top:number;width:number;height:number}>>({});
+  useLayoutEffect(()=>{
+    const element=frame.current!;const measure=()=>{
+      const origin=element.getBoundingClientRect();const next:typeof slots={};
+      for(const slot of element.querySelectorAll<HTMLElement>('.dock-group-content')){const owner=slot.closest<HTMLElement>('.dock-group')!;const rect=slot.getBoundingClientRect();next[owner.dataset.groupId!]={left:rect.left-origin.left,top:rect.top-origin.top,width:rect.width,height:rect.height};}
+      setSlots(old=>JSON.stringify(old)===JSON.stringify(next)?old:next);
+    };
+    const observer=new ResizeObserver(measure);observer.observe(element);for(const slot of element.querySelectorAll('.dock-group-content'))observer.observe(slot);measure();return()=>observer.disconnect();
+  },[props.space.dock.root]);
   function cancel(){candidate.current=null;setDrag(null);document.body.classList.remove('dragging-dock');}
   useEffect(()=>{
     const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&candidate.current?.active){event.preventDefault();event.stopPropagation();cancelled.current=candidate.current.pointerId;cancel();}};
@@ -31,7 +40,8 @@ export function DockLayout(props: Props) {
     return()=>{window.removeEventListener('keydown',escape,true);window.removeEventListener('blur',blur);document.body.classList.remove('dragging-dock');};
   },[]);
   function targetAt(x:number,y:number,item:DockDragItem):DockDrop|null {
-    const hit=document.elementFromPoint(x,y);const group=hit?.closest<HTMLElement>('[data-group-id]');
+    const hit=document.elementFromPoint(x,y);let group=hit?.closest<HTMLElement>('.dock-group[data-group-id]');
+    if(!group){const owner=hit?.closest<HTMLElement>('[data-dock-scene-group]')?.dataset.dockSceneGroup;if(owner)group=frame.current?.querySelector<HTMLElement>(`.dock-group[data-group-id="${CSS.escape(owner)}"]`);}
     if(!group||!frame.current?.contains(group))return null;
     const dock=current.current.space.dock,groupId=group.dataset.groupId!;
     const header=group.querySelector<HTMLElement>('.dock-group-header')!,headerRect=header.getBoundingClientRect();
@@ -44,14 +54,19 @@ export function DockLayout(props: Props) {
       drop={groupId,beforeId:before?.dataset.dockTabId,marker:{x:marker,y:headerRect.top+7,height:headerRect.height-14}};
     }else{
       const body=group.querySelector<HTMLElement>('.dock-group-content')!.getBoundingClientRect();
-      drop={groupId,edge:y<headerRect.bottom?undefined:dockEdge(body,x,y)};
+      drop={groupId,edge:y<headerRect.bottom?undefined:dockEdge(body,x,y),rect:{left:body.left,top:body.top,width:body.width,height:body.height}};
     }
     return canDockDrop(dock,item,drop)?drop:null;
   }
   function tree(node: DockNode): ReactNode {
     if (node.kind === 'split') return <SplitView key={node.id} node={node} onResize={ratio => props.onChange(dock => resizeDock(dock, node.id, ratio))}>{tree(node.children[0])}{tree(node.children[1])}</SplitView>;
-    return <GroupView key={node.id} {...props} group={node} dragging={!!drag} drop={drag?.drop?.groupId===node.id?drag.drop:null}/>;
+    return <GroupView key={node.id} {...props} group={node} dragging={!!drag}/>;
   }
+  const preview=drag?.drop?.rect;
+  const edge=drag?.drop?.edge;
+  const previewStyle=preview?{position:'fixed' as const,inset:'auto',left:preview.left+8+(edge==='right'?preview.width/2:0),top:preview.top+8+(edge==='bottom'?preview.height/2:0),width:preview.width/(edge==='left'||edge==='right'?2:1)-16,height:preview.height/(edge==='top'||edge==='bottom'?2:1)-16}:undefined;
+  const owners=groups(props.space.dock.root);
+  function focusScene(groupId:string){if(current.current.space.dock.activeGroupId!==groupId&&!candidate.current?.active)current.current.onChange(dock=>({...dock,activeGroupId:groupId}));}
   return <div className={`dock-layout ${drag?'is-dragging':''}`} ref={frame}
     onPointerDownCapture={event=>{
       if(event.button!==0)return;const element=event.target as Element;
@@ -84,6 +99,12 @@ export function DockLayout(props: Props) {
     onLostPointerCapture={()=>{if(candidate.current?.active)cancel();}}
     onClickCapture={event=>{if(skipClick.current){event.preventDefault();event.stopPropagation();skipClick.current=false;}}}>
     {tree(props.space.dock.root)}
+    {/* Keep tab surfaces outside the split tree so pane moves do not remount editors or iframes. */}
+    <div className="dock-scene-layer">{props.space.dock.tabs.map(tab=>{
+      const owner=owners.find(g=>g.tabs.includes(tab.id))!;const rect=slots[owner.id];const selected=owner.activeId===tab.id;
+      return <div key={tab.id} className={`dock-scene scene-${tab.kind}`} data-dock-scene-group={owner.id} role="tabpanel" id={`dock-panel-${props.space.id}-${tab.id}`} aria-labelledby={`dock-tab-${props.space.id}-${tab.id}`} hidden={!selected||!rect} style={rect} onPointerDownCapture={()=>focusScene(owner.id)} onFocusCapture={()=>focusScene(owner.id)}>{props.render(tab,selected&&props.space.dock.activeGroupId===owner.id)}</div>;
+    })}</div>
+    {previewStyle&&<div className="dock-drop-preview" style={previewStyle}><span>{edge?{left:'放到左侧',right:'放到右侧',top:'放到上方',bottom:'放到下方'}[edge]:'合并到此分区'}</span></div>}
     {drag&&<div ref={ghost} className="dock-drag-ghost" style={{left:Math.min(innerWidth-250,(candidate.current?.x||0)+16),top:(candidate.current?.y||0)+14}}>{drag.item.kind==='group'&&<GripVertical size={13}/>}<span>{drag.item.label}</span></div>}
     {drag?.drop?.marker&&<span className="dock-tab-insertion" style={{left:drag.drop.marker.x,top:drag.drop.marker.y,height:drag.drop.marker.height}}/>}
   </div>;
@@ -96,13 +117,13 @@ function SplitView({node, children, onResize}: {node: Split; children: ReactNode
     }} onPointerMove={event => {if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const rect = container.current!.getBoundingClientRect(); onResize(node.axis === 'row' ? (event.clientX - rect.left) / rect.width : (event.clientY - rect.top) / rect.height);}} onPointerUp={event => {event.currentTarget.releasePointerCapture(event.pointerId); document.body.classList.remove('resizing-panes');}} onLostPointerCapture={() => {resizing.current=false;document.body.classList.remove('resizing-panes');}}/>{children[1]}
   </div>;
 }
-function GroupView({group, dragging, drop, ...props}: Props & {group: TabGroup; dragging: boolean; drop:DockDrop|null}) {
-  const {state, space, onChange, onSelect, onClose, onCreate, render} = props;
+function GroupView({group, dragging, ...props}: Props & {group: TabGroup; dragging: boolean}) {
+  const {state, space, onChange, onSelect, onClose, onCreate} = props;
   const focused = space.dock.activeGroupId === group.id;
   const strip = useRef<HTMLDivElement>(null);
   useEffect(() => {strip.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({block: 'nearest', inline: 'nearest'});}, [group.activeId]);
   function focus() {if (!focused&&!dragging) onChange(dock => ({...dock, activeGroupId: group.id}));}
-  return <section className={`dock-group ${focused ? 'focused' : ''}`} aria-label={`分区：${space.dock.tabs.find(t => t.id === group.activeId)?.title || '新分区'}`} data-group-id={group.id} onPointerDownCapture={focus} onFocusCapture={focus}>
+  return <section className={`dock-group ${focused ? 'focused' : ''}`} aria-label={`分区：${space.dock.tabs.find(t => t.id === group.activeId)?.title || '新分区'}`} data-group-id={group.id} aria-owns={group.tabs.map(id=>`dock-panel-${space.id}-${id}`).join(' ')} onPointerDownCapture={focus} onFocusCapture={focus}>
     <header className="dock-group-header"><span className="dock-pane-handle" title="拖动整个分区" aria-hidden="true"><GripVertical size={13}/></span><div className="dock-tab-strip" role="tablist" aria-label="分区页签" ref={strip} onKeyDown={event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')]; const at = tabs.indexOf(document.activeElement as HTMLButtonElement); if (at < 0) return;
@@ -124,9 +145,8 @@ function GroupView({group, dragging, drop, ...props}: Props & {group: TabGroup; 
       })}
     </div><PaneMenu integrations={state.externalIntegrations||[]} onCreate={kind => onCreate(kind, group.id)} onSplit={axis => onChange(dock => splitDockGroup(dock, group.id, axis))} onMerge={() => onChange(mergeDock)} canSplit={groups(space.dock.root).length < 8} canMerge={space.dock.root.kind === 'split'}/>{!group.tabs.length && <button className="icon-button" aria-label="关闭空分区" onClick={() => onChange(dock => closeEmptyGroup(dock, group.id))}><X size={13}/></button>}</header>
     <div className="dock-group-content">
-      {group.tabs.map(id => {const tab = space.dock.tabs.find(t => t.id === id)!; return <div key={id} className={`dock-scene scene-${tab.kind}`} role="tabpanel" id={`dock-panel-${space.id}-${id}`} aria-labelledby={`dock-tab-${space.id}-${id}`} hidden={id !== group.activeId}>{render(tab, id === group.activeId && focused)}</div>;})}
       {!group.tabs.length && <div className="tool-empty"><p>从上方“＋”打开内容</p></div>}
-      {dragging && <div className="dock-drop-capture"/>}{drop&&!drop.marker&&<div className={`dock-drop-preview drop-${drop.edge||'center'}`}><span>{drop.edge?{left:'放到左侧',right:'放到右侧',top:'放到上方',bottom:'放到下方'}[drop.edge]:'合并到此分区'}</span></div>}
+      {dragging && <div className="dock-drop-capture"/>}
     </div>
   </section>;
 }

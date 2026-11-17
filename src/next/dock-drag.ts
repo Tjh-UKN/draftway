@@ -1,6 +1,6 @@
 import {groups,type DockState,type Edge} from './docking';
 export type DockDragItem={kind:'tab'|'group';id:string;label:string};
-export interface DockDrop {groupId:string;edge?:Edge;beforeId?:string;marker?:{x:number;y:number;height:number};}
+export interface DockDrop {groupId:string;edge?:Edge;beforeId?:string;marker?:{x:number;y:number;height:number};rect?:{left:number;top:number;width:number;height:number};}
 export function dockEdge(rect:{left:number;top:number;width:number;height:number},x:number,y:number):Edge|undefined {
   if(!rect.width||!rect.height)return;
   const across=(x-rect.left)/rect.width,down=(y-rect.top)/rect.height;
