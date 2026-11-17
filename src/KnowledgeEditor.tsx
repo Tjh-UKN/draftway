@@ -28,7 +28,7 @@ export default function KnowledgeEditor({initial,onClose,inline=false,draftKey,r
     },initial.archived?undefined:recovered);
   });
   const [,render]=useReducer(n=>n+1,0);const [source,setSource]=useState(!initial.body);const [closing,setClosing]=useState(false);const [details,setDetails]=useState(false);
-  const record=draft.note;const [format]=useState(()=>knowledgeFormat(initial));const markdown=format==='markdown';
+  const record=draft.note;const [format]=useState<ReturnType<typeof knowledgeFormat>>(()=>knowledgeFormat(initial));const markdown=format==='markdown';
   const cache=()=>{try{if(draft.dirty)sessionStorage.setItem(key,JSON.stringify({record:draft.note}));else sessionStorage.removeItem(key);}catch{/* Keep the in-memory draft if storage is full. */}};
   const flush=()=>draft.flush().finally(cache);const flushRef=useRef(flush);flushRef.current=flush;
   useImperativeHandle(ref,()=>({flush:()=>flushRef.current()}),[]);
