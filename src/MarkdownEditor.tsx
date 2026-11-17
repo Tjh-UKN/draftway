@@ -1,17 +1,41 @@
-import { useDeferredValue,useId,useRef,useState,type KeyboardEvent } from 'react';
-import { Bold, CheckSquare, Code2, Heading2, Italic, Link2, List, Quote, Table2 } from 'lucide-react';
+import {useEffect,useRef,useState} from 'react';
+import {Bold,Italic,Link2,List} from 'lucide-react';
+import {Compartment,EditorState} from '@codemirror/state';
+import {Decoration,EditorView,keymap,placeholder,ViewPlugin,type DecorationSet,type ViewUpdate} from '@codemirror/view';
+import {defaultKeymap,history,historyKeymap,indentWithTab} from '@codemirror/commands';
+import {markdown,markdownLanguage} from '@codemirror/lang-markdown';
+import {HighlightStyle,syntaxHighlighting,syntaxTree} from '@codemirror/language';
+import {tags} from '@lezer/highlight';
+import {highlightSelectionMatches,searchKeymap} from '@codemirror/search';
 import MarkdownView from './MarkdownView';
 import {insertMarkdown,type MarkdownAction} from './markdown';
-const actions=[{action:'heading',label:'插入标题',icon:Heading2},{action:'bold',label:'加粗',icon:Bold},{action:'italic',label:'斜体',icon:Italic},{action:'list',label:'无序列表',icon:List},{action:'checklist',label:'任务列表',icon:CheckSquare},{action:'quote',label:'引用',icon:Quote},{action:'code',label:'代码块',icon:Code2},{action:'link',label:'链接',icon:Link2},{action:'table',label:'表格',icon:Table2}] as const;
-export default function MarkdownEditor({value,onChange,onOpenLink,readOnly=false}:{value:string;onChange:(value:string)=>void;onOpenLink:(url:string)=>void;readOnly?:boolean}){
- const [mode,setMode]=useState<'edit'|'preview'|'split'>(readOnly?'preview':'edit');const textarea=useRef<HTMLTextAreaElement>(null);const deferred=useDeferredValue(value);const id=useId();
- function insert(action:MarkdownAction){if(readOnly)return;const el=textarea.current;const next=insertMarkdown(value,el?.selectionStart??value.length,el?.selectionEnd??value.length,action);onChange(next.value);requestAnimationFrame(()=>{textarea.current?.focus();textarea.current?.setSelectionRange(next.start,next.end);});}
- function keys(e:KeyboardEvent<HTMLTextAreaElement>){if(!(e.ctrlKey||e.metaKey))return;const key=e.key.toLowerCase();if(key==='b'||key==='i'){e.preventDefault();insert(key==='b'?'bold':'italic');}}
- return <section className="markdown-editor" aria-label="Markdown 笔记编辑器"><div className="markdown-editor-header"><span>Markdown</span><div className="markdown-mode-tabs" role="tablist" aria-label="笔记编辑模式">{([['edit','编辑'],['preview','预览'],['split','分屏']] as const).map(([key,label])=><button type="button" id={`${id}-${key}`} role="tab" aria-controls={`${id}-content`} aria-selected={mode===key} className={mode===key?'selected':''} key={key} onClick={()=>setMode(key)}>{label}</button>)}</div></div>
-  {mode!=='preview'&&!readOnly&&<div className="markdown-format-toolbar" aria-label="Markdown 格式工具">{actions.map(({action,label,icon:Icon})=><button type="button" className="icon-button" title={label} aria-label={label} key={action} onMouseDown={e=>e.preventDefault()} onClick={()=>insert(action)}><Icon size={15}/></button>)}<span>Ctrl B / Ctrl I</span></div>}
-  <div className={`markdown-edit-panes ${mode}`} id={`${id}-content`} role="tabpanel" aria-labelledby={`${id}-${mode}`}>
-   {mode!=='preview'&&<label className="markdown-source-field"><span className="small muted">笔记正文</span><textarea ref={textarea} className="markdown-source note-editor" value={value} onChange={e=>onChange(e.target.value)} onKeyDown={keys} readOnly={readOnly} maxLength={500000} spellCheck={false} placeholder="# 标题\n\n记录想法、过程和经验……" rows={12}/></label>}
-   {mode!=='edit'&&<div className="markdown-live-preview" aria-label="Markdown 预览" aria-busy={value!==deferred}>{deferred?<MarkdownView value={deferred} onOpenLink={onOpenLink}/>:<p className="small muted empty-inline">写一点内容，就能看到排版预览。</p>}</div>}
-  </div><div className="markdown-editor-status"><span>标题 · 列表 · 代码块 · 表格 · 引用</span><span>{value.length.toLocaleString()} 字符</span></div>
+import {markdownDecorations} from './markdown-live';
+import './note-editor.css';
+
+const noteHighlight=HighlightStyle.define([{tag:tags.heading,fontWeight:'600',color:'var(--text)'},{tag:tags.strong,fontWeight:'600'},{tag:tags.emphasis,fontStyle:'italic'},{tag:tags.strikethrough,textDecoration:'line-through'},{tag:[tags.monospace,tags.url],fontFamily:'Consolas,monospace',color:'var(--muted)'},{tag:tags.link,textDecoration:'underline'},{tag:tags.processingInstruction,color:'var(--faint)'}]);
+
+const livePreview=ViewPlugin.fromClass(class {
+ decorations:DecorationSet;
+ constructor(view:EditorView){this.decorations=this.build(view);}
+ update(update:ViewUpdate){if(update.docChanged||update.selectionSet||update.viewportChanged||update.focusChanged||syntaxTree(update.startState)!==syntaxTree(update.state))this.decorations=this.build(update.view);}
+ build(view:EditorView){return Decoration.set(markdownDecorations(view.state,view.hasFocus,view.visibleRanges).map(range=>range.line?Decoration.line({class:range.className}).range(range.from):Decoration.replace({}).range(range.from,range.to)),true);}
+},{decorations:plugin=>plugin.decorations});
+
+export default function MarkdownEditor({value,onChange,onOpenLink,readOnly=false,allowRemoteImages=true,autoFocus=false}:{value:string;onChange:(value:string)=>void;onOpenLink:(url:string)=>void;readOnly?:boolean;allowRemoteImages?:boolean;autoFocus?:boolean}){
+ const [mode,setMode]=useState<'live'|'source'|'reading'>(readOnly?'reading':'live');const host=useRef<HTMLDivElement>(null);const reading=useRef<HTMLDivElement>(null);const priorMode=useRef(mode);const view=useRef<EditorView|null>(null);const options=useRef({onChange,readOnly});options.current={onChange,readOnly};const live=useRef(new Compartment());const readonly=useRef(new Compartment());
+ function insert(action:MarkdownAction){const editor=view.current;if(!editor||options.current.readOnly)return;const selection=editor.state.selection.main;const next=insertMarkdown(editor.state.doc.toString(),selection.from,selection.to,action);editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:next.value},selection:{anchor:next.start,head:next.end},scrollIntoView:true});editor.focus();}
+ useEffect(()=>{
+  const editor=new EditorView({parent:host.current!,state:EditorState.create({doc:value,extensions:[history(),markdown({base:markdownLanguage}),syntaxHighlighting(noteHighlight),EditorView.lineWrapping,highlightSelectionMatches(),EditorState.phrases.of({'Find':'查找','Replace':'替换','next':'下一个','previous':'上一个','all':'全部','match case':'区分大小写','regexp':'正则表达式','by word':'全词匹配','replace':'替换','replace all':'全部替换','close':'关闭','No matches':'没有匹配项','replaced $ matches':'已替换 $ 处'}),EditorView.contentAttributes.of({'aria-label':'笔记正文','aria-multiline':'true',spellcheck:'false'}),placeholder('开始写作…'),readonly.current.of(EditorState.readOnly.of(readOnly)),live.current.of(readOnly?[]:livePreview),keymap.of([{key:'Mod-b',run:()=>{insert('bold');return true;}},{key:'Mod-i',run:()=>{insert('italic');return true;}},...defaultKeymap,...historyKeymap,...searchKeymap,indentWithTab]),EditorView.updateListener.of(update=>{if(update.docChanged)options.current.onChange(update.state.doc.toString());})]})});view.current=editor;
+  if(autoFocus&&!readOnly)editor.focus();
+  return()=>{view.current=null;editor.destroy();};
+ },[]);
+ useEffect(()=>{const editor=view.current;if(editor&&value!==editor.state.doc.toString())editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:value}});},[value]);
+ useEffect(()=>{view.current?.dispatch({effects:[live.current.reconfigure(mode==='live'?livePreview:[]),readonly.current.reconfigure(EditorState.readOnly.of(readOnly))]});if(mode!=='reading')view.current?.requestMeasure();},[mode,readOnly]);
+ useEffect(()=>{if(mode!==priorMode.current){if(mode==='reading')reading.current?.focus();else view.current?.focus();priorMode.current=mode;}},[mode]);
+ return <section className={`note-markdown-editor ${mode}`} aria-label="Markdown 笔记编辑器" onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='e'){event.preventDefault();setMode(old=>old==='reading'?(readOnly?'source':'live'):'reading');}}}>
+  <header className="note-writing-tools"><div className="note-mode-tabs" role="tablist" aria-label="笔记编辑模式">{([['live','实时预览'],['source','源码'],['reading','阅读']] as const).filter(([key])=>!readOnly||key!=='live').map(([key,label])=><button type="button" role="tab" aria-selected={mode===key} key={key} onClick={()=>setMode(key)}>{label}</button>)}</div>{mode!=='reading'&&!readOnly&&<div className="note-format-tools">{([{action:'bold',label:'加粗',icon:Bold},{action:'italic',label:'斜体',icon:Italic},{action:'list',label:'列表',icon:List},{action:'link',label:'链接',icon:Link2}] as const).map(({action,label,icon:Icon})=><button type="button" title={label} aria-label={label} key={action} onMouseDown={e=>e.preventDefault()} onClick={()=>insert(action)}><Icon size={14}/></button>)}</div>}</header>
+  <div ref={host} className="note-cm-host" hidden={mode==='reading'}/>
+  {mode==='reading'&&<div ref={reading} className="note-reading" tabIndex={0}>{value?<MarkdownView value={value} allowRemoteImages={allowRemoteImages} onOpenLink={onOpenLink}/>:<p className="muted">空白笔记</p>}</div>}
+  <footer className="note-writing-status"><span>Ctrl E 切换阅读 · Ctrl F 查找</span><span>{value.length.toLocaleString()} 字符</span></footer>
  </section>;
 }

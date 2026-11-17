@@ -30,7 +30,14 @@
     "desktop:next:release": "node scripts/desktop.mjs build --bundles nsis --config scripts/next-config.json"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
     "@excalidraw/excalidraw": "0.18.1",
+    "@lezer/highlight": "^1.2.5",
     "@tanstack/react-virtual": "3.14.26",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-autostart": "^2.5.0",
