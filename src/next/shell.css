@@ -66,3 +66,7 @@
 .graph-hint.graph-edit-error{max-width:calc(100% - 48px);bottom:65px;white-space:normal;overflow:visible;font-size:11px;background:#fffffff2;padding:6px 9px;border-radius:5px}
 
 .graph-node.multi-selected{border-color:#666;background:#f8f8f8}.graph-selection-box{position:absolute;pointer-events:none;border:1px solid #777;background:#5551;z-index:15}
+
+.dock-pane-handle{display:flex;align-items:center;justify-content:center;width:12px;align-self:stretch;color:#b6b6b6;cursor:grab;flex-shrink:0;touch-action:none}.dock-pane-handle:hover{color:#555}.dock-tab{touch-action:none}.dragging-dock,.dragging-dock *{cursor:grabbing!important;user-select:none!important}.dock-drag-ghost{position:fixed;z-index:2000;pointer-events:none;max-width:240px;display:flex;align-items:center;gap:8px;padding:9px 14px;border:1px solid #d8d8d8;border-radius:7px;background:#fffffff5;box-shadow:0 8px 25px #0002;font-size:11px;white-space:nowrap}.dock-drag-ghost span{overflow:hidden;text-overflow:ellipsis}.dock-tab-insertion{position:fixed;width:2px;background:#6c83a4;pointer-events:none;z-index:1900;border-radius:2px}.dock-drop-preview{background:#dce4ef75;border:1px solid #9eacc0}.dock-group-header{cursor:grab}.dock-group-header button{cursor:pointer}
+
+.dock-scene .transcript:has(>.empty-state){padding:0;overflow:hidden}.dock-scene .transcript>.empty-state{min-height:0;padding:8px;gap:0}.dock-scene .transcript>.empty-state>svg{display:none}.dock-scene .transcript>.empty-state>h2{font-size:13px;margin:0}

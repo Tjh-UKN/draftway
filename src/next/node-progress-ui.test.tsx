@@ -10,11 +10,11 @@ describe('node information without task progress UI',()=>{
     const node=space.nodes.find(n=>n.id==='act')!;
     const html=renderToStaticMarkup(<NodeOverview space={space} node={node} onDue={()=>{}} onOpen={()=>{}} onAdd={()=>{}}/>);
     expect(html).toContain('添加子任务');expect(html).toContain('计划完成日期');
-    expect(html).not.toContain('进度');expect(html).not.toContain('%');expect(html).not.toContain('checkbox');expect(html).not.toContain('range');
+    expect(html).not.toContain('进度');expect(html.replace(/<[^>]+>/g,'')).not.toContain('%');expect(html).not.toContain('checkbox');expect(html).not.toContain('range');
     expect(node.progress).toBe(100);
   });
   it('does not expose task percentages in the workspace event list',()=>{
     const html=renderToStaticMarkup(<TasksView space={space} onOpen={()=>{}}/>);
-    expect(html).toContain('正文');expect(html).not.toContain('%');expect(html).not.toContain('进度');expect(html).not.toContain('checkbox');
+    expect(html).toContain('正文');expect(html.replace(/<[^>]+>/g,'')).not.toContain('%');expect(html).not.toContain('进度');expect(html).not.toContain('checkbox');
   });
 });

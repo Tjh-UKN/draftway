@@ -61,7 +61,7 @@ export function closeDockTab(dock: DockState, id: string): DockState {
 export function moveDockTab(dock: DockState, id: string, targetId: string, beforeId?: string, edge?: Edge, newId: string = crypto.randomUUID()): DockState {
   const source = groups(dock.root).find(g => g.tabs.includes(id));
   const target = groups(dock.root).find(g => g.id === targetId);
-  if (!source || !target || (!edge && id === beforeId) || (edge && (groups(dock.root).length >= 8 || (source.id === targetId && source.tabs.length < 2)))) return dock;
+  if (!source || !target || (!edge && id === beforeId) || (edge && ((groups(dock.root).length >= 8 && source.tabs.length > 1) || (source.id === targetId && source.tabs.length < 2)))) return dock;
   let root = mapTree(dock.root, source.id, n => {
     const group = n as TabGroup; const tabs = group.tabs.filter(t => t !== id);
     return {...group, tabs, activeId: group.activeId === id ? [...dock.recent].reverse().find(t => tabs.includes(t)) || tabs.at(-1) || '' : group.activeId};
@@ -82,6 +82,18 @@ export function moveDockTab(dock: DockState, id: string, targetId: string, befor
 export function resizeDock(dock: DockState, id: string, ratio: number): DockState {
   if (!Number.isFinite(ratio)) return dock;
   return {...dock, root: mapTree(dock.root, id, n => n.kind === 'split' ? {...n, ratio: Math.min(.85, Math.max(.15, ratio))} : n)};
+}
+export function moveDockGroup(dock:DockState,sourceId:string,targetId:string,edge?:Edge,splitId:string=crypto.randomUUID()):DockState {
+  const all=groups(dock.root),source=all.find(g=>g.id===sourceId),target=all.find(g=>g.id===targetId);
+  if(!source?.tabs.length||!target||sourceId===targetId)return dock;
+  const detached=prune(mapTree(dock.root,sourceId,n=>({...n as TabGroup,tabs:[],activeId:''})),sourceId)!;
+  const root=mapTree(detached,targetId,n=>{
+    const group=n as TabGroup;
+    if(!edge)return {...group,tabs:[...group.tabs,...source.tabs],activeId:source.activeId};
+    const first=edge==='left'||edge==='top';
+    return {kind:'split',id:`split-${splitId}`,axis:edge==='left'||edge==='right'?'row':'column',ratio:.5,children:first?[source,group]:[group,source]};
+  });
+  return {...dock,root,activeGroupId:edge?source.id:target.id,recent:touch(dock.recent,source.activeId)};
 }
 export function splitDockGroup(dock: DockState, groupId: string, axis: Split['axis'], id: string = crypto.randomUUID()): DockState {
   const group = groups(dock.root).find(g => g.id === groupId);

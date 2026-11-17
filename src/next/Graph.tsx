@@ -1,6 +1,7 @@
 import {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {ArrowLeft, Check, ChevronRight, Code2, Expand, FileText, Focus, Folder, Info, Layers, Lightbulb, MessageSquare, Minus, Plus, Redo2, ScanLine, Trash2, Undo2, X} from 'lucide-react';
+import {ArrowLeft, Check, ChevronRight, Expand, Focus, Info, MessageSquare, Minus, Plus, Redo2, ScanLine, Trash2, Undo2, X} from 'lucide-react';
 import {isTask, placeNodes, taskChildren, type MindNode, type NodeKind} from './model';
+import NodeDot from '../NodeDot';
 import type {GraphState, Workspace} from './core';
 import type {NodeDrop,NodeClipboard,NodeSelection} from './node-operations';
 
@@ -13,9 +14,8 @@ const typing=(target:EventTarget|null)=>target instanceof Element&&!!target.clos
 function clipboardAccess<T>(action:Promise<T>):Promise<T>{return new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('剪贴板访问超时')),1200);action.then(value=>{clearTimeout(timer);resolve(value);},error=>{clearTimeout(timer);reject(error);});});}
 
 export const nodeKindNames: Record<NodeKind, string> = {root: '工作区', idea: '想法', analysis: '分析', event: '任务', document: '文档', code: '代码', artifact: '产物'};
-export function NodeGlyph({kind, size = 18}: {kind: NodeKind; size?: number}) {
-  const Icon = {root: Folder, idea: Lightbulb, analysis: ScanLine, event: Check, document: FileText, code: Code2, artifact: Layers}[kind];
-  return <Icon size={size}/>;
+export function NodeGlyph({kind}: {kind: NodeKind; size?: number}) {
+  return <NodeDot kind={kind}/>;
 }
 export const placeWorkspaceNodes = (space: Workspace) => placeNodes(space.nodes.map(n => ({...n, side: 1 as const})), space.graph.collapsed, space.graph.focusId);
 export function GraphView({space, onChange, onAdd, onRename, onInspect, autoEditId, sessionCounts,editing}: {space: Workspace; onChange: (graph: GraphState) => void; onAdd: (parentId: string) => void; onRename: (id: string, title: string) => void; onInspect: (id: string) => void; autoEditId?: string | null; sessionCounts: Record<string, number>;editing:MapCommands}) {
@@ -220,5 +220,5 @@ export function NodeInspector({space, node, onEditBody, onClose, onFocus, onDele
 
 export function TasksView({space, onOpen}: {space: Workspace; onOpen: (nodeId: string) => void}) {
   const tasks = space.nodes.filter(isTask);
-  return <div className="content-page"><div className="page-heading"><h2>任务</h2><span className="muted">与图谱使用同一条记录</span></div>{tasks.map(node => <button className="task-row" key={node.id} onClick={() => onOpen(node.id)}><Lightbulb size={16}/><span><strong>{node.title}</strong><small>{node.body || ''}</small></span><ChevronRight size={15}/></button>)}{!tasks.length && <p className="muted">在节点信息中添加子任务。</p>}</div>;
+  return <div className="content-page"><div className="page-heading"><h2>任务</h2><span className="muted">与图谱使用同一条记录</span></div>{tasks.map(node => <button className="task-row" key={node.id} onClick={() => onOpen(node.id)}><NodeGlyph kind={node.kind}/><span><strong>{node.title}</strong><small>{node.body || ''}</small></span><ChevronRight size={15}/></button>)}{!tasks.length && <p className="muted">在节点信息中添加子任务。</p>}</div>;
 }
