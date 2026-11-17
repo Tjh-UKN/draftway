@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useReducer, useRef, useState, type ReactNode} from 'react';
+import {useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode} from 'react';
 import {BookOpen, Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, Plus, Search, Settings2, Terminal, X} from 'lucide-react';
 import {addSubtask, closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, mapGraph, openMapTab, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, reviewUrl, editNodeBody, renameMapNode, sessionNodeIds, shellStorageKey, updateMapGraph, updateWorkspace, type AgentSession, type GraphState, type Notice, type Workspace, type WorkbenchState} from './core';
 import {reconcileSessions} from './adapters';
@@ -63,6 +63,7 @@ export default function Workbench() {
   const knowledge=useKnowledgeCollection(state,persistence.ready&&!persistence.readOnly&&persistence.saved);
   const nativeBrowsers = useNativeBrowserHost(state, change, persistence.ready);
   const agents = useNativeAgents(state, change, persistence.ready,!knowledgeOpen);
+  const agentRuntime=useMemo(()=>agents?{...agents,readOnly:persistence.readOnly,backends:persistence.readOnly?[]:agents.backends}:null,[agents,persistence.readOnly]);
   const background = useNativeBackground(state, change, persistence.ready, openNotice);
   const mapError = useMapOperations(state, change, persistence.ready);
   const updateSpace = (update: (space: Workspace) => Workspace) => change(s => updateWorkspace(s, space.id, update));
@@ -193,7 +194,7 @@ export default function Workbench() {
     </div>;
   }
   if (!persistence.ready) return <div className="workbench-loading">正在恢复工作区…</div>;
-  return <AgentRuntimeContext.Provider value={agents?{...agents,readOnly:persistence.readOnly,backends:persistence.readOnly?[]:agents.backends}:null}><div className="workbench-shell map-first-shell">
+  return <AgentRuntimeContext.Provider value={agentRuntime}><div className="workbench-shell map-first-shell">
     <aside className="shell-sidebar" aria-label="主导航"><div className="sidebar-brand"><Star/><span>北极星</span></div>
       <nav className="global-navigation"><button onClick={() => {setKnowledgeOpen(false);setDialog('workspace');}} disabled={state.spaces.length >= 20}><Plus size={17}/>新建工作区</button><button onClick={() => setDialog('search')}><Search size={17}/>搜索<kbd>Ctrl K</kbd></button><button className={knowledgeOpen?'active':''} aria-current={knowledgeOpen?'page':undefined} onClick={()=>{setKnowledgeVisited(true);setKnowledgeOpen(true);setDialog(null);setInbox(false);}}><BookOpen size={17}/>个人知识库</button></nav>
       <div className="sidebar-label">工作区</div><nav className="workspace-list" aria-label="工作区">{state.spaces.map((item, index) => {
@@ -204,7 +205,7 @@ export default function Workbench() {
     </aside>
     <div className="shell-body"><header className="workspace-heading dock-workspace-heading"><div className="workspace-title-row"><h1>{knowledgeOpen?'个人知识库':space.name}</h1><div className="workspace-actions">{!knowledgeOpen&&<><button className={`session-panel-toggle ${space.sessionPanelOpen ? 'active' : ''}`} aria-expanded={space.sessionPanelOpen} aria-controls="workspace-session-panel" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: !w.sessionPanelOpen}))}>会话记录（{sessions.length}）<ChevronDown size={14}/>{sessions.some(s => s.unread) && <i className="unread-dot"/>}</button><span className="vertical-divider"/></>}<button className="icon-button bell-button" aria-label={`通知${unread ? `，${unread}条未读` : ''}`} aria-expanded={inbox} onClick={() => setInbox(v => !v)}><Bell size={18}/>{!!unread && <span>{unread}</span>}</button>{!knowledgeOpen&&<button className="text-button" onClick={() => setDialog('customize')}><Settings2 size={16}/><span>自定工作区</span></button>}</div></div></header>
     <div className="workspace-body workspace-map-body dock-workspace-body">
-      <div className="workspace-content-host" hidden={knowledgeOpen}><DockLayout key={space.id} state={state} space={space} onChange={update => updateSpace(w => ({...w, dock: update(w.dock)}))} onSelect={selectTab} onClose={closeTab} onCreate={createTab} render={(tab, active) => {
+      <div className="workspace-content-host" hidden={knowledgeOpen}><DockLayout key={space.id} state={state} space={space} onChange={update => updateSpace(w => ({...w, dock: update(w.dock)}))} onSelect={selectTab} onClose={closeTab} onCreate={createTab} render={(tab, active, visible) => {
         if (tab.kind === 'map') return mapView(tab);
         if (tab.kind === 'events') return <TasksView space={space} onOpen={openNode}/>;
         if (tab.kind === 'browser') return <BrowserView tab={tab} active={active&&!knowledgeOpen} onChange={updateTab} native={nativeBrowsers}/>;
@@ -213,7 +214,7 @@ export default function Workbench() {
         if (tab.kind === 'business') return <BusinessView workspaceId={space.id} tab={tab} active={active&&!knowledgeOpen} onChange={updateTab} flush={persistence.flush} onWorkspace={()=>change(s=>selectWorkspaceTab(s,space.id))}/>;
         if (tab.kind === 'report') return <ReportView workspaceId={space.id} tab={tab} onDashboard={() => updateSpace(w => ({...w, dock: openDockTab(w.dock, {id: w.dock.tabs.find(t=>t.kind==='browser'&&t.url===tab.url)?.id||crypto.randomUUID(), kind: 'browser', title: 'PR 检视看板', url: tab.url})}))}/>;
         const session = state.sessions.find(s => s.id === tab.sessionId)!;
-        return <SessionView state={state} session={session} active={active&&!knowledgeOpen} change={change} onNode={id => {const nodeId = id || session.nodeId; if (nodeId) openNode(nodeId);}}/>;
+        return <SessionView state={state} session={session} active={active&&!knowledgeOpen} visible={visible&&!knowledgeOpen} change={change} onNode={id => {const nodeId = id || session.nodeId; if (nodeId) openNode(nodeId);}}/>;
       }}/></div>
       {knowledgeVisited&&<div className="personal-knowledge-host" hidden={!knowledgeOpen}>{knowledge.error&&<p className="knowledge-collection-error" role="alert">{knowledge.error}<button className="text-button" onClick={knowledge.retry}>重试入库</button></p>}<BusinessView workspaceId="personal" tab={personalKnowledgeTab} active={knowledgeOpen} onChange={tab=>{if(tab.kind==='business'&&tab.page!=='knowledge'){setKnowledgeVisited(false);openBusiness(tab.page);}}} flush={persistence.flush} onWorkspace={()=>setKnowledgeOpen(false)}/></div>}
       {!knowledgeOpen&&space.sessionPanelOpen && <aside className="workspace-session-panel" id="workspace-session-panel" aria-label="当前工作区会话"><header><h2>会话记录（{sessions.length}）</h2><button className="icon-button" aria-label="收起会话面板" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: false}))}><X size={16}/></button></header><p className="quiet-note">{space.name} · 关闭页签后仍可在这里重新打开</p><div className="workspace-session-list">{sessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!sessions.length && <Empty title="还没有会话"><p>点“＋”选择后端开始。</p></Empty>}</div></aside>}

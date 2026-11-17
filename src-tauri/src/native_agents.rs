@@ -9,6 +9,12 @@ mod process;
 
 pub type Result<T> = std::result::Result<T, String>;
 pub type Sink = Arc<dyn Fn(&AgentSession) + Send + Sync>;
+pub type TranscriptSink = Arc<dyn Fn(&TranscriptFrame) + Send + Sync>;
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptFrame {pub id:String,pub base_revision:u64,pub revision:u64,pub messages:Vec<Message>}
+#[derive(Default)]
+struct Checkpoint {saved_at:u64,base_revision:u64,dirty:bool,unsaved:bool}
 fn now() -> u64 {chrono::Utc::now().timestamp_millis() as u64}
 fn valid_id(id: &str) -> bool {!id.is_empty() && id.len() <= 100 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')}
 #[derive(Clone, Serialize, Deserialize)]
@@ -56,7 +62,8 @@ impl Rpc {
 }
 pub struct AgentHost {
     root: PathBuf, db: Mutex<Connection>, sessions: Mutex<HashMap<String, AgentSession>>, runtimes: Mutex<HashMap<String, Arc<Rpc>>>, sink: Sink,
-    checkpoints: Mutex<HashMap<String, (u64, u64)>>,
+    checkpoints: Mutex<HashMap<String, Checkpoint>>,
+    transcript_sink:Mutex<Option<TranscriptSink>>,
     tools: Mutex<Option<WorkspaceTools>>,
     maintenance: AtomicBool,
 }
@@ -74,8 +81,10 @@ impl AgentHost {
             if interrupted {session.requests.clear(); session.revision += 1;}
             sessions.insert(session.id.clone(), session);
         }}
-        let host = Arc::new(Self {root, db: Mutex::new(db), sessions: Mutex::new(sessions), runtimes: Mutex::new(HashMap::new()), sink, checkpoints: Mutex::new(HashMap::new()), tools: Mutex::new(None),maintenance:AtomicBool::new(false)});
+        let host = Arc::new(Self {root, db: Mutex::new(db), sessions: Mutex::new(sessions), runtimes: Mutex::new(HashMap::new()), sink, checkpoints: Mutex::new(HashMap::new()), transcript_sink:Mutex::new(None),tools: Mutex::new(None),maintenance:AtomicBool::new(false)});
         for session in host.list()? {host.persist(&session)?;}
+        let owner=Arc::downgrade(&host);
+        std::thread::spawn(move || loop {std::thread::sleep(Duration::from_millis(33));let Some(host)=owner.upgrade() else {break;};host.flush_streams();});
         Ok(host)
     }
     fn persist(&self, session: &AgentSession) -> Result<()> {
@@ -94,21 +103,51 @@ impl AgentHost {
         Ok(())
     }
     pub fn configure_tools(&self, tools: WorkspaceTools) {if let Ok(mut config)=self.tools.lock(){*config=Some(tools);}}
+    pub fn configure_transcript_sink(&self,sink:TranscriptSink){*self.transcript_sink.lock().unwrap()=Some(sink);}
     fn update(&self, id: &str, change: impl FnOnce(&mut AgentSession)) -> Result<AgentSession> {
         self.update_stream(id, false, change)?.ok_or_else(||"执行记录快照未发布".into())
     }
     fn update_stream(&self, id: &str, stream: bool, change: impl FnOnce(&mut AgentSession)) -> Result<Option<AgentSession>> {
-        let (save, publish) = {let mut clocks = self.checkpoints.lock().map_err(|e|e.to_string())?; let clock = clocks.entry(id.into()).or_default(); let at = now(); let save = !stream || at.saturating_sub(clock.0) >= 1000; let publish = !stream || at.saturating_sub(clock.1) >= 100; if save {clock.0=at;} if publish {clock.1=at;} (save,publish)};
         let (snapshot, saved) = {
             let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
             if self.maintenance.load(Ordering::SeqCst){return Err("正在恢复会话，请稍后重试".into());}
             let session = sessions.get_mut(id).ok_or("会话不存在")?; change(session); session.revision += 1;
-            let saved = if save {self.persist(session)} else {Ok(())};
+            let mut clocks=self.checkpoints.lock().map_err(|e|e.to_string())?;let clock=clocks.entry(id.into()).or_default();
+            if stream {clock.dirty=true;clock.unsaved=true;return Ok(None);}
+            *clock=Checkpoint{saved_at:now(),base_revision:session.revision,..Default::default()};
+            let saved = self.persist(session);
             if let Err(error) = &saved {session.error = Some(format!("执行记录保存失败：{error}")); session.requests.clear(); if let Some(run) = session.runs.last_mut() {run.state = "failed".into(); run.finished_at = Some(now()); run.error = session.error.clone();}}
-            (if publish||saved.is_err(){Some(session.clone())}else{None}, saved)
+            (Some(session.clone()), saved)
         };
         if saved.is_err() {self.runtimes.lock().unwrap().remove(id);}
         if let Some(snapshot)=&snapshot{(self.sink)(snapshot);} saved?; Ok(snapshot)
+    }
+    fn flush_streams(&self){
+        let sink=self.transcript_sink.lock().unwrap().clone();let mut frames=Vec::new();let mut snapshots=Vec::new();let mut failed=Vec::new();
+        {
+            let mut sessions=self.sessions.lock().unwrap();if self.maintenance.load(Ordering::SeqCst){return;}
+            let mut clocks=self.checkpoints.lock().unwrap();let at=now();
+            for (id,clock) in clocks.iter_mut(){
+                let Some(session)=sessions.get_mut(id) else {continue;};
+                if clock.unsaved&&at.saturating_sub(clock.saved_at)>=1000 {
+                    clock.saved_at=at;clock.unsaved=false;
+                    if let Err(error)=self.persist(session){
+                        session.error=Some(format!("执行记录保存失败：{error}"));session.requests.clear();session.revision+=1;
+                        if let Some(run)=session.runs.last_mut(){run.state="failed".into();run.finished_at=Some(at);run.error=session.error.clone();}
+                        clock.dirty=false;clock.base_revision=session.revision;failed.push(id.clone());snapshots.push(session.clone());continue;
+                    }
+                }
+                if !clock.dirty {continue;}clock.dirty=false;
+                if sink.is_some(){
+                    // Only this turn crosses IPC; historical messages remain in the transcript store.
+                    let start=session.messages.iter().rposition(|m|m.role=="user").map_or(0,|i|i+1);
+                    frames.push(TranscriptFrame{id:id.clone(),base_revision:clock.base_revision,revision:session.revision,messages:session.messages[start..].to_vec()});
+                }else{snapshots.push(session.clone());}
+            }
+        }
+        for id in failed{self.runtimes.lock().unwrap().remove(&id);}
+        for snapshot in snapshots{(self.sink)(&snapshot);}
+        if let Some(sink)=sink{for frame in frames{sink(&frame);}}
     }
     pub fn create(&self, id: String, workspace_id: String, node_id: Option<String>, backend: String, title: String, cwd: Option<String>) -> Result<AgentSession> {
         if !valid_id(&id) || !valid_id(&workspace_id) || node_id.as_ref().is_some_and(|id| !valid_id(id)) {return Err("会话归属标识无效".into());}
@@ -329,6 +368,33 @@ mod tests {
     #[test]
     fn restore_requires_idle_agents_and_blocks_updates_until_cancelled(){
         let root=std::env::temp_dir().join(format!("northstar-agent-restore-{}",uuid::Uuid::new_v4()));let host=AgentHost::open(root,Arc::new(|_|{})).unwrap();host.sessions.lock().unwrap().insert("s".into(),record());assert!(host.prepare_restore().is_err());host.update("s",|s|s.runs[0].state="cancelled".into()).unwrap();host.prepare_restore().unwrap();assert!(host.update("s",|s|s.title="overwrite".into()).is_err());assert_eq!(host.session("s").unwrap().title,"test");host.cancel_restore();host.update("s",|s|s.title="after".into()).unwrap();
+    }
+    #[test]
+    fn sparse_stream_publishes_without_another_token_and_omits_history() {
+        let root=std::env::temp_dir().join(format!("northstar-stream-frame-{}",uuid::Uuid::new_v4()));
+        let host=AgentHost::open(root,Arc::new(|_|{})).unwrap();let mut session=record();
+        session.messages=(0..1000).map(|i|Message{id:format!("old-{i}"),role:"assistant".into(),text:"history ".repeat(100),at:0}).collect();
+        session.messages.push(Message{id:"run-user".into(),role:"user".into(),text:"raw prompt".into(),at:1});
+        host.sessions.lock().unwrap().insert("s".into(),session);let base=host.update("s",|_|{}).unwrap().revision;
+        let (tx,rx)=mpsc::channel();host.configure_transcript_sink(Arc::new(move|frame|{let _=tx.send(frame.clone());}));
+        host.update_stream("s",true,|s|apply_codex_event(s,"item/agentMessage/delta",&json!({"threadId":"thread","itemId":"a","delta":"first token"}))).unwrap();
+        let frame=rx.recv_timeout(Duration::from_millis(500)).expect("a paused stream must still reach the UI");
+        assert_eq!(frame.base_revision,base);assert_eq!(frame.messages.len(),1);assert_eq!(frame.messages[0].text,"first token");
+        let compact=serde_json::to_vec(&frame).unwrap().len();let full=serde_json::to_vec(&host.session("s").unwrap()).unwrap().len();
+        assert!(compact*100<full,"stream IPC must not carry the history");
+    }
+    #[test]
+    fn quiet_stream_is_checkpointed_and_disk_failure_stops_it() {
+        let root=std::env::temp_dir().join(format!("northstar-stream-checkpoint-{}",uuid::Uuid::new_v4()));
+        let host=AgentHost::open(root,Arc::new(|_|{})).unwrap();host.sessions.lock().unwrap().insert("s".into(),record());
+        host.update_stream("s",true,|s|apply_codex_event(s,"item/agentMessage/delta",&json!({"threadId":"thread","itemId":"a","delta":"saved partial reply"}))).unwrap();
+        host.flush_streams();
+        let saved:String=host.db.lock().unwrap().query_row("select data from agent_sessions where id='s'",[],|row|row.get(0)).unwrap();
+        assert!(saved.contains("saved partial reply"));
+        host.db.lock().unwrap().execute_batch("PRAGMA query_only=ON").unwrap();
+        host.update_stream("s",true,|s|s.messages[0].text.push_str(" unsaved")).unwrap();
+        host.checkpoints.lock().unwrap().get_mut("s").unwrap().saved_at=0;host.flush_streams();
+        assert_eq!(host.session("s").unwrap().runs[0].state,"failed");assert!(host.session("s").unwrap().error.unwrap().contains("保存失败"));
     }
     #[test]
     fn stream_is_coalesced_but_terminal_update_flushes_every_delta() {

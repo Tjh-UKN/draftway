@@ -43,11 +43,13 @@ fn close_html_preview(previews:tauri::State<'_,knowledge::HtmlPreviews>,token:St
 #[tauri::command]
 async fn save_shell_state(state: tauri::State<'_, AppState>, agents:tauri::State<'_,Arc<native_agents::AgentHost>>, snapshot: Value) -> Result<()> {workspace_state::save(&state.store, &snapshot)?;agents.reconcile_nodes(&snapshot)}
 #[tauri::command]
-async fn agent_backends() -> Vec<native_agents::Backend> {native_agents::backends()}
+async fn agent_backends() -> Result<Vec<native_agents::Backend>> {tauri::async_runtime::spawn_blocking(native_agents::backends).await.map_err(error)}
 #[tauri::command]
 async fn agent_list(state: tauri::State<'_, Arc<native_agents::AgentHost>>) -> Result<Vec<native_agents::AgentSession>> {state.list()}
 #[tauri::command]
-async fn agent_create(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, workspace_id: String, node_id: Option<String>, backend: String, title: String, cwd: Option<String>) -> Result<native_agents::AgentSession> {state.create(id, workspace_id, node_id, backend, title, cwd)}
+async fn agent_get(state: tauri::State<'_, Arc<native_agents::AgentHost>>,id:String) -> Result<native_agents::AgentSession> {state.session(&id)}
+#[tauri::command]
+async fn agent_create(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, workspace_id: String, node_id: Option<String>, backend: String, title: String, cwd: Option<String>) -> Result<native_agents::AgentSession> {let host=state.inner().clone();tauri::async_runtime::spawn_blocking(move||host.create(id, workspace_id, node_id, backend, title, cwd)).await.map_err(error)?}
 #[tauri::command]
 async fn agent_send(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, run_id: String, text: String) -> Result<native_agents::AgentSession> {state.inner().send(&id, run_id, text)}
 #[tauri::command]
@@ -67,9 +69,9 @@ async fn git_changed_files(state: tauri::State<'_, AppState>, workspace_id: Stri
 #[tauri::command]
 async fn git_file_diff(state: tauri::State<'_, AppState>, workspace_id: String, file: String) -> Result<Vec<resources::TextFile>> {resources::git_diff(&state.store,&workspace_id,&file)}
 #[tauri::command]
-async fn agent_stop(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String) -> Result<native_agents::AgentSession> {state.stop(&id)}
+async fn agent_stop(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String) -> Result<native_agents::AgentSession> {let host=state.inner().clone();tauri::async_runtime::spawn_blocking(move||host.stop(&id)).await.map_err(error)?}
 #[tauri::command]
-async fn agent_respond(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, request_id: String, answer: Value) -> Result<native_agents::AgentSession> {state.respond(&id, &request_id, answer)}
+async fn agent_respond(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, request_id: String, answer: Value) -> Result<native_agents::AgentSession> {let host=state.inner().clone();tauri::async_runtime::spawn_blocking(move||host.respond(&id,&request_id,answer)).await.map_err(error)?}
 #[tauri::command]
 fn load_workspace(state:tauri::State<AppState>)->Result<store::WorkbenchData>{state.store.load()}
 #[tauri::command]
@@ -236,6 +238,7 @@ pub fn run() {
             let background = background::Background::open(store.clone(), Arc::new(move |state| {let _ = background_app.emit_to("main","background-state",state);}), Arc::new(move |notice| send_workspace_notice(&delivery_app,notice)), Arc::new(move || foreground_app.get_webview("main").is_some_and(|view| view.window().is_visible().unwrap_or(false) && view.window().is_focused().unwrap_or(false)))).map_err(std::io::Error::other)?;
             let agent_app = app.handle().clone(); let agent_background = background.clone();
             let agents = native_agents::AgentHost::open(store.root.join("agents"), Arc::new(move |session| {let _ = agent_background.observe_agent(session); let _ = agent_app.emit_to("main", "agent-session", session);})).map_err(std::io::Error::other)?;
+            let transcript_app=app.handle().clone();agents.configure_transcript_sink(Arc::new(move |frame|{let _=transcript_app.emit_to("main","agent-transcript",frame);}));
             agents.configure_tools(native_agents::WorkspaceTools{executable:std::env::current_exe()?,root:store.root.clone(),definitions:workspace_tools::definitions()});
             for session in agents.list().map_err(std::io::Error::other)? {background.observe_agent(&session).map_err(std::io::Error::other)?;}
             app.manage(agents); app.manage(background.clone()); background.start();
@@ -256,7 +259,7 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_get,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
                 if invoke.message.webview_ref().state::<AppState>().store.maintenance.load(Ordering::SeqCst)&&invoke.message.command()!="quit_app"{invoke.resolver.reject("正在恢复数据，暂时停止写入");return true;}

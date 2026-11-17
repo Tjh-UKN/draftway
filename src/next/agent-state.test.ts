@@ -1,9 +1,21 @@
 import {describe, expect, it} from 'vitest';
 import {createSession, initialWorkbench, parseWorkbench, selectWorkspaceTab} from './core';
-import {mergeNativeSession, type NativeSession} from './agent-state';
+import {beginNativeSend,mergeNativeSession,rejectNativeSend, type NativeSession} from './agent-state';
 
 const native = (revision = 1): NativeSession => ({id: 'real', workspaceId: 'design', nodeId: null, backend: 'codex', title: '实际会话', cwd: 'C:\\project', sourceId: 'thread', createdAt: 1, revision, messages: [{id: 'r-item', role: 'assistant', text: '真实结果', at: 2}], runs: [{id: 'r', state: 'succeeded', startedAt: 1, finishedAt: 3, error: null}], requests: [], error: null});
 describe('native session projection', () => {
+  it('shows a send immediately, keeps the exact prompt and restores rejected delivery to a draft',()=>{
+    const initial=mergeNativeSession(createSession(initialWorkbench(),'design',null,'real',1),native());
+    const text=' \t\n原样传递\n ';
+    const sent=beginNativeSend(initial,'real','next',text,4);
+    expect(sent.sessions[0].messages.at(-1)?.text).toBe(text);expect(sent.runs.at(-1)?.state).toBe('running');
+    const rejected=rejectNativeSend(sent,'real','next',text,1,'not accepted');
+    expect(rejected.sessions[0].draft).toBe(text);expect(rejected.sessions[0].messages).toEqual(initial.sessions[0].messages);
+    expect(rejected.runs).toEqual(initial.runs);
+    const accepted={...sent,sessions:sent.sessions.map(s=>({...s,nativeRevision:2,draft:'new draft'}))};
+    const lateError=rejectNativeSend(accepted,'real','next',text,1,'transport');
+    expect(lateError.sessions[0].draft).toBe('new draft');expect(lateError.sessions[0].messages).toEqual(accepted.sessions[0].messages);
+  });
   it('never resurrects a deleted node binding from a later native session snapshot',()=>{
     const initial=createSession(initialWorkbench(),'design',null,'real',1);const payload=native();payload.nodeId='simplicity';
     expect(mergeNativeSession(initial,payload).sessions[0].nodeId).toBeNull();

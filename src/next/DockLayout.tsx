@@ -15,7 +15,7 @@ interface Props {
   onChange: (update: (dock: DockState) => DockState) => void;
   onSelect: (id: string) => void; onClose: (id: string) => void;
   onCreate: (kind: CreateKind, groupId: string) => void;
-  render: (tab: DockTab, active: boolean) => ReactNode;
+  render: (tab: DockTab, active: boolean,visible:boolean) => ReactNode;
 }
 interface DragGesture {item:DockDragItem;x:number;y:number;pointerId:number;active:boolean;}
 export function DockLayout(props: Props) {
@@ -102,7 +102,7 @@ export function DockLayout(props: Props) {
     {/* Keep tab surfaces outside the split tree so pane moves do not remount editors or iframes. */}
     <div className="dock-scene-layer">{props.space.dock.tabs.map(tab=>{
       const owner=owners.find(g=>g.tabs.includes(tab.id))!;const rect=slots[owner.id];const selected=owner.activeId===tab.id;
-      return <div key={tab.id} className={`dock-scene scene-${tab.kind}`} data-dock-scene-group={owner.id} role="tabpanel" id={`dock-panel-${props.space.id}-${tab.id}`} aria-labelledby={`dock-tab-${props.space.id}-${tab.id}`} hidden={!selected||!rect} style={rect} onPointerDownCapture={()=>focusScene(owner.id)} onFocusCapture={()=>focusScene(owner.id)}>{props.render(tab,selected&&props.space.dock.activeGroupId===owner.id)}</div>;
+      return <div key={tab.id} className={`dock-scene scene-${tab.kind}`} data-dock-scene-group={owner.id} role="tabpanel" id={`dock-panel-${props.space.id}-${tab.id}`} aria-labelledby={`dock-tab-${props.space.id}-${tab.id}`} hidden={!selected||!rect} style={rect} onPointerDownCapture={()=>focusScene(owner.id)} onFocusCapture={()=>focusScene(owner.id)}>{props.render(tab,selected&&props.space.dock.activeGroupId===owner.id,selected)}</div>;
     })}</div>
     {previewStyle&&<div className="dock-drop-preview" style={previewStyle}><span>{edge?{left:'放到左侧',right:'放到右侧',top:'放到上方',bottom:'放到下方'}[edge]:'合并到此分区'}</span></div>}
     {drag&&<div ref={ghost} className="dock-drag-ghost" style={{left:Math.min(innerWidth-250,(candidate.current?.x||0)+16),top:(candidate.current?.y||0)+14}}>{drag.item.kind==='group'&&<GripVertical size={13}/>}<span>{drag.item.label}</span></div>}
