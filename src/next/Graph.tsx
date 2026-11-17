@@ -111,7 +111,6 @@ function MapNodeContent({node, progress, count, autoEdit, onRename, onInspect}: 
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === 'Enter' || event.key === 'Escape') {event.preventDefault(); finish(event.key === 'Enter', true);}
     }}/> : <button ref={button} className="map-node-title" aria-label={`编辑${node.title}标题`} title="点击修改标题" onClick={event=>{event.stopPropagation();begin();}} onKeyDown={event=>{if(event.key==='F2'){event.preventDefault();begin();}}}><strong>{node.title}</strong></button>}{(isTask(node) && progress === 100) && <Check size={13} className="node-completed"/>}</span>
-    {isTask(node) && <span className="map-node-progress"><span className="progress-track"><i style={{width: `${progress}%`}}/></span><small>{progress}%</small></span>}
     {!!count && <button className="node-session-count" onClick={event => {event.stopPropagation(); onInspect();}}><MessageSquare size={12}/>关联会话 {count}<ChevronRight size={12}/></button>}
   </>;
   return <div className={`graph-node-content ${editing ? 'editing' : ''}`} onClick={onInspect}>{content}</div>;
