@@ -1,9 +1,10 @@
 import { invoke as nativeInvoke, isTauri } from '@tauri-apps/api/core';
 import {embeddedInternals,flushHostWorkspace,listenFromHost as listen} from './embedded-bridge';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { advanceRepeat, archiveClosure, dateKey, defaults, healthError, normalizeRecord, starter, uid, type Attachment, type BackupInfo, type Habit, type RecordItem, type Settings, type Task, type WorkbenchData } from './domain';
+import { advanceRepeat, archiveClosure, dateKey, defaults, healthError, normalizeRecord, starter, uid, type Attachment, type BackupInfo, type Habit, type Note, type RecordItem, type Settings, type Task, type WorkbenchData } from './domain';
 import {parseDrawingScene} from './drawings';
 import {parseWorkspaceLayout, webWorkspaceUrl, type WorkspaceLayout} from './workspace-layout';
+import {knowledgeNote,refreshKnowledgeNote,knowledgeSourceKey,type KnowledgeCandidate} from './knowledge';
 
 const host=embeddedInternals();
 const invoke:typeof nativeInvoke=(command,args)=>host?host.invoke(command,args as Record<string,unknown>):nativeInvoke(command,args);
@@ -35,6 +36,24 @@ export async function loadWorkspace():Promise<WorkbenchData> {
     return {records,attachments:files.map(({blob:_,...a})=>a),settings:await meta<Settings>('settings')||defaults,dataPath:'此浏览器的 IndexedDB（与 Windows 版数据独立）',workspaceLayout:await meta('workspace-layout')??null};
   });
 }
+export async function collectKnowledge(candidates:KnowledgeCandidate[]):Promise<number> {
+  if(desktop)return invoke('collect_knowledge');
+  return queue(async()=>{
+    const db=await database;
+    return new Promise<number>((resolve,reject)=>{
+      const tx=db.transaction(['records','meta'],'readwrite');const records=tx.objectStore('records');const links=tx.objectStore('meta');let count=0;let failure:unknown;
+      const request=records.getAll();
+      request.onsuccess=()=>{
+        const existing=new Map<string,Note>();
+        for(const note of request.result)if(note.kind==='note'&&note.knowledgeSource)existing.set(knowledgeSourceKey(note.knowledgeSource),note);
+        for(const candidate of candidates){const key=knowledgeSourceKey(candidate.source);const previous=existing.get(key);if(previous){links.put(previous.id,key);try{const next=refreshKnowledgeNote(previous,candidate);if(next!==previous){records.put(next);existing.set(key,next);count++;}}catch(error){failure=error;tx.abort();return;}continue;}
+          const seen=links.get(key);seen.onsuccess=()=>{if(seen.result||existing.has(key))return;try{const note={...knowledgeNote(candidate),version:1};records.put(note);links.put(note.id,key);existing.set(key,note);count++;}catch(error){failure=error;tx.abort();}};
+        }
+      };
+      tx.oncomplete=()=>resolve(count);tx.onabort=tx.onerror=()=>reject(failure||tx.error||Error('知识库入库失败，原内容仍保留在工作区。'));
+    });
+  });
+}
 export async function saveRecord(item:RecordItem):Promise<RecordItem> {
   if(desktop)return invoke('save_record',{record:item});
   return queue(async()=>{
@@ -42,6 +61,7 @@ export async function saveRecord(item:RecordItem):Promise<RecordItem> {
     if(previous&&previous.version!==item.version)throw new Error('记录已更新，请重新打开后保存');
     const record={...normalizeRecord(item),title:item.title.trim(),version:item.version+1,updatedAt:new Date().toISOString()};
     if(previous?.archived)throw new Error('请先恢复归档记录');
+    if(record.kind==='note'&&previous?.kind==='note'&&previous.knowledgeSource)record.knowledgeSource={...previous.knowledgeSource,autoUpdate:false};
     if(record.kind==='drawing'){if(!record.title||record.title.length>120)throw new Error('画板名称需要 1–120 个字符');parseDrawingScene(record.scene);}
     if(record.kind==='sleep'||record.kind==='weight'){const error=healthError(record);if(error)throw new Error(error);if(all.some(r=>r.kind===record.kind&&!r.archived&&r.date===record.date&&r.id!==record.id))throw new Error('该日期已有同类健康记录，请编辑已有记录');}
     if(record.kind==='habit'){

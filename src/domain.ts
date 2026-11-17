@@ -8,7 +8,8 @@ export interface Task extends Base { kind: 'task'; description: string; projectI
 export interface Milestone extends Base { kind: 'milestone'; projectId: string | null; date: string; remindAt: string | null; category: 'personal' | 'work' | 'finance'; }
 export type NoteType = 'note' | 'progress' | 'review';
 export type IssueStatus = 'triage' | 'investigating' | 'verifying' | 'resolved';
-export interface Note extends Base { kind: 'note'; projectId: string | null; taskId: string | null; noteType: NoteType; occurredOn: string; body: string; tags: string[]; }
+export interface KnowledgeSource {kind:'node'|'note'; workspaceId:string; workspaceName:string; id:string; category:'artifact'|'document'|'note'; autoUpdate?:boolean;}
+export interface Note extends Base { kind: 'note'; projectId: string | null; taskId: string | null; noteType: NoteType; occurredOn: string; body: string; tags: string[]; knowledgeSource?:KnowledgeSource; }
 export interface Issue extends Base { kind:'issue'; projectId:string|null; taskId:string|null; status:IssueStatus; severity:'low'|'normal'|'high'; phenomenon:string; expected:string; reproduction:string; attempts:string; cause:string; solution:string; resolvedAt:string|null; }
 export interface Journal extends Base {kind:'journal';date:string;body:string;discoveries:string;blockers:string;nextSteps:string;taskIds:string[];issueIds:string[];}
 export interface Habit extends Base {kind:'habit';description:string;startDate:string;status:'active'|'paused';checkIns:Record<string,string>;}

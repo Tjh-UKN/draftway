@@ -16,12 +16,13 @@ export interface AgentRuntime {
 }
 export const AgentRuntimeContext = createContext<AgentRuntime | null>(null);
 export const useAgentRuntime = () => useContext(AgentRuntimeContext);
-export function useNativeAgents(_state: WorkbenchState, change: ChangeState, enabled = true): AgentRuntime | null {
+export function useNativeAgents(_state: WorkbenchState, change: ChangeState, enabled = true,workspaceVisible=true): AgentRuntime | null {
   const native = typeof window !== 'undefined' && isTauri();
   const [backends, setBackends] = useState<BackendState[]>([]); const [error, setError] = useState('');
   const alive = useRef(true);
+  const visible=useRef(workspaceVisible);visible.current=workspaceVisible;
   const pendingSends=useRef(new Set<string>());
-  function accept(session: NativeSession) {if (alive.current) change(old => mergeNativeSession(old, session, document.visibilityState === 'visible' && document.hasFocus(), false));}
+  function accept(session: NativeSession) {if (alive.current) change(old => mergeNativeSession(old, session, visible.current && document.visibilityState === 'visible' && document.hasFocus(), false));}
   function failure(id: string, error: unknown) {if (alive.current) change(old => ({...old, sessions: old.sessions.map(session => session.id === id ? {...session, connectionError: String(error)} : session)}));}
   useEffect(() => {
     if (!native || !enabled) return; alive.current = true;

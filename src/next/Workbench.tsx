@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useRef, useState, type ReactNode} from 'react';
-import {Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, Plus, Search, Settings2, Terminal, X} from 'lucide-react';
+import {BookOpen, Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, Plus, Search, Settings2, Terminal, X} from 'lucide-react';
 import {addSubtask, closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, mapGraph, openMapTab, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, reviewUrl, editNodeBody, renameMapNode, sessionNodeIds, shellStorageKey, setTaskProgress, updateMapGraph, updateWorkspace, type AgentSession, type GraphState, type Notice, type Workspace} from './core';
 import {reconcileSessions} from './adapters';
 import {GraphView, NodeGlyph, NodeInspector, NodeOverview, TasksView} from './Graph';
@@ -20,6 +20,8 @@ import {MaterialView} from './MaterialView';
 import {parseMaterialTarget, type NodeMaterial} from './material-target';
 import {useMapOperations} from './map-operations';
 import {BusinessView} from './BusinessView';
+import {useKnowledgeCollection} from './KnowledgeCollection';
+const personalKnowledgeTab:Extract<DockTab,{kind:'business'}>={id:'knowledge',kind:'business',page:'knowledge',title:'个人知识库'};
 import {businessComponents,isBusinessPage,type BusinessPage} from '../business-components';
 import {fromTemplate,layoutTemplate} from './composition';
 import {CompositionSettings} from './CompositionSettings';
@@ -44,6 +46,8 @@ export default function Workbench() {
   const [dialog, setDialog] = useState<'workspace' | 'settings' | 'search' | 'link' | 'customize' | null>(null);
   const [newNodeId, setNewNodeId] = useState<string | null>(null);
   const [inbox, setInbox] = useState(false);
+  const [knowledgeOpen,setKnowledgeOpen]=useState(false);
+  const [knowledgeVisited,setKnowledgeVisited]=useState(false);
   const space = state.spaces.find(s => s.id === state.activeId)!;
   const focusedTabId = focusedGroup(space.dock).activeId;
   const selected = space.nodes.find(n => n.id === mapGraph(space, focusedTabId).selectedId);
@@ -51,8 +55,9 @@ export default function Workbench() {
   const unread = state.notices.filter(n => !n.read).length;
   const change: ChangeState = useCallback(update => setState(update), []);
   const persistence = useWorkbenchPersistence(state, change, loaded.error);
+  const knowledge=useKnowledgeCollection(state,persistence.ready&&!persistence.readOnly&&persistence.saved);
   const nativeBrowsers = useNativeBrowserHost(state, change, persistence.ready);
-  const agents = useNativeAgents(state, change, persistence.ready);
+  const agents = useNativeAgents(state, change, persistence.ready,!knowledgeOpen);
   const background = useNativeBackground(state, change, persistence.ready, openNotice);
   const mapError = useMapOperations(state, change, persistence.ready);
   const updateSpace = (update: (space: Workspace) => Workspace) => change(s => updateWorkspace(s, space.id, update));
@@ -61,12 +66,14 @@ export default function Workbench() {
     const tick = () => change(s => reconcileSessions(s, Date.now()));
     tick(); const timer = setInterval(tick, 500); return () => clearInterval(timer);
   }, [change, persistence.ready]);
-  function switchSpace(id: string) {change(s => ({...s, activeId: id})); setDialog(null); setNewNodeId(null); setInbox(false);}
+  function switchSpace(id: string) {setKnowledgeOpen(false);change(s => ({...s, activeId: id})); setDialog(null); setNewNodeId(null); setInbox(false);}
   function openAgent(id: string) {
+    setKnowledgeOpen(false);
     change(s => {const next = openSession(s, id); return updateWorkspace(next, next.activeId, w => ({...w, sessionPanelOpen: false}));});
     setInbox(false); setDialog(null);
   }
   function openReport(workspaceId: string, url: string, file: string) {
+    setKnowledgeOpen(false);
     change(s => ({...updateWorkspace(s, workspaceId, w => ({...w, dock: openDockTab(w.dock, {id: `report:${url}:${file}`, kind: 'report', title: 'PR 检视报告', url, file})})), activeId: workspaceId}));
     setInbox(false); setDialog(null);
   }
@@ -88,6 +95,7 @@ export default function Workbench() {
   }
   function changeGraph(graph: GraphState, tabId = focusedTabId) {if (graph.selectedId !== newNodeId) setNewNodeId(null); updateSpace(s => updateMapGraph(s, graph, tabId));}
   function openNode(id: string) {
+    setKnowledgeOpen(false);
     setNewNodeId(null);
     change(s=>{const target=s.spaces.find(w=>w.id===space.id);if(!target?.nodes.some(node=>node.id===id))return s;return updateWorkspace(selectWorkspaceTab(s,space.id),space.id,w=>({...w,graph:{...w.graph,selectedId:id,focusId:null,collapsed:[],camera:null}}));});
     setDialog(null);
@@ -102,7 +110,7 @@ export default function Workbench() {
     if (tab?.kind === 'session') change(s => closeSessionTab(s, space.id, tab.sessionId));
     else updateSpace(w => ({...w, dock: closeDockTab(w.dock, id)}));
   }
-  function openBusiness(page: BusinessPage, groupId?: string) {updateSpace(w=>({...w,dock:openDockTab(w.dock,{id:!groupId?w.dock.tabs.find(t=>t.kind==='business'&&t.page===page)?.id||crypto.randomUUID():crypto.randomUUID(),kind:'business',page,title:businessComponents.find(item=>item.id===page)!.title},groupId)}));}
+  function openBusiness(page: BusinessPage, groupId?: string) {setKnowledgeOpen(false);updateSpace(w=>({...w,dock:openDockTab(w.dock,{id:!groupId?w.dock.tabs.find(t=>t.kind==='business'&&t.page===page)?.id||crypto.randomUUID():crypto.randomUUID(),kind:'business',page,title:businessComponents.find(item=>item.id===page)!.title},groupId)}));}
   function createTab(kind: 'map' | 'browser' | 'review' | 'events' | NonNullable<AgentSession['agentId']> | `business:${BusinessPage}` | `integration:${string}`, groupId: string) {
     if(kind==='map'){updateSpace(w=>openMapTab(w,groupId,crypto.randomUUID()));return;}
     if(kind==='events'){updateSpace(w=>({...w,dock:openDockTab(w.dock,{id:crypto.randomUUID(),kind:'events',title:'工作区事件'},groupId)}));return;}
@@ -126,10 +134,11 @@ export default function Workbench() {
     const listener = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {event.preventDefault(); setDialog(d => d === 'search' ? null : 'search'); return;}
       if (dialog) return;
+      if (event.altKey && !event.ctrlKey && /^[1-9]$/.test(event.key)) {const next=current.current.spaces[Number(event.key)-1];if(next){event.preventDefault();switchSpace(next.id);}return;}
+      if(knowledgeOpen)return;
       if(event.ctrlKey&&!event.altKey&&!event.shiftKey&&event.key.toLowerCase()==='t'){event.preventDefault();createTab('browser',space.dock.activeGroupId);return;}
       if(event.ctrlKey&&!event.altKey&&!event.shiftKey&&event.key.toLowerCase()==='w'){event.preventDefault();closeTab(focusedGroup(space.dock).activeId);return;}
       if((event.ctrlKey&&!event.altKey&&event.key.toLowerCase()==='l')||event.key==='F6'){const tab=space.dock.tabs.find(t=>t.id===focusedGroup(space.dock).activeId);if(tab?.kind==='browser'){event.preventDefault();const input=document.querySelector<HTMLInputElement>(`[data-browser-address="${CSS.escape(tab.id)}"]`);if(event.key==='F6'&&nativeBrowsers?.statuses[tab.id]?.ready)nativeBrowsers.action(tab.id,'focus');else{input?.focus();input?.select();}}return;}
-      if (event.altKey && !event.ctrlKey && /^[1-9]$/.test(event.key)) {const next = current.current.spaces[Number(event.key) - 1]; if (next) {event.preventDefault(); switchSpace(next.id);}}
       if (event.ctrlKey && event.key === 'Tab') {
         event.preventDefault();
         let cycle = recentSwitch.current;
@@ -148,7 +157,7 @@ export default function Workbench() {
     };
     const release = (event: KeyboardEvent) => {if (event.key === 'Control') recentSwitch.current = null;};
     document.addEventListener('keydown', listener); document.addEventListener('keyup', release); return () => {document.removeEventListener('keydown', listener); document.removeEventListener('keyup', release);};
-  }, [dialog, inbox, space]);
+  }, [dialog, inbox, space, knowledgeOpen]);
   const nodeLinks=new Map<string,Set<string>>();const knownSessions=new Set(sessions.map(s=>s.id));
   for(const session of sessions)for(const id of sessionNodeIds(session)){const ids=nodeLinks.get(id)||new Set<string>();ids.add(session.id);nodeLinks.set(id,ids);}
   for(const node of space.nodes)for(const update of node.updates||[])if(update.sessionId&&knownSessions.has(update.sessionId)){const ids=nodeLinks.get(node.id)||new Set<string>();ids.add(update.sessionId);nodeLinks.set(node.id,ids);}
@@ -172,27 +181,28 @@ export default function Workbench() {
   if (!persistence.ready) return <div className="workbench-loading">正在恢复工作区…</div>;
   return <AgentRuntimeContext.Provider value={agents?{...agents,readOnly:persistence.readOnly,backends:persistence.readOnly?[]:agents.backends}:null}><div className="workbench-shell map-first-shell">
     <aside className="shell-sidebar" aria-label="主导航"><div className="sidebar-brand"><Star/><span>北极星</span></div>
-      <nav className="global-navigation"><button onClick={() => setDialog('workspace')} disabled={state.spaces.length >= 20}><Plus size={17}/>新建工作区</button><button onClick={() => setDialog('search')}><Search size={17}/>搜索<kbd>Ctrl K</kbd></button></nav>
+      <nav className="global-navigation"><button onClick={() => {setKnowledgeOpen(false);setDialog('workspace');}} disabled={state.spaces.length >= 20}><Plus size={17}/>新建工作区</button><button onClick={() => setDialog('search')}><Search size={17}/>搜索<kbd>Ctrl K</kbd></button><button className={knowledgeOpen?'active':''} aria-current={knowledgeOpen?'page':undefined} onClick={()=>{setKnowledgeVisited(true);setKnowledgeOpen(true);setDialog(null);setInbox(false);}}><BookOpen size={17}/>个人知识库</button></nav>
       <div className="sidebar-label">工作区</div><nav className="workspace-list" aria-label="工作区">{state.spaces.map((item, index) => {
         const count = state.notices.filter(n => n.workspaceId === item.id && !n.read).length;
         const running = state.runs.some(r => r.state === 'running' && state.sessions.some(s => s.id === r.sessionId && s.workspaceId === item.id)) || !!(item.review && background.reviews[item.id]?.runningCount);
-        return <button key={item.id} className={item.id === space.id ? 'active' : ''} aria-current={item.id === space.id ? 'page' : undefined} title={`${item.name}${index < 9 ? ` · Alt+${index + 1}` : ''}`} onClick={() => switchSpace(item.id)}><SpaceSymbol space={item}/><span>{item.name}</span>{count ? <span className="count-badge dark">{count}</span> : running ? <span className="running-dot" aria-label="有任务运行中"/> : null}</button>;
+        return <button key={item.id} className={!knowledgeOpen&&item.id === space.id ? 'active' : ''} aria-current={!knowledgeOpen&&item.id === space.id ? 'page' : undefined} title={`${item.name}${index < 9 ? ` · Alt+${index + 1}` : ''}`} onClick={() => switchSpace(item.id)}><SpaceSymbol space={item}/><span>{item.name}</span>{count ? <span className="count-badge dark">{count}</span> : running ? <span className="running-dot" aria-label="有任务运行中"/> : null}</button>;
       })}</nav><div className="sidebar-bottom"><span><span className="profile-avatar">我</span>个人空间</span><button onClick={() => setDialog('settings')}><Settings2 size={16}/>接入与设置</button><button onClick={()=>openBusiness('overview')}><ExternalLink size={14}/>个人工作台</button></div>
     </aside>
-    <div className="shell-body"><header className="workspace-heading dock-workspace-heading"><div className="workspace-title-row"><h1>{space.name}</h1><div className="workspace-actions"><button className={`session-panel-toggle ${space.sessionPanelOpen ? 'active' : ''}`} aria-expanded={space.sessionPanelOpen} aria-controls="workspace-session-panel" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: !w.sessionPanelOpen}))}>会话记录（{sessions.length}）<ChevronDown size={14}/>{sessions.some(s => s.unread) && <i className="unread-dot"/>}</button><span className="vertical-divider"/><button className="icon-button bell-button" aria-label={`通知${unread ? `，${unread}条未读` : ''}`} aria-expanded={inbox} onClick={() => setInbox(v => !v)}><Bell size={18}/>{!!unread && <span>{unread}</span>}</button><button className="text-button" onClick={() => setDialog('customize')}><Settings2 size={16}/><span>自定工作区</span></button></div></div></header>
+    <div className="shell-body"><header className="workspace-heading dock-workspace-heading"><div className="workspace-title-row"><h1>{knowledgeOpen?'个人知识库':space.name}</h1><div className="workspace-actions">{!knowledgeOpen&&<><button className={`session-panel-toggle ${space.sessionPanelOpen ? 'active' : ''}`} aria-expanded={space.sessionPanelOpen} aria-controls="workspace-session-panel" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: !w.sessionPanelOpen}))}>会话记录（{sessions.length}）<ChevronDown size={14}/>{sessions.some(s => s.unread) && <i className="unread-dot"/>}</button><span className="vertical-divider"/></>}<button className="icon-button bell-button" aria-label={`通知${unread ? `，${unread}条未读` : ''}`} aria-expanded={inbox} onClick={() => setInbox(v => !v)}><Bell size={18}/>{!!unread && <span>{unread}</span>}</button>{!knowledgeOpen&&<button className="text-button" onClick={() => setDialog('customize')}><Settings2 size={16}/><span>自定工作区</span></button>}</div></div></header>
     <div className="workspace-body workspace-map-body dock-workspace-body">
-      <DockLayout key={space.id} state={state} space={space} onChange={update => updateSpace(w => ({...w, dock: update(w.dock)}))} onSelect={selectTab} onClose={closeTab} onCreate={createTab} render={(tab, active) => {
+      <div className="workspace-content-host" hidden={knowledgeOpen}><DockLayout key={space.id} state={state} space={space} onChange={update => updateSpace(w => ({...w, dock: update(w.dock)}))} onSelect={selectTab} onClose={closeTab} onCreate={createTab} render={(tab, active) => {
         if (tab.kind === 'map') return mapView(tab);
         if (tab.kind === 'events') return <TasksView space={space} onOpen={openNode}/>;
-        if (tab.kind === 'browser') return <BrowserView tab={tab} active={active} onChange={updateTab} native={nativeBrowsers}/>;
+        if (tab.kind === 'browser') return <BrowserView tab={tab} active={active&&!knowledgeOpen} onChange={updateTab} native={nativeBrowsers}/>;
         if (tab.kind === 'review') return <ReviewView workspaceId={space.id} tab={tab} onChange={updateTab}/>;
         if (tab.kind === 'material') return <MaterialView workspaceId={space.id} tab={tab}/>;
-        if (tab.kind === 'business') return <BusinessView workspaceId={space.id} tab={tab} active={active} onChange={updateTab} flush={persistence.flush} onWorkspace={()=>change(s=>selectWorkspaceTab(s,space.id))}/>;
+        if (tab.kind === 'business') return <BusinessView workspaceId={space.id} tab={tab} active={active&&!knowledgeOpen} onChange={updateTab} flush={persistence.flush} onWorkspace={()=>change(s=>selectWorkspaceTab(s,space.id))}/>;
         if (tab.kind === 'report') return <ReportView workspaceId={space.id} tab={tab} onDashboard={() => updateSpace(w => ({...w, dock: openDockTab(w.dock, {id: w.dock.tabs.find(t=>t.kind==='browser'&&t.url===tab.url)?.id||crypto.randomUUID(), kind: 'browser', title: 'PR 检视看板', url: tab.url})}))}/>;
         const session = state.sessions.find(s => s.id === tab.sessionId)!;
-        return <SessionView state={state} session={session} active={active} change={change} onNode={id => {const nodeId = id || session.nodeId; if (nodeId) openNode(nodeId);}}/>;
-      }}/>
-      {space.sessionPanelOpen && <aside className="workspace-session-panel" id="workspace-session-panel" aria-label="当前工作区会话"><header><h2>会话记录（{sessions.length}）</h2><button className="icon-button" aria-label="收起会话面板" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: false}))}><X size={16}/></button></header><p className="quiet-note">{space.name} · 关闭页签后仍可在这里重新打开</p><div className="workspace-session-list">{sessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!sessions.length && <Empty title="还没有会话"><p>点“＋”选择后端开始。</p></Empty>}</div></aside>}
+        return <SessionView state={state} session={session} active={active&&!knowledgeOpen} change={change} onNode={id => {const nodeId = id || session.nodeId; if (nodeId) openNode(nodeId);}}/>;
+      }}/></div>
+      {knowledgeVisited&&<div className="personal-knowledge-host" hidden={!knowledgeOpen}>{knowledge.error&&<p className="knowledge-collection-error" role="alert">{knowledge.error}<button className="text-button" onClick={knowledge.retry}>重试入库</button></p>}<BusinessView workspaceId="personal" tab={personalKnowledgeTab} active={knowledgeOpen} onChange={tab=>{if(tab.kind==='business'&&tab.page!=='knowledge'){setKnowledgeVisited(false);openBusiness(tab.page);}}} flush={persistence.flush} onWorkspace={()=>setKnowledgeOpen(false)}/></div>}
+      {!knowledgeOpen&&space.sessionPanelOpen && <aside className="workspace-session-panel" id="workspace-session-panel" aria-label="当前工作区会话"><header><h2>会话记录（{sessions.length}）</h2><button className="icon-button" aria-label="收起会话面板" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: false}))}><X size={16}/></button></header><p className="quiet-note">{space.name} · 关闭页签后仍可在这里重新打开</p><div className="workspace-session-list">{sessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!sessions.length && <Empty title="还没有会话"><p>点“＋”选择后端开始。</p></Empty>}</div></aside>}
 
     </div>
     <footer className="shell-status"><span>{(persistence.error || mapError) ? <><CircleAlert size={12}/>{persistence.error || mapError}<button onClick={persistence.retry}>{persistence.readOnly ? '重试读取' : '重试保存'}</button></> : <><span className="saved-dot"/>{persistence.saved ? '已保存到本机' : '正在保存'}</>}</span><span>Alt + 1…9 切换工作区 · Ctrl + Tab 切换最近页签</span></footer></div>

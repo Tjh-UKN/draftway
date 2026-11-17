@@ -75,6 +75,7 @@ impl Store {
         let kind=domain::text(&record,"kind").to_owned();
         let incoming=record["version"].as_u64().unwrap();
         let previous=get(&tx,&id)?;
+        if kind=="note" {if let Some(old)=previous.as_ref().filter(|old|old["knowledgeSource"].is_object()) {record["knowledgeSource"]=old["knowledgeSource"].clone();record["knowledgeSource"]["autoUpdate"]=json!(false);}}
         if let Some(ref old)=previous {
             if old["version"].as_u64()!=Some(incoming) {return Err("这条记录已更新，请重新打开后再保存".into());}
             if domain::text(old,"kind")!=kind {return Err("不能改变已有记录的类型".into());}
