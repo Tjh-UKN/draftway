@@ -68,11 +68,10 @@ export function GraphView({space, onChange, onAdd, onRename, onInspect, autoEdit
         return <path key={item.node.id} d={`M${x1},${parent.y} C${middle},${parent.y} ${middle},${item.y} ${x2},${item.y}`}/>;
       })}</svg>
       {positions.map(({node, x, y, width, height}, index) => {
-        const progress = nodeProgress(space.nodes, node.id);
         const count = sessionCounts[node.id] || 0;
         const children = space.nodes.some(n => n.parentId === node.id);
         return <div key={node.id} className={`graph-node kind-${node.kind} ${index === 0 ? 'root-node' : ''} ${graph.selectedId === node.id ? 'selected' : ''}`} style={{left: x - width / 2, top: y - height / 2, width, minHeight: height}}>
-          <MapNodeContent node={node} progress={progress} count={count} autoEdit={autoEditId === node.id} onRename={title => onRename(node.id, title)} onInspect={() => onInspect(node.id)}/>
+          <MapNodeContent node={node} count={count} autoEdit={autoEditId === node.id} onRename={title => onRename(node.id, title)} onInspect={() => onInspect(node.id)}/>
           <button className="graph-node-details" aria-label={`查看${node.title}详情`} title="查看内容、材料、会话与进度" onClick={() => onInspect(node.id)}><Info size={13}/></button>
           <button className="graph-node-add" aria-label={`在${node.title}下添加节点`} onClick={() => onAdd(node.id)}><Plus size={13}/></button>
           {children && <button className="graph-node-collapse" aria-label={`${graph.collapsed.includes(node.id) ? '展开' : '收起'}${node.title}分支`} onClick={() => onChange({...graph, collapsed: graph.collapsed.includes(node.id) ? graph.collapsed.filter(id => id !== node.id) : [...graph.collapsed, node.id]})}>{graph.collapsed.includes(node.id) ? '+' : '−'}</button>}
@@ -84,7 +83,7 @@ export function GraphView({space, onChange, onAdd, onRename, onInspect, autoEdit
   </div>;
 }
 
-function MapNodeContent({node, progress, count, autoEdit, onRename, onInspect}: {node: MindNode; progress: number; count: number; autoEdit: boolean; onRename: (title: string) => void; onInspect: () => void}) {
+function MapNodeContent({node, count, autoEdit, onRename, onInspect}: {node: MindNode; count: number; autoEdit: boolean; onRename: (title: string) => void; onInspect: () => void}) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(node.title);
   const input = useRef<HTMLInputElement>(null);
@@ -110,7 +109,7 @@ function MapNodeContent({node, progress, count, autoEdit, onRename, onInspect}: 
       if (event.key === 'Enter' || event.key === 'Escape') event.stopPropagation();
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === 'Enter' || event.key === 'Escape') {event.preventDefault(); finish(event.key === 'Enter', true);}
-    }}/> : <button ref={button} className="map-node-title" aria-label={`编辑${node.title}标题`} title="点击修改标题" onClick={event=>{event.stopPropagation();begin();}} onKeyDown={event=>{if(event.key==='F2'){event.preventDefault();begin();}}}><strong>{node.title}</strong></button>}{(isTask(node) && progress === 100) && <Check size={13} className="node-completed"/>}</span>
+    }}/> : <button ref={button} className="map-node-title" aria-label={`编辑${node.title}标题`} title="点击修改标题" onClick={event=>{event.stopPropagation();begin();}} onKeyDown={event=>{if(event.key==='F2'){event.preventDefault();begin();}}}><strong>{node.title}</strong></button>}</span>
     {!!count && <button className="node-session-count" onClick={event => {event.stopPropagation(); onInspect();}}><MessageSquare size={12}/>关联会话 {count}<ChevronRight size={12}/></button>}
   </>;
   return <div className={`graph-node-content ${editing ? 'editing' : ''}`} onClick={onInspect}>{content}</div>;
