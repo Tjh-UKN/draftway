@@ -25,6 +25,8 @@
 .note-document-main>.kg-map-editor{flex:1;min-height:0}
 .note-document-title{display:block;box-sizing:border-box;width:100%;border:0!important;outline:none;background:transparent!important;border-radius:0!important;font:500 22px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;color:var(--text);padding:40px max(32px,calc((100% - 740px)/2)) 20px!important;flex-shrink:0}
 .note-document-title::placeholder{color:var(--faint)}
+.note-document-title:focus-visible{outline:none}
+.note-reading:focus-visible{outline:1px solid var(--line);outline-offset:-1px}
 .note-save-error{display:flex;gap:15px;align-items:center;margin:0;padding:10px 24px;background:var(--raised);color:var(--danger);font-size:12px}
 .note-document-details{width:260px;flex-shrink:0;padding:22px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:22px;overflow:auto;font-size:11px}
 .note-document-details>header{display:flex;align-items:center;justify-content:space-between;gap:10px}
