@@ -23,7 +23,8 @@ export function SessionView({state, session, change, onNode, active = true,visib
   const demo = session.integrationId === 'demo-agent';
   const canSend = demo ? !!adapter : !!runtime && !runtime.readOnly && !!session.nativeRevision;
   const [linkError,setLinkError]=useState('');
-  const openLink=useCallback((url:string)=>{void invoke('open_external_url',{url}).catch(error=>setLinkError(String(error)));},[]);
+  const openLink=useCallback((url:string)=>{setLinkError('');void invoke('open_external_url',{url}).catch(error=>setLinkError(String(error)));},[]);
+  const openLocalPath=useCallback((path:string)=>{setLinkError('');void invoke('open_session_path',{id:session.id,path}).catch(error=>setLinkError(String(error)));},[session.id]);
   const run = latestRun(state, session.id);
   const busy = run?.state === 'running' || run?.state === 'needs_input';
   const space = state.spaces.find(s => s.id === session.workspaceId)!;
@@ -39,13 +40,13 @@ export function SessionView({state, session, change, onNode, active = true,visib
   return <div className="session-view" aria-label={`会话：${session.title}`}><div className="session-context"><span><Terminal size={14}/>{provider}{demo && <small className="simulation-badge">模拟</small>}</span><SessionStatus state={state} session={session}/></div>
     {!demo && session.cwd && <div className="session-directory" title={session.cwd}>{session.cwd}</div>}
     {node && <div className="session-node-context"><button className="text-button" onClick={() => onNode(node.id)}>{node.title}<ChevronRight size={12}/></button></div>}
-    <SessionTranscript session={session} store={runtime?.transcripts} provider={provider} demo={demo} visible={visible} onOpenLink={runtime?openLink:undefined}>
+    {linkError&&<p className="agent-error session-file-error" role="alert">{linkError}</p>}
+    <SessionTranscript session={session} store={runtime?.transcripts} provider={provider} demo={demo} visible={visible} onOpenLink={runtime?openLink:undefined} onOpenLocalPath={!demo&&runtime?openLocalPath:undefined}>
       {!session.messages.length && <Empty title="开始对话"/>}
       {run?.state === 'running' && <div className="run-progress"><LoaderCircle size={15} className="spinning"/><span>{run.stopping ? '正在停止…' : '正在回复…'}</span></div>}
       {run?.state === 'needs_input' && demo && <div className="run-attention"><CircleAlert size={16}/><span>需要你的输入</span><button className="primary-button" disabled={!adapter} onClick={() => {const at = Date.now(); change(current => adapter!.resume(current, run.id, at));}}>继续模拟</button></div>}
       {!demo && session.requests?.map(request => <AgentRequestForm key={request.id} request={request} onRespond={answer => runtime?.respond(session.id, request.id, answer)}/>)}
       {(session.connectionError || run?.error) && <p className="agent-error" role="alert">{session.connectionError || run?.error}</p>}
-      {linkError&&<p className="agent-error" role="alert">{linkError}</p>}
       {run?.state === 'cancelled' && <p className="quiet-note">本轮已停止。会话记录保留。</p>}
       {state.artifacts.filter(a => a.sessionId === session.id).map(artifact => {const placed = space.nodes.find(n => n.sourceArtifactId === artifact.id); return <details className="artifact" key={artifact.id}><summary><Check size={14}/>{artifact.title}</summary><p>{artifact.text}</p><button className="text-button" disabled={!placed && space.nodes.length >= 250} onClick={() => {const at = Date.now(); change(current => placeArtifact(current, artifact.id, at)); onNode(placed?.id || `artifact-${artifact.id}`);}}>{placed ? '查看地图节点' : '保留到地图'}<ChevronRight size={13}/></button></details>;})}
       {run?.context && <details className="artifact"><summary>本轮引用的节点与材料</summary><pre className="material-text">{run.context}</pre></details>}

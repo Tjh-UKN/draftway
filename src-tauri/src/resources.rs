@@ -50,6 +50,20 @@ pub fn material(store: &Store, workspace: &str, node: &str, id: &str) -> Result<
     let path=target(&space,value)?;Ok((space,path))
 }
 pub fn read_material(store: &Store, workspace: &str, node: &str, id: &str) -> Result<TextFile> {let (_,path)=material(store,workspace,node,id)?;read(path)}
+pub fn session_target(store:&Store,workspace:&str,cwd:&str,value:&str)->Result<PathBuf>{
+    if value.len()>32768||value.chars().any(char::is_control){return Err("文件路径无效".into());}
+    let mut space=space(store,workspace)?;
+    if !space["materialRoots"].is_array(){space["materialRoots"]=serde_json::json!([]);}
+    space["materialRoots"].as_array_mut().unwrap().push(serde_json::json!({"path":cwd}));
+    let requested=if value.starts_with("file:"){url::Url::parse(value).map_err(error)?.to_file_path().map_err(|_|"文件链接无效")?}else{PathBuf::from(value)};
+    #[cfg(windows)] if requested.to_string_lossy().get(2..).is_some_and(|tail|tail.contains(':')){return Err("文件路径无效".into());}
+    let path=scoped(&space,&if requested.is_absolute(){requested}else{Path::new(cwd).join(requested)})?;
+    let ext=path.extension().and_then(|e|e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !path.is_dir()&&!["html","htm","md","markdown","txt","pdf","docx","xlsx","pptx","png","jpg","jpeg","gif","webp","svg","csv","log","json","yaml","yml","toml","excalidraw","mindmap"].contains(&ext.as_str()){
+        return Err("此文件类型请从资源管理器打开".into());
+    }
+    Ok(path)
+}
 fn git(directory: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output_path=std::env::temp_dir().join(format!("northstar-git-{}",uuid::Uuid::new_v4()));let output=fs::File::create(&output_path).map_err(error)?;
     let mut command=Command::new("git");command.current_dir(directory).env("GIT_OPTIONAL_LOCKS","0").args(["--no-pager","-c","core.quotepath=false"]).args(args).stdin(Stdio::null()).stdout(output).stderr(Stdio::null());
@@ -78,6 +92,19 @@ pub fn git_diff(store: &Store, workspace: &str, file: &str) -> Result<Vec<TextFi
 #[cfg(test)]
 mod tests {
     use super::*;use serde_json::json;
+    #[test]
+    fn session_reports_open_without_node_materials_and_stay_within_their_roots(){
+        let root=std::env::temp_dir().join(format!("northstar-session-path-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();
+        let owned=root.join("agents/workspaces/w");fs::create_dir_all(&owned).unwrap();let report=owned.join("PR 检视报告.html");fs::write(&report,"<!doctype html><title>Report</title>").unwrap();
+        workspace_state::save(&store,&json!({"version":2,"activeId":"w","spaces":[{"id":"w","name":"Work","nodes":[{"id":"root"}],"dock":{}}],"sessions":[],"runs":[],"artifacts":[],"notices":[]})).unwrap();
+        assert_eq!(session_target(&store,"w",&owned.to_string_lossy(),&report.to_string_lossy()).unwrap(),report.canonicalize().unwrap());
+        assert_eq!(session_target(&store,"w",&owned.to_string_lossy(),"PR 检视报告.html").unwrap(),report.canonicalize().unwrap());
+        let uri=url::Url::from_file_path(&report).unwrap();assert!(session_target(&store,"w",&owned.to_string_lossy(),uri.as_str()).is_ok());
+        fs::write(root.join("outside.html"),"Outside").unwrap();assert!(session_target(&store,"w",&owned.to_string_lossy(),"../../../outside.html").is_err());
+        assert!(session_target(&store,"w",&owned.to_string_lossy(),&root.join("outside.html").to_string_lossy()).is_err());
+        fs::write(owned.join("run.cmd"),"echo not run").unwrap();assert!(session_target(&store,"w",&owned.to_string_lossy(),"run.cmd").is_err());
+        assert!(session_target(&store,"w",&owned.to_string_lossy(),"missing.html").is_err());
+    }
     #[test]
     fn default_workspace_materials_are_available_without_granting_neighbour_workspaces(){let root=std::env::temp_dir().join(format!("northstar-owned-material-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();let owned=root.join("agents/workspaces/w");let other=root.join("agents/workspaces/other");fs::create_dir_all(&owned).unwrap();fs::create_dir_all(&other).unwrap();fs::write(owned.join("note.md"),"Own").unwrap();fs::write(other.join("note.md"),"Other").unwrap();workspace_state::save(&store,&serde_json::json!({"version":2,"activeId":"w","spaces":[{"id":"w","name":"Work","nodes":[{"id":"n"}],"dock":{}}],"sessions":[],"runs":[],"artifacts":[],"notices":[]})).unwrap();let space=space(&store,"w").unwrap();assert_eq!(read(target(&space,&owned.join("note.md").to_string_lossy()).unwrap()).unwrap().text,"Own");assert!(target(&space,&other.join("note.md").to_string_lossy()).is_err());assert!(read(target(&space,&owned.to_string_lossy()).unwrap()).unwrap().text.contains("文件夹位置"));}
     #[test]

@@ -5,15 +5,15 @@ import MarkdownView from '../MarkdownView';
 import type {AgentSession,Message} from './core';
 import type {SessionTranscripts} from './session-transcript';
 import CopyButton from '../CopyButton';
-const MessageRow=memo(function MessageRow({message,provider,demo,onOpenLink}:{message:Message;provider:string;demo:boolean;onOpenLink?: (url:string)=>void}){
+const MessageRow=memo(function MessageRow({message,provider,demo,onOpenLink,onOpenLocalPath}:{message:Message;provider:string;demo:boolean;onOpenLink?: (url:string)=>void;onOpenLocalPath?:(path:string)=>void}){
   return <article className={`message message-${message.role}`} data-message-id={message.id}>
     <span className="message-role">{message.role==='user'?'你':`${provider}${demo?' · 模拟回复':''}`}</span>
-    {message.role==='assistant'?<MarkdownView value={message.text} onOpenLink={onOpenLink} allowRemoteImages={false} codeActions/>:<div>{message.text}</div>}
+    {message.role==='assistant'?<MarkdownView value={message.text} onOpenLink={onOpenLink} onOpenLocalPath={onOpenLocalPath} allowRemoteImages={false} codeActions/>:<div>{message.text}</div>}
     <CopyButton text={message.text} label={message.role==='user'?'复制消息':'复制回复'}/>
   </article>;
 });
-export const SessionTranscript=memo(function SessionTranscript({session,store,provider,demo,visible,onOpenLink,children}:{
-  session:AgentSession;store?:SessionTranscripts;provider:string;demo:boolean;visible:boolean;onOpenLink?:(url:string)=>void;children:ReactNode;
+export const SessionTranscript=memo(function SessionTranscript({session,store,provider,demo,visible,onOpenLink,onOpenLocalPath,children}:{
+  session:AgentSession;store?:SessionTranscripts;provider:string;demo:boolean;visible:boolean;onOpenLink?:(url:string)=>void;onOpenLocalPath?:(path:string)=>void;children:ReactNode;
 }){
   const subscribe=useCallback((listener:()=>void)=>visible?store?.subscribe(session.id,listener)||(()=>{}):()=>{},[store,session.id,visible]);
   const snapshot=useCallback(()=>store?.get(session.id),[store,session.id]);
@@ -51,7 +51,7 @@ export const SessionTranscript=memo(function SessionTranscript({session,store,pr
     if(top>offset.current&&distance<16)follow.current=true;
     offset.current=top;setDetached(!follow.current&&distance>24);
   }
-  const row=(message:Message)=><MessageRow message={message} provider={provider} demo={demo} onOpenLink={onOpenLink}/>;
+  const row=(message:Message)=><MessageRow message={message} provider={provider} demo={demo} onOpenLink={onOpenLink} onOpenLocalPath={onOpenLocalPath}/>;
   return <div className="transcript-host"><div className={`transcript ${windowed?'windowed-transcript':''}`} ref={scroller} role="log" aria-label="会话记录" aria-live="off" onScroll={readScroll}
     onWheel={event=>{if(event.deltaY<0)follow.current=false;}} onTouchStart={()=>{follow.current=false;}}
     onKeyDown={event=>{if(['PageUp','Home','ArrowUp'].includes(event.key))follow.current=false;}}>
