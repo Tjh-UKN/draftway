@@ -75,7 +75,7 @@ impl Store {
         let kind=domain::text(&record,"kind").to_owned();
         let incoming=record["version"].as_u64().unwrap();
         let previous=get(&tx,&id)?;
-        if kind=="note" {if let Some(old)=previous.as_ref().filter(|old|old["knowledgeSource"].is_object()) {record["knowledgeSource"]=old["knowledgeSource"].clone();record["knowledgeSource"]["autoUpdate"]=json!(false);}}
+        if kind=="note" {if let Some(old)=previous.as_ref().filter(|old|old["knowledgeSource"].is_object()) {record["knowledgeSource"]=old["knowledgeSource"].clone();if old["title"]!=record["title"]||old["body"]!=record["body"]||old["format"]!=record["format"]{record["knowledgeSource"]["autoUpdate"]=json!(false);}}}
         if let Some(ref old)=previous {
             if old["version"].as_u64()!=Some(incoming) {return Err("这条记录已更新，请重新打开后再保存".into());}
             if domain::text(old,"kind")!=kind {return Err("不能改变已有记录的类型".into());}
@@ -83,6 +83,10 @@ impl Store {
             record["createdAt"]=old["createdAt"].clone();
         } else if incoming!=0 {return Err("记录不存在".into());}
         if record["archived"].as_bool()==Some(true) {return Err("请使用归档操作".into());}
+        if ["note","drawing"].contains(&kind.as_str()) {
+            let mut parent=domain::optional_id(&record,"knowledgeParentId").map(String::from);let mut seen=std::collections::HashSet::from([id.clone()]);
+            while let Some(parent_id)=parent {if parent_id.starts_with("source:"){break;}if !seen.insert(parent_id.clone()){return Err("不能把知识移到自己的下级".into());}let entry=get(&tx,&parent_id)?.ok_or("上级知识不存在")?;if !["note","drawing"].contains(&domain::text(&entry,"kind"))||entry["archived"]==true{return Err("上级知识不存在或已归档".into());}parent=domain::optional_id(&entry,"knowledgeParentId").map(String::from);}
+        }
         if kind=="habit"{
             if let Some(ref old)=previous{if old["checkIns"]!=record["checkIns"]{return Err("请通过签到入口调整签到记录".into());}}
             else if record["checkIns"].as_object().is_some_and(|checks|!checks.is_empty()){return Err("创建习惯时不能直接写入签到记录".into());}
@@ -264,6 +268,15 @@ mod tests {
         let mut reopen=completed;reopen["status"]=json!("todo");let reopened=store.save(reopen).unwrap();
         let mut again=reopened;again["status"]=json!("done");store.save(again).unwrap();assert_eq!(store.load().unwrap().records.len(),2);
         drop(store);fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn knowledge_formats_hierarchy_survive_backup_and_reject_cycles() {
+        let root=std::env::temp_dir().join(format!("northstar-knowledge-graph-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();
+        let mut folder=record("note");folder["body"]=json!("");folder["format"]=json!("folder");let folder=store.save(folder).unwrap();
+        let mut html=record("note");html["body"]=json!("<!doctype html><h1>HTML 原文</h1>");html["format"]=json!("html");html["knowledgeParentId"]=folder["id"].clone();let html=store.save(html).unwrap();
+        let mut map=record("note");map["format"]=json!("mindmap");map["knowledgeParentId"]=html["id"].clone();map["body"]=json!(serde_json::to_string(&json!([{"id":"center","parentId":null,"kind":"root","title":"中心","side":1,"body":"保留正文","progress":0,"due":""}])).unwrap());let map=store.save(map).unwrap();
+        let mut cyclic=folder.clone();cyclic["knowledgeParentId"]=map["id"].clone();assert!(store.save(cyclic).unwrap_err().contains("下级"));
+        let backup=crate::backup::create(&store,"knowledge-graph").unwrap();let mut changed=html.clone();changed["body"]=json!("changed");store.save(changed).unwrap();crate::backup::restore(&store,&store.root.join("backups").join(backup.name)).unwrap();drop(store);
+        let restored=Store::open(root.clone()).unwrap().load().unwrap();assert!(restored.records.contains(&html));assert!(restored.records.contains(&map));assert!(restored.records.contains(&folder));std::fs::remove_dir_all(root).unwrap();
     }
     #[test] fn drawings_survive_upgrade_restart_backup_and_archive() {
         let root=std::env::temp_dir().join(format!("northstar-drawings-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();

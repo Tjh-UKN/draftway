@@ -1,8 +1,9 @@
-import { invoke as nativeInvoke, isTauri } from '@tauri-apps/api/core';
+import { invoke as nativeInvoke, isTauri,convertFileSrc } from '@tauri-apps/api/core';
 import {embeddedInternals,flushHostWorkspace,listenFromHost as listen} from './embedded-bridge';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { advanceRepeat, archiveClosure, dateKey, defaults, healthError, normalizeRecord, starter, uid, type Attachment, type BackupInfo, type Habit, type Note, type RecordItem, type Settings, type Task, type WorkbenchData } from './domain';
 import {parseDrawingScene} from './drawings';
+import {validateKnowledge} from './knowledge-graph';
 import {parseWorkspaceLayout, webWorkspaceUrl, type WorkspaceLayout} from './workspace-layout';
 import {knowledgeNote,refreshKnowledgeNote,knowledgeSourceKey,type KnowledgeCandidate} from './knowledge';
 
@@ -61,7 +62,8 @@ export async function saveRecord(item:RecordItem):Promise<RecordItem> {
     if(previous&&previous.version!==item.version)throw new Error('记录已更新，请重新打开后保存');
     const record={...normalizeRecord(item),title:item.title.trim(),version:item.version+1,updatedAt:new Date().toISOString()};
     if(previous?.archived)throw new Error('请先恢复归档记录');
-    if(record.kind==='note'&&previous?.kind==='note'&&previous.knowledgeSource)record.knowledgeSource={...previous.knowledgeSource,autoUpdate:false};
+    validateKnowledge(record,all);
+    if(record.kind==='note'&&previous?.kind==='note'&&previous.knowledgeSource)record.knowledgeSource={...previous.knowledgeSource,...(record.title!==previous.title||record.body!==previous.body||record.format!==previous.format?{autoUpdate:false}:{})};
     if(record.kind==='drawing'){if(!record.title||record.title.length>120)throw new Error('画板名称需要 1–120 个字符');parseDrawingScene(record.scene);}
     if(record.kind==='sleep'||record.kind==='weight'){const error=healthError(record);if(error)throw new Error(error);if(all.some(r=>r.kind===record.kind&&!r.archived&&r.date===record.date&&r.id!==record.id))throw new Error('该日期已有同类健康记录，请编辑已有记录');}
     if(record.kind==='habit'){
@@ -166,3 +168,11 @@ export async function exportDrawingBlob(blob:Blob,name:string,extension:'excalid
  if(desktop){const path=await saveDialog({defaultPath:name,filters:[{name:'画板文件',extensions:[extension]}]});if(!path)return false;await invoke('export_drawing_file',{path,bytes:Array.from(new Uint8Array(await blob.arrayBuffer()))});return true;}
  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);return true;
 }
+
+export async function exportKnowledgeBlob(blob:Blob,name:string,extension:string){
+ if(desktop){const path=await saveDialog({defaultPath:name,filters:[{name:'知识文件',extensions:[extension]}]});if(path)await invoke('export_drawing_file',{path,bytes:Array.from(new Uint8Array(await blob.arrayBuffer()))});return;}
+ const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+
+export async function createHtmlPreview(body:string){const token=await invoke<string>('html_preview',{body});return {token,url:convertFileSrc(token,'knowledge')};}
+export const closeHtmlPreview=(token:string)=>invoke<void>('close_html_preview',{token});

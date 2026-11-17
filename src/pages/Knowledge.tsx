@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { lazy,Suspense,useState } from 'react';
+const KnowledgeGraph=lazy(()=>import('./KnowledgeGraph'));
+export default function Knowledge({personal=false}:{personal?:boolean}){return personal?<Suspense fallback={<p>正在打开知识图…</p>}><KnowledgeGraph/></Suspense>:<Notes/>;}
 import { Archive, BookOpen, Download, FilePlus2, Folder, Pencil, Plus, Search } from 'lucide-react';
 import MarkdownView from '../MarkdownView';
 import { useWorkbench } from '../workbench';
 import { Badge, Empty, Panel, formatBytes } from '../components';
 import { dateLabel,noteTypes,type Note } from '../domain';
 import * as api from '../api';
-export default function Knowledge({personal=false}:{personal?:boolean}){const ctx=useWorkbench();const [query,setQuery]=useState('');const [selected,setSelected]=useState<string|null>(null);const [tag,setTag]=useState('all');const [source,setSource]=useState(false);const all=ctx.data.records.filter((r):r is Note=>r.kind==='note'&&!r.archived);const tags=Array.from(new Set(all.flatMap(n=>n.tags))).sort();
+function Notes({personal=false}:{personal?:boolean}={}){const ctx=useWorkbench();const [query,setQuery]=useState('');const [selected,setSelected]=useState<string|null>(null);const [tag,setTag]=useState('all');const [source,setSource]=useState(false);const all=ctx.data.records.filter((r):r is Note=>r.kind==='note'&&!r.archived);const tags=Array.from(new Set(all.flatMap(n=>n.tags))).sort();
  const notes=all.filter(n=>(tag==='all'||n.tags.includes(tag))&&`${n.title} ${n.body} ${n.tags.join(' ')} ${n.knowledgeSource?.workspaceName||''}`.toLowerCase().includes(query.toLowerCase())).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));const current=notes.find(n=>n.id===selected)||notes[0];const project=ctx.data.records.find(r=>r.id===current?.projectId);const files=ctx.data.attachments.filter(a=>a.entityId===current?.id);
  return <><div className="page-intro">{!personal&&<div className="eyebrow">整理与沉淀</div>}<div className="heading-row"><div>{!personal&&<h1>知识整理</h1>}<p>{personal?"笔记、文档与已保留的产物，集中在这里。":"把零散的想法，留成可以再次找到的记录。"}</p></div><button className="button primary" onClick={()=>ctx.create('note')}><Plus size={16}/>新建笔记</button></div></div>
   <div className="knowledge-layout"><Panel className="note-list-panel"><label className="search-field"><Search size={15}/><input placeholder="搜索笔记…" aria-label="搜索笔记" value={query} onChange={e=>setQuery(e.target.value)}/></label><select className="compact-select tag-select" aria-label="按标签筛选" value={tag} onChange={e=>setTag(e.target.value)}><option value="all">全部标签</option>{tags.map(t=><option key={t}>{t}</option>)}</select><div className="note-list">{notes.map(n=><button className={current?.id===n.id?'selected':''} key={n.id} onClick={()=>setSelected(n.id)}><h3>{n.title}</h3><Badge>{noteTypes[n.noteType]}</Badge><p>{n.body.slice(0,70)||'空白笔记'}</p><span className="small muted">{n.knowledgeSource?`${n.knowledgeSource.workspaceName} · `:""}{dateLabel(n.updatedAt)}{n.tags.length?` · ${n.tags[0]}`:''}</span></button>)}</div>{!notes.length&&<Empty icon={<BookOpen size={25}/>} heading="还没有找到笔记" description="写下一个想法，或尝试其他关键词。"/>}</Panel>

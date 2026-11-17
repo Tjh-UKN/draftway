@@ -54,6 +54,7 @@ pub fn validate(record: &Value) -> Result<(), String> {
     if ["task","note"].contains(&text(record,"kind")) && record.get("tags").is_none(){return Err("标签字段缺失".into());}
     for field in ["dueAt","remindAt","completedAt","resolvedAt"] { if let Some(v)=record.get(field).and_then(Value::as_str) { DateTime::parse_from_rfc3339(v).map_err(|_|format!("{field} 时间无效"))?; } }
     for field in ["date","targetDate","occurredOn","startDate"] { if let Some(v)=record.get(field).and_then(Value::as_str) { chrono::NaiveDate::parse_from_str(v,"%Y-%m-%d").map_err(|_|"日期无效")?; } }
+    if let Some(parent)=record.get("knowledgeParentId") {if !parent.is_null()&&parent.as_str().is_none_or(|id|id.len()>240||(!valid_id(id)&&!id.starts_with("source:"))){return Err("知识分支格式无效".into());}}
     match text(record,"kind") {
         "drawing" => {
             let raw=record.get("scene").and_then(Value::as_str).ok_or("画板内容格式无效")?;
@@ -73,6 +74,8 @@ pub fn validate(record: &Value) -> Result<(), String> {
         "milestone" => { if text(record,"date").is_empty() || !["personal","work","finance"].contains(&text(record,"category")) { return Err("节点日期或分类无效".into()); } },
         "note" => {
             if text(record,"body").len()>1_000_000 { return Err("笔记超过 1 MB".into()); }
+            if record.get("format").is_some()&&! ["markdown","html","mindmap","folder"].contains(&text(record,"format")){return Err("知识内容类型无效".into());}
+            if text(record,"format")=="mindmap"{crate::knowledge::validate_map(text(record,"body"))?;}
             if record.get("noteType").is_some()&&! ["note","progress","review"].contains(&text(record,"noteType")){return Err("笔记类型无效".into());}
         },
         "issue" => {

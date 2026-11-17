@@ -6,7 +6,7 @@
   "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://127.0.0.1:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
   "app": {
     "windows": [{ "label": "main", "title": "北极星 · 个人工作台", "width": 1440, "height": 960, "minWidth": 960, "minHeight": 640, "decorations": false, "backgroundColor": "#101b16" }],
-    "security": { "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https: data: blob:; connect-src ipc: http://ipc.localhost 'self'; font-src 'self' https://esm.sh; object-src 'none'; base-uri 'self'; form-action 'self'" }
+    "security": { "csp": "default-src 'self'; frame-src 'self' http://knowledge.localhost https://knowledge.localhost knowledge:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https: data: blob:; connect-src ipc: http://ipc.localhost 'self'; font-src 'self' https://esm.sh; object-src 'none'; base-uri 'self'; form-action 'self'" }
   },
   "bundle": {
     "active": true,

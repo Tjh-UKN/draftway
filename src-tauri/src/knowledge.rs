@@ -3,6 +3,41 @@ use rusqlite::{params,OptionalExtension};
 use serde_json::{json,Value};
 use std::collections::HashMap;
 
+#[derive(Default)]
+pub struct HtmlPreviews(std::sync::Mutex<std::collections::VecDeque<(String,String)>>);
+impl HtmlPreviews {
+    pub fn create(&self,body:String)->Result<String>{
+        if body.len()>1_000_000{return Err("HTML 超过 1 MB".into());}
+        let token=uuid::Uuid::new_v4().to_string();let mut entries=self.0.lock().map_err(error)?;
+        entries.push_back((token.clone(),body));while entries.len()>16{entries.pop_front();}Ok(token)
+    }
+    pub fn remove(&self,token:&str){if let Ok(mut entries)=self.0.lock(){entries.retain(|(id,_)|id!=token);}}
+    pub fn response(&self,token:&str)->tauri::http::Response<Vec<u8>> {
+        let body=self.0.lock().ok().and_then(|entries|entries.iter().find(|(id,_)|id==token).map(|(_,body)|body.clone()));
+        let status=if body.is_some(){200}else{404};
+        tauri::http::Response::builder().status(status).header("Content-Type","text/html; charset=utf-8").header("Cache-Control","no-store").header("X-Content-Type-Options","nosniff")
+            .header("Content-Security-Policy","default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; sandbox allow-scripts")
+            .body(body.unwrap_or_else(||"HTML 预览已关闭".into()).into_bytes()).unwrap()
+    }
+}
+
+pub fn validate_map(body:&str)->Result<()> {
+    let value:Value=serde_json::from_str(body).map_err(|_|"思维导图 JSON 无效")?;
+    let nodes=value.as_array().or_else(||value["nodes"].as_array()).ok_or("思维导图需要节点数组")?;
+    if nodes.is_empty()||nodes.len()>250{return Err("思维导图需要 1–250 个节点".into());}
+    let mut ids=std::collections::HashSet::new();let mut roots=0;
+    for node in nodes {
+        if node.get("parentId").is_none(){return Err("思维导图上级字段缺失".into());}
+        let id=node["id"].as_str().ok_or("思维导图节点 ID 无效")?;
+        if id.is_empty()||!ids.insert(id){return Err("思维导图节点重复".into());}
+        if domain::text(node,"title").trim().is_empty()||domain::text(node,"title").chars().count()>120||!node["body"].is_string()||!node["due"].is_string()||![-1,1].contains(&node["side"].as_i64().unwrap_or(0))||node["progress"].as_f64().is_none_or(|v|!(0.0..=100.0).contains(&v))||!["root","idea","analysis","event","document","code","artifact"].contains(&domain::text(node,"kind")){return Err("思维导图节点内容无效".into());}
+        if node["parentId"].is_null(){roots+=1;if node["kind"]!="root"{return Err("中心主题类型无效".into());}}else if !node["parentId"].is_string()||node["kind"]=="root"{return Err("思维导图层级无效".into());}
+    }
+    if roots!=1{return Err("思维导图需要一个中心主题".into());}
+    for node in nodes {let mut seen=std::collections::HashSet::from([domain::text(node,"id")]);let mut parent=node["parentId"].as_str();while let Some(id)=parent {if !seen.insert(id){return Err("思维导图包含循环".into());}let entry=nodes.iter().find(|n|n["id"]==id).ok_or("思维导图上级不存在")?;parent=entry["parentId"].as_str();}}
+    Ok(())
+}
+
 fn candidates(snapshot:&Value)->Vec<Value> {
     let mut result=Vec::new();
     for space in snapshot["spaces"].as_array().into_iter().flatten() {
@@ -57,6 +92,11 @@ mod tests {
         store
     }
     #[test]
+    fn html_preview_is_ephemeral_bounded_and_has_no_host_or_network_access(){
+        let previews=HtmlPreviews::default();let first=previews.create("<button onclick=\"this.textContent=1\">0</button>".into()).unwrap();let response=previews.response(&first);assert_eq!(response.status(),200);let policy=response.headers()["Content-Security-Policy"].to_str().unwrap();assert!(policy.contains("sandbox allow-scripts"));assert!(policy.contains("connect-src 'none'"));assert!(policy.contains("frame-src 'none'"));assert_eq!(response.headers()["Cache-Control"],"no-store");
+        for _ in 0..16{previews.create("next".into()).unwrap();}assert_eq!(previews.response(&first).status(),404);let token=previews.create("last".into()).unwrap();previews.remove(&token);assert_eq!(previews.response(&token).status(),404);assert!(previews.create("x".repeat(1_000_001)).is_err());
+    }
+    #[test]
     fn imports_once_preserves_edits_and_does_not_resurrect_archived_or_deleted_notes(){
         let store=setup();assert_eq!(collect(&store).unwrap(),3);assert_eq!(collect(&store).unwrap(),0);
         let records=store.load().unwrap().records;assert_eq!(records.len(),3);assert!(records.iter().all(|note|note["knowledgeSource"]["workspaceId"]=="w"));
@@ -81,6 +121,11 @@ mod tests {
         note=store.load().unwrap().records.into_iter().find(|note|note["title"]=="Saved result").unwrap();note["body"]=json!("My curation");store.save(note).unwrap();
         snapshot["spaces"][0]["nodes"][1]["body"]=json!("New source edit");crate::workspace_state::save(&store,&snapshot).unwrap();assert_eq!(collect(&store).unwrap(),0);
         assert_eq!(store.load().unwrap().records.iter().find(|note|note["title"]=="Saved result").unwrap()["body"],"My curation");
+    }
+    #[test]
+    fn moving_collected_knowledge_does_not_disable_source_updates(){
+        let store=setup();collect(&store).unwrap();let mut note=store.load().unwrap().records.into_iter().find(|r|r["title"]=="Saved result").unwrap();note["knowledgeParentId"]=json!("source:other");let saved=store.save(note).unwrap();assert_eq!(saved["knowledgeSource"]["autoUpdate"],true);
+        let mut snapshot=crate::workspace_state::load(&store).unwrap().unwrap();snapshot["spaces"][0]["nodes"][1]["body"]=json!("Updated after move");crate::workspace_state::save(&store,&snapshot).unwrap();assert_eq!(collect(&store).unwrap(),1);let entry=store.load().unwrap().records.into_iter().find(|r|r["title"]=="Saved result").unwrap();assert_eq!(entry["body"],"Updated after move");assert_eq!(entry["knowledgeParentId"],"source:other");
     }
     #[test]
     fn failed_collection_rolls_back_without_changing_the_workspace(){

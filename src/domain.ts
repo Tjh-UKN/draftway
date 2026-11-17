@@ -1,7 +1,7 @@
 export type Kind = 'goal' | 'project' | 'task' | 'milestone' | 'note' | 'issue' | 'journal' | 'habit' | 'sleep' | 'weight' | 'drawing';
 export type Status = 'todo' | 'doing' | 'done';
 export type Repeat = 'none' | 'daily' | 'weekly' | 'monthly';
-export interface Base { id: string; kind: Kind; title: string; createdAt: string; updatedAt: string; archived: boolean; version: number; }
+export interface Base { id: string; kind: Kind; title: string; createdAt: string; updatedAt: string; archived: boolean; version: number; knowledgeParentId?:string|null; }
 export interface Goal extends Base { kind: 'goal'; description: string; horizon: 'year' | 'quarter' | 'life'; targetDate: string | null; }
 export interface Project extends Base { kind: 'project'; description: string; goalId: string | null; targetDate: string | null; status: 'active' | 'completed'; }
 export interface Task extends Base { kind: 'task'; description: string; projectId: string | null; status: Status; priority: 'low' | 'normal' | 'high'; dueAt: string | null; remindAt: string | null; repeat: Repeat; repeatAnchorDay?:number; completedAt: string | null; tags: string[]; }
@@ -9,7 +9,8 @@ export interface Milestone extends Base { kind: 'milestone'; projectId: string |
 export type NoteType = 'note' | 'progress' | 'review';
 export type IssueStatus = 'triage' | 'investigating' | 'verifying' | 'resolved';
 export interface KnowledgeSource {kind:'node'|'note'; workspaceId:string; workspaceName:string; id:string; category:'artifact'|'document'|'note'; autoUpdate?:boolean;}
-export interface Note extends Base { kind: 'note'; projectId: string | null; taskId: string | null; noteType: NoteType; occurredOn: string; body: string; tags: string[]; knowledgeSource?:KnowledgeSource; }
+export type KnowledgeFormat='markdown'|'html'|'mindmap'|'folder';
+export interface Note extends Base { kind: 'note'; projectId: string | null; taskId: string | null; noteType: NoteType; occurredOn: string; body: string; tags: string[]; format?:KnowledgeFormat; knowledgeSource?:KnowledgeSource; }
 export interface Issue extends Base { kind:'issue'; projectId:string|null; taskId:string|null; status:IssueStatus; severity:'low'|'normal'|'high'; phenomenon:string; expected:string; reproduction:string; attempts:string; cause:string; solution:string; resolvedAt:string|null; }
 export interface Journal extends Base {kind:'journal';date:string;body:string;discoveries:string;blockers:string;nextSteps:string;taskIds:string[];issueIds:string[];}
 export interface Habit extends Base {kind:'habit';description:string;startDate:string;status:'active'|'paused';checkIns:Record<string,string>;}

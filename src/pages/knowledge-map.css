@@ -1,0 +1,75 @@
+.kg-map-editor .graph-view{position:absolute;inset:0;overflow:hidden;cursor:grab;touch-action:none;background:radial-gradient(ellipse at 48% 50%,#fff 45%,#fdfdfd)}
+.kg-map-editor .graph-view.panning{cursor:grabbing}
+.kg-map-editor .graph-legend{position:absolute;left:33px;top:29px;color:#9c9c9c;font-size:10px;display:flex;gap:12px;pointer-events:none}
+.kg-map-editor .graph-content{position:absolute;left:50%;top:49%;width:0;height:0;transform-origin:0 0}
+.kg-map-editor .graph-edges{position:absolute;width:1px;height:1px;overflow:visible;pointer-events:none}
+.kg-map-editor .graph-edges path{stroke:#d4d4d4;stroke-width:1.3;fill:none}
+.kg-map-editor .graph-node{position:absolute;border-radius:11px;border:1px solid #ececec;background:#fdfdfd;cursor:default}
+.kg-map-editor .graph-node-content{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:4px;padding:13px 17px;width:100%;min-height:inherit;text-align:left}
+.kg-map-editor .graph-node-meta{display:flex;justify-content:space-between;width:100%;font-size:10px;color:#979797;line-height:1.4}
+.kg-map-editor .graph-node strong{font-size:13px;font-weight:450;line-height:1.65;overflow-wrap:anywhere}
+.kg-map-editor .graph-node.kind-event{background:#fff;border-color:#dedede;box-shadow:0 3px 14px #00000003}
+.kg-map-editor .graph-node.root-node{background:#f6f6f6;border-color:#f0f0f0;border-radius:16px}
+.kg-map-editor .graph-node.root-node .graph-node-content{align-items:center;text-align:center;gap:7px;padding:15px}
+.kg-map-editor .graph-node.root-node strong{font-size:16px;line-height:1.5;font-weight:500}
+.kg-map-editor .graph-node.root-node .graph-node-meta{justify-content:center;font-size:9px}
+.kg-map-editor .graph-node.selected{border-color:#555;box-shadow:0 0 0 1px #555}
+.kg-map-editor .graph-node .progress-track{margin-top:5px}
+.kg-map-editor .graph-node-add,.kg-map-editor .graph-node-collapse{position:absolute;display:grid;place-items:center;background:#fff;border:1px solid #e7e7e7;border-radius:50%;width:22px;height:22px;opacity:0;transition:opacity .15s;color:#777}
+.kg-map-editor .graph-node-add{right:-31px;top:50%;margin-top:-11px}
+.kg-map-editor .graph-node-collapse{right:-9px;top:-9px;width:17px;height:17px;font-size:10px}
+.kg-map-editor .graph-node:hover .graph-node-add,.kg-map-editor .graph-node:focus-within .graph-node-add,.kg-map-editor .graph-node:hover .graph-node-collapse,.kg-map-editor .graph-node:focus-within .graph-node-collapse{opacity:1}
+.kg-map-editor .graph-hint{position:absolute;left:31px;bottom:26px;font-size:9px;color:#aaa;pointer-events:none}
+.kg-map-editor .graph-tools{position:absolute;bottom:19px;right:24px;display:flex;align-items:center;gap:15px;cursor:default}
+.kg-map-editor .graph-tools>.text-button{font-size:10px}
+.kg-map-editor .zoom-controls{border:1px solid #eaeaea;border-radius:7px;display:flex;align-items:center;background:#fff;gap:3px}
+.kg-map-editor .zoom-controls>button:not(.icon-button){font-size:10px;min-width:36px;color:#777}
+.kg-map-editor .graph-return{position:absolute;top:58px;left:33px;z-index:1;background:#fff}
+.kg-map-editor .graph-node strong{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kg-map-editor .graph-node.root-node strong{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.kg-map-editor .graph-tools{right:31px;bottom:25px}
+.kg-map-editor .graph-tools{gap:7px;right:17px}
+.kg-map-editor .graph-hint{display:none}
+.kg-map-editor .workspace-graph .graph-node{background:#fff;border:1px solid #ebebeb;border-radius:12px;box-shadow:0 3px 8px #00000004;min-height:64px!important}
+.kg-map-editor .workspace-graph .graph-node.root-node{background:#fff;border-radius:12px;min-height:64px!important}
+.kg-map-editor .workspace-graph .graph-node.selected{border-color:#333;box-shadow:0 0 0 1px #333}
+.kg-map-editor .workspace-graph .graph-node-content{gap:9px;padding:16px 17px;min-height:64px;align-items:stretch!important;text-align:left!important}
+.kg-map-editor .workspace-graph .map-node-heading{display:flex;align-items:center;gap:12px;min-width:0;width:100%}
+.kg-map-editor .workspace-graph .graph-node strong{font-size:14px!important;font-weight:500!important;text-align:left;line-height:1.55;white-space:nowrap!important;display:block!important;min-width:0;flex:1}
+.kg-map-editor .workspace-graph .map-node-heading>svg{color:#555}
+.kg-map-editor .workspace-graph .node-session-count{align-self:flex-start;margin-left:30px;margin-top:0;background:none;padding:0;font-size:9px;opacity:.7}
+.kg-map-editor .workspace-graph .graph-node-add{right:-29px}
+.kg-map-editor .workspace-graph .graph-content{top:48%}
+.kg-map-editor .workspace-graph .graph-hint{color:#aaa}
+.kg-map-editor .workspace-graph .graph-tools{bottom:20px}
+.kg-map-editor .dock-scene .graph-hint{font-size:9px}
+.kg-map-editor .workspace-graph .map-node-input{width:100%;min-width:0;flex:1;border:0;border-bottom:1px solid #777;border-radius:0;padding:0;background:transparent;color:inherit;font-family:inherit;font-size:14px;font-weight:500;line-height:1.55;outline:none!important;cursor:text}
+.kg-map-editor .workspace-graph .graph-node:has(.editing){border-color:#333;box-shadow:0 0 0 1px #333}
+.kg-map-editor .graph-node-details{position:absolute;right:-9px;bottom:-9px;width:20px;height:20px;display:grid;place-items:center;border:1px solid #ddd;border-radius:50%;background:#fff;color:#777;opacity:0}
+.kg-map-editor .graph-node:hover .graph-node-details,.kg-map-editor .graph-node:focus-within .graph-node-details,.kg-map-editor .graph-node.selected .graph-node-details{opacity:1}
+.kg-map-editor .graph-node .node-session-count{cursor:pointer}
+.kg-map-editor .workspace-graph .map-node-input{resize:none;max-height:190px;font-family:inherit;font-size:14px;line-height:1.55}
+.kg-map-editor .graph-node:has(.editing){z-index:5}
+.kg-map-editor .workspace-graph .graph-node-content{cursor:pointer}
+.kg-map-editor .workspace-graph .map-node-title{min-width:0;max-width:calc(100% - 30px);flex:0 1 auto;padding:0;display:block;text-align:left;cursor:text}
+.kg-map-editor .graph-node:focus-within{border-color:#555}
+.kg-map-editor .graph-node-menu{position:absolute;width:220px;padding:6px;background:#fff;border:1px solid #e5e5e5;border-radius:10px;box-shadow:0 12px 40px #0002;z-index:30;max-height:calc(100% - 16px);overflow:auto;cursor:default}
+.kg-map-editor .graph-node-menu button{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;padding:10px;font-size:12px;border-radius:5px}
+.kg-map-editor .graph-node-menu button:hover,.kg-map-editor .graph-node-menu button:focus-visible{background:#f3f3f3}
+.kg-map-editor .graph-node-menu kbd{font-size:10px;color:#999}
+.kg-map-editor .graph-node-menu .node-delete-action{color:#a13b3b;border-top:1px solid #eee;margin-top:4px}
+.kg-map-editor .graph-edit-error{color:#a13b3b;max-width:65%}
+.kg-map-editor .graph-node.node-drop-inside{outline:2px solid #777;outline-offset:3px}
+.kg-map-editor .graph-node.node-drop-before:before,.kg-map-editor .graph-node.node-drop-after:after{content:"";position:absolute;left:0;right:0;height:3px;background:#555}
+.kg-map-editor .graph-node.node-drop-before:before{top:-7px}
+.kg-map-editor .graph-node.node-drop-after:after{bottom:-7px}
+.kg-map-editor .graph-node-content:not(.editing){user-select:none}
+.kg-map-editor .node-being-dragged{opacity:.5}
+.kg-map-editor .node-drag-preview{position:absolute;pointer-events:none;z-index:40;padding:9px 14px;border:1px solid #ddd;background:#fff;border-radius:8px;box-shadow:0 5px 18px #0002;font-size:12px}
+.kg-map-editor .graph-tools{max-width:calc(100% - 48px);flex-wrap:wrap;justify-content:flex-end;gap:12px}
+.kg-map-editor .graph-hint{max-width:max(0px,calc(100% - 350px));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kg-map-editor .graph-node-menu{width:min(220px,calc(100% - 16px))}
+.kg-map-editor .graph-hint.graph-edit-error{max-width:calc(100% - 48px);bottom:65px;white-space:normal;overflow:visible;font-size:11px;background:#fffffff2;padding:6px 9px;border-radius:5px}
+.kg-map-editor .graph-node.multi-selected{border-color:#666;background:#f8f8f8}
+.kg-map-editor .graph-selection-box{position:absolute;pointer-events:none;border:1px solid #777;background:#5551;z-index:15}
+.kg-map-editor{position:relative;flex:1;min-height:0;min-width:0;display:flex;background:#fff;color:#292929;font-size:12px}.kg-map-editor .icon-button{display:inline-flex;align-items:center;justify-content:center;width:29px;height:29px;border-radius:6px}.kg-map-editor .text-button{display:inline-flex;align-items:center;gap:7px;padding:5px;font-size:11px}.kg-map-editor .workspace-graph{flex:1}

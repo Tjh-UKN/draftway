@@ -37,6 +37,10 @@ async fn review_report(state: tauri::State<'_, Arc<background::Background>>, wor
 #[tauri::command]
 async fn load_shell_state(state: tauri::State<'_, AppState>) -> Result<Option<Value>> {workspace_state::load(&state.store)}
 #[tauri::command]
+fn html_preview(previews:tauri::State<'_,knowledge::HtmlPreviews>,body:String)->Result<String>{previews.create(body)}
+#[tauri::command]
+fn close_html_preview(previews:tauri::State<'_,knowledge::HtmlPreviews>,token:String){previews.remove(&token);}
+#[tauri::command]
 async fn save_shell_state(state: tauri::State<'_, AppState>, agents:tauri::State<'_,Arc<native_agents::AgentHost>>, snapshot: Value) -> Result<()> {workspace_state::save(&state.store, &snapshot)?;agents.reconcile_nodes(&snapshot)}
 #[tauri::command]
 async fn agent_backends() -> Vec<native_agents::Backend> {native_agents::backends()}
@@ -162,7 +166,7 @@ fn export_markdown(id:String,path:String,state:tauri::State<AppState>)->Result<(
 fn test_notification(app:tauri::AppHandle)->Result<()> {app.notification().builder().title("北极星 · 提醒测试").body("提醒服务已连接。托盘运行期间会继续检查任务和节点提醒。").show().map_err(error)}
 #[tauri::command]
 fn export_drawing_file(path:String,bytes:Vec<u8>)->Result<()> {
-    if PathBuf::from(&path).extension().and_then(|e|e.to_str()).is_none_or(|e|!["excalidraw","png","svg"].contains(&e.to_ascii_lowercase().as_str())){return Err("请选择 .excalidraw、.png 或 .svg 文件".into());}
+    if PathBuf::from(&path).extension().and_then(|e|e.to_str()).is_none_or(|e|!["excalidraw","png","svg","html","md","mindmap"].contains(&e.to_ascii_lowercase().as_str())){return Err("请选择 .excalidraw、.png、.svg、.html、.md 或 .mindmap 文件".into());}
     if bytes.len()>50_000_000{return Err("导出文件超过 50 MB".into());}
     fs::write(path,bytes).map_err(error)
 }
@@ -211,6 +215,8 @@ fn start_services(app:tauri::AppHandle,store:Arc<Store>) {
 }
 pub fn run() {
     let application=tauri::Builder::default()
+        .manage(knowledge::HtmlPreviews::default())
+        .register_uri_scheme_protocol("knowledge",|context,request|context.app_handle().state::<knowledge::HtmlPreviews>().response(request.uri().path().trim_start_matches('/')))
         .manage(native_browser::Browsers::default())
         .plugin(tauri_plugin_single_instance::init(|app,args,_|{if args.iter().any(|a|a=="--quit"){app.state::<AppState>().quit.store(true,Ordering::SeqCst);app.exit(0);}else{reveal(app);}}))
         .plugin(tauri_plugin_dialog::init())
@@ -250,7 +256,7 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
                 if invoke.message.webview_ref().state::<AppState>().store.maintenance.load(Ordering::SeqCst)&&invoke.message.command()!="quit_app"{invoke.resolver.reject("正在恢复数据，暂时停止写入");return true;}
