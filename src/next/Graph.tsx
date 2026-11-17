@@ -1,6 +1,6 @@
 import {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {ArrowLeft, Check, ChevronRight, Code2, Expand, FileText, Focus, Folder, Info, Layers, Lightbulb, MessageSquare, Minus, Plus, Redo2, ScanLine, Trash2, Undo2, X} from 'lucide-react';
-import {isTask, nodeProgress, placeNodes, taskChildren, type MindNode, type NodeKind} from './model';
+import {isTask, placeNodes, taskChildren, type MindNode, type NodeKind} from './model';
 import type {GraphState, Workspace} from './core';
 import type {NodeDrop,NodeClipboard,NodeSelection} from './node-operations';
 
@@ -144,7 +144,7 @@ export function GraphView({space, onChange, onAdd, onRename, onInspect, autoEdit
           onDragStart={event=>{if(!typing(event.target))event.preventDefault();}}
           onPointerDown={event=>{if(event.button===0&&node.parentId&&!typing(event.target)){nodeDrag.current={id:node.id,ids:selection.has(node.id)?[...selection]:[node.id],x:event.clientX,y:event.clientY,active:false};}}}>
           <MapNodeContent node={node} count={count} autoEdit={autoEditId === node.id} onRename={title => onRename(node.id, title)} onInspect={() => onInspect(node.id)} onChild={()=>onAdd(node.id)}/>
-          <button className="graph-node-details" aria-label={`查看${node.title}详情`} title="查看内容、材料、会话与进度" onClick={() => onInspect(node.id)}><Info size={13}/></button>
+          <button className="graph-node-details" aria-label={`查看${node.title}详情`} title="查看内容、材料与会话" onClick={() => onInspect(node.id)}><Info size={13}/></button>
           <button className="graph-node-add" aria-label={`在${node.title}下添加节点`} onClick={() => onAdd(node.id)}><Plus size={13}/></button>
           {children && <button className="graph-node-collapse" aria-label={`${graph.collapsed.includes(node.id) ? '展开' : '收起'}${node.title}分支`} onClick={() => onChange({...graph, collapsed: graph.collapsed.includes(node.id) ? graph.collapsed.filter(id => id !== node.id) : [...graph.collapsed, node.id]})}>{graph.collapsed.includes(node.id) ? '+' : '−'}</button>}
         </div>;
@@ -200,15 +200,13 @@ function MapNodeContent({node, count, autoEdit, onRename, onInspect, onChild}: {
   return <div className={`graph-node-content ${editing ? 'editing' : ''}`} tabIndex={0} onClick={event=>{onInspect();if(!editing)event.currentTarget.focus();}} >{content}</div>;
 }
 
-export function NodeOverview({space, node, onProgress, onDue, onOpen, onAdd}: {space: Workspace; node: MindNode; onProgress: (id: string, progress: number) => void; onDue: (value: string) => void; onOpen: (id: string) => void; onAdd: () => void}) {
+export function NodeOverview({space, node, onDue, onOpen, onAdd}: {space: Workspace; node: MindNode; onDue: (value: string) => void; onOpen: (id: string) => void; onAdd: () => void}) {
   const tasks = taskChildren(space.nodes, node.id);
-  const progress = nodeProgress(space.nodes, node.id);
   return <section className="node-task-capability">{isTask(node) && <>
-    <div className="field">进度 <span>{progress}%{tasks.length ? ' · 随子任务同步' : ''}</span></div>
     <label className="field">计划完成<input aria-label="计划完成日期" type="date" value={node.due} onChange={event => onDue(event.target.value)}/></label>
   </>}
     <div className="detail-section-heading"><h3>子任务（{tasks.length}）</h3><button className="text-button" disabled={space.nodes.length >= 250} onClick={onAdd}><Plus size={13}/>添加子任务</button></div>
-    <div className="node-subtasks">{tasks.map(task => {const value = nodeProgress(space.nodes, task.id);return <div key={task.id}><input type="checkbox" aria-label={`完成子任务：${task.title}`} checked={value === 100} disabled={!!taskChildren(space.nodes, task.id).length} onChange={event => onProgress(task.id, event.target.checked ? 100 : 0)}/><button className="text-button" onClick={() => onOpen(task.id)}>{task.title}<span>{value}%</span><ChevronRight size={12}/></button></div>;})}</div>
+    <div className="node-subtasks">{tasks.map(task => <div key={task.id}><button className="text-button" onClick={() => onOpen(task.id)}>{task.title}<ChevronRight size={12}/></button></div>)}</div>
   </section>;
 }
 
@@ -222,5 +220,5 @@ export function NodeInspector({space, node, onEditBody, onClose, onFocus, onDele
 
 export function TasksView({space, onOpen}: {space: Workspace; onOpen: (nodeId: string) => void}) {
   const tasks = space.nodes.filter(isTask);
-  return <div className="content-page"><div className="page-heading"><h2>任务</h2><span className="muted">与图谱使用同一条记录</span></div>{tasks.map(node => <button className="task-row" key={node.id} onClick={() => onOpen(node.id)}><Lightbulb size={16}/><span><strong>{node.title}</strong><small>{node.body || ''}</small></span><span>{nodeProgress(space.nodes, node.id)}%</span><ChevronRight size={15}/></button>)}{!tasks.length && <p className="muted">在节点信息中添加子任务，完成状态会同步到地图。</p>}</div>;
+  return <div className="content-page"><div className="page-heading"><h2>任务</h2><span className="muted">与图谱使用同一条记录</span></div>{tasks.map(node => <button className="task-row" key={node.id} onClick={() => onOpen(node.id)}><Lightbulb size={16}/><span><strong>{node.title}</strong><small>{node.body || ''}</small></span><ChevronRight size={15}/></button>)}{!tasks.length && <p className="muted">在节点信息中添加子任务。</p>}</div>;
 }
