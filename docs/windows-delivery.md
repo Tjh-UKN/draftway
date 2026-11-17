@@ -48,7 +48,7 @@ npm run build
 npm run test:native-browser
 npm run test:native-business
 npm run test:native-recovery
-npm run test:agent-live -- codex context
+npm run test:agent-live -- pi passthrough
 npm run test:agent-backup
 npm run desktop:next:release
 ```

@@ -40,7 +40,7 @@ export function SessionView({state, session, change, onNode, active = true}: {st
   }
   return <div className="session-view" aria-label={`会话：${session.title}`}><div className="session-context"><span><Terminal size={14}/>{provider}{demo && <small className="simulation-badge">模拟</small>}</span><SessionStatus state={state} session={session}/></div>
     {!demo && session.cwd && <div className="session-directory" title={session.cwd}>{session.cwd}</div>}
-    {node && <div className="session-node-context"><button className="text-button" onClick={() => onNode(node.id)}>{node.title}<ChevronRight size={12}/></button><small>发送时引用节点与材料</small></div>}
+    {node && <div className="session-node-context"><button className="text-button" onClick={() => onNode(node.id)}>{node.title}<ChevronRight size={12}/></button></div>}
     <div className="transcript" ref={transcript} aria-live="polite" onScroll={event=>{const el=event.currentTarget;follow.current=el.scrollHeight-el.scrollTop-el.clientHeight<120;}}>
       {!session.messages.length && <Empty title="开始对话"/>}
       {session.messages.map(message => <article className={`message message-${message.role}`} key={message.id}><span className="message-role">{message.role === 'user' ? '你' : `${provider}${demo ? ' · 模拟回复' : ''}`}</span>{message.role === 'assistant' ? <MarkdownView value={message.text} onOpenLink={runtime ? openLink : undefined} allowRemoteImages={false}/> : <div>{message.text}</div>}</article>)}

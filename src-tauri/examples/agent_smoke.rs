@@ -29,7 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backup_test=std::env::var_os("NORTHSTAR_BACKUP_ONLY").is_some();
     let host = AgentHost::open(if tool_test||backup_test {root.join("agents")}else{root.clone()}, Arc::new(|_| {}))?;
     let backend = std::env::var("NORTHSTAR_AGENT_BACKEND").unwrap_or_else(|_| "codex".into());
-    let session = host.create("smoke".into(), "smoke-workspace".into(), None, backend.clone(), "新的会话".into(), None)?;
+    let passthrough_test=std::env::var_os("NORTHSTAR_PASSTHROUGH_ONLY").is_some();
+    let session = host.create("smoke".into(), "smoke-workspace".into(), if passthrough_test {Some("root".into())}else{None}, backend.clone(), "新的会话".into(), None)?;
     if backup_test {
         if backend!="pi"{return Err("Portable provider-file recovery probe uses Pi".into());}
         std::fs::write(std::path::Path::new(&session.cwd).join("workspace-location.txt"),"NORTHSTAR_OLD_LOCATION")?;
@@ -53,12 +54,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let report = json!({"backend":backend,"passed":["explicit stop is cancelled, not failed", "owned runtime cleanup"],"dataPath":root});
         std::fs::write(format!("artifacts/agent-cancel-{backend}.json"), serde_json::to_vec_pretty(&report)?)?; println!("{report}"); return Ok(());
     }
-    if std::env::var_os("NORTHSTAR_CONTEXT_ONLY").is_some() {
-        let context="\n<Northstar reference material>Verification token: NORTHSTAR_CONTEXT_OK</Northstar reference material>".to_string();
-        host.send_context(&session.id,"context".into(),"Reply with only the verification token in the reference material. Do not use tools.".into(),context.clone())?;
-        let result=wait(&host,&session.id)?;assert_eq!(result.runs[0].context.as_ref(),Some(&context));assert!(result.messages.iter().any(|m|m.role=="assistant" && m.text.contains("NORTHSTAR_CONTEXT_OK")));host.shutdown();
-        let restored=AgentHost::open(root.clone(),Arc::new(|_|{}))?.session(&session.id)?;assert_eq!(restored.runs[0].context.as_ref(),Some(&context));
-        let report=json!({"backend":backend,"passed":["provider receives referenced material", "context snapshot survives restart"],"dataPath":root});std::fs::write(format!("artifacts/agent-context-{backend}.json"),serde_json::to_vec_pretty(&report)?)?;println!("{report}");return Ok(());
+    if passthrough_test {
+        if backend!="pi" {return Err("Provider transcript passthrough probe uses Pi".into());}
+        let prompt=" \t\r\nReply only NORTHSTAR_RAW_OK. Do not use tools.\n格式：\"quotes\"、`code`、\\path\u{2028}中文\r\n\t ".to_string();
+        host.send(&session.id,"passthrough".into(),prompt.clone())?;
+        let result=wait(&host,&session.id)?;host.shutdown();
+        assert!(!result.title.trim().is_empty());
+        assert_eq!(result.messages.iter().find(|m|m.role=="user").unwrap().text,prompt);
+        assert!(result.runs[0].context.is_none());
+        let file=result.source_id.as_ref().ok_or("Missing provider transcript")?.rsplit(['\\','/']).next().ok_or("Missing provider filename")?;
+        let transcript=std::fs::read_to_string(root.join("provider-sessions").join(file))?;
+        let received=transcript.lines().filter_map(|line|serde_json::from_str::<serde_json::Value>(line).ok()).filter(|value|value["message"]["role"]=="user").map(|value|value["message"]["content"].as_array().unwrap().iter().filter_map(|part|part["text"].as_str()).collect::<String>()).collect::<Vec<_>>();
+        assert_eq!(received,vec![prompt.clone()],"Provider must receive exactly the original prompt");
+        let restored=AgentHost::open(root.clone(),Arc::new(|_|{}))?.session(&session.id)?;
+        assert_eq!(restored.messages.iter().find(|m|m.role=="user").unwrap().text,prompt);assert!(restored.runs[0].context.is_none());
+        let report=json!({"backend":backend,"passed":["bound-node message reaches provider unchanged", "leading and trailing whitespace preserved", "no automatic context", "exact prompt survives restart"],"dataPath":root});std::fs::write(format!("artifacts/agent-passthrough-{backend}.json"),serde_json::to_vec_pretty(&report)?)?;println!("{report}");return Ok(());
     }
     host.send(&session.id, "r1".into(), "Reply with exactly NORTHSTAR_OK. Do not use any tools.".into())?;
     let first = wait(&host, &session.id)?;

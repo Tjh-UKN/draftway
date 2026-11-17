@@ -42,7 +42,7 @@ async fn agent_list(state: tauri::State<'_, Arc<native_agents::AgentHost>>) -> R
 #[tauri::command]
 async fn agent_create(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, workspace_id: String, node_id: Option<String>, backend: String, title: String, cwd: Option<String>) -> Result<native_agents::AgentSession> {state.create(id, workspace_id, node_id, backend, title, cwd)}
 #[tauri::command]
-async fn agent_send(state: tauri::State<'_, Arc<native_agents::AgentHost>>, app: tauri::State<'_, AppState>, id: String, run_id: String, text: String) -> Result<native_agents::AgentSession> {let session=state.session(&id)?;let context=resources::context(&app.store,&session.workspace_id,session.node_id.as_deref())?;state.inner().send_context(&id, run_id, text, context)}
+async fn agent_send(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, run_id: String, text: String) -> Result<native_agents::AgentSession> {state.inner().send(&id, run_id, text)}
 #[tauri::command]
 async fn read_material(state: tauri::State<'_, AppState>, workspace_id: String, node_id: String, material_id: String) -> Result<resources::TextFile> {resources::read_material(&state.store,&workspace_id,&node_id,&material_id)}
 #[tauri::command]
