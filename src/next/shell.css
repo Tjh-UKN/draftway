@@ -54,3 +54,15 @@
 .workspace-graph .graph-node-content{cursor:pointer}.workspace-graph .map-node-title{min-width:0;max-width:calc(100% - 30px);flex:0 1 auto;padding:0;display:block;text-align:left;cursor:text}.node-detail-title{font-size:17px;line-height:1.55;font-weight:500;margin:15px 24px 0;overflow-wrap:anywhere;flex-shrink:0}
 
 .workspace-content-host,.personal-knowledge-host{display:flex;flex:1;min-width:0;min-height:0;position:relative}.workspace-content-host[hidden],.personal-knowledge-host[hidden]{display:none}.personal-knowledge-host{flex-direction:column}.personal-knowledge-host>.business-view{flex:1;min-height:0}.global-navigation>button.active{background:#ebebeb;color:#222}.knowledge-collection-error{padding:12px 30px;color:#a13b3b;font-size:12px}.knowledge-collection-error button{margin-left:15px}
+
+.graph-node:focus-within{border-color:#555}.graph-node-menu{position:absolute;width:220px;padding:6px;background:#fff;border:1px solid #e5e5e5;border-radius:10px;box-shadow:0 12px 40px #0002;z-index:30;max-height:calc(100% - 16px);overflow:auto;cursor:default}.graph-node-menu button{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;padding:10px;font-size:12px;border-radius:5px}.graph-node-menu button:hover,.graph-node-menu button:focus-visible{background:#f3f3f3}.graph-node-menu kbd{font-size:10px;color:#999}.graph-node-menu .node-delete-action{color:#a13b3b;border-top:1px solid #eee;margin-top:4px}.graph-edit-error{color:#a13b3b;max-width:65%}.graph-node.node-drop-inside{outline:2px solid #777;outline-offset:3px}.graph-node.node-drop-before:before,.graph-node.node-drop-after:after{content:"";position:absolute;left:0;right:0;height:3px;background:#555}.graph-node.node-drop-before:before{top:-7px}.graph-node.node-drop-after:after{bottom:-7px}
+
+.inspector-node-actions{display:flex;align-items:center;gap:8px}
+
+.graph-node-content:not(.editing){user-select:none}.node-being-dragged{opacity:.5}.node-drag-preview{position:absolute;pointer-events:none;z-index:40;padding:9px 14px;border:1px solid #ddd;background:#fff;border-radius:8px;box-shadow:0 5px 18px #0002;font-size:12px}
+
+.graph-tools{max-width:calc(100% - 48px);flex-wrap:wrap;justify-content:flex-end;gap:12px}.graph-hint{max-width:max(0px,calc(100% - 350px));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.graph-node-menu{width:min(220px,calc(100% - 16px))}
+
+.graph-hint.graph-edit-error{max-width:calc(100% - 48px);bottom:65px;white-space:normal;overflow:visible;font-size:11px;background:#fffffff2;padding:6px 9px;border-radius:5px}
+
+.graph-node.multi-selected{border-color:#666;background:#f8f8f8}.graph-selection-box{position:absolute;pointer-events:none;border:1px solid #777;background:#5551;z-index:15}

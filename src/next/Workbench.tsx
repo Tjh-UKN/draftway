@@ -1,8 +1,10 @@
-import {useCallback, useEffect, useRef, useState, type ReactNode} from 'react';
+import {useCallback, useEffect, useReducer, useRef, useState, type ReactNode} from 'react';
 import {BookOpen, Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, Plus, Search, Settings2, Terminal, X} from 'lucide-react';
-import {addSubtask, closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, mapGraph, openMapTab, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, reviewUrl, editNodeBody, renameMapNode, sessionNodeIds, shellStorageKey, setTaskProgress, updateMapGraph, updateWorkspace, type AgentSession, type GraphState, type Notice, type Workspace} from './core';
+import {addSubtask, closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, mapGraph, openMapTab, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, reviewUrl, editNodeBody, renameMapNode, sessionNodeIds, shellStorageKey, setTaskProgress, updateMapGraph, updateWorkspace, type AgentSession, type GraphState, type Notice, type Workspace, type WorkbenchState} from './core';
 import {reconcileSessions} from './adapters';
 import {GraphView, NodeGlyph, NodeInspector, NodeOverview, TasksView} from './Graph';
+import {mapEditorReducer,initialMapEditor} from './map-editor';
+import {clipboardNodes,copyMapBranch,createMapSibling,deleteMapBranch,moveMapBranch,pasteMapBranch,type NodeClipboard} from './node-operations';
 import {agentNames, integrations} from './integrations';
 import {hasLegacyNodePrimitives, nodeMigrationBackupKey, parseState, storageKey, type MindNode} from './model';
 import {SessionRow, SessionView, type ChangeState} from './Sessions';
@@ -40,7 +42,9 @@ function loadWorkbench() {
 }
 export default function Workbench() {
   const [loaded] = useState(loadWorkbench);
-  const [state, setState] = useState(loaded.state);
+  const [editor,dispatch]=useReducer(mapEditorReducer,loaded.state,initialMapEditor);
+  const state=editor.state;
+  const nodeClipboard=useRef<NodeClipboard|null>(null);
   const current = useRef(state); current.current = state;
   const recentSwitch = useRef<{workspaceId: string; ids: string[]; index: number} | null>(null);
   const [dialog, setDialog] = useState<'workspace' | 'settings' | 'search' | 'link' | 'customize' | null>(null);
@@ -53,7 +57,8 @@ export default function Workbench() {
   const selected = space.nodes.find(n => n.id === mapGraph(space, focusedTabId).selectedId);
   const sessions = state.sessions.filter(s => s.workspaceId === space.id);
   const unread = state.notices.filter(n => !n.read).length;
-  const change: ChangeState = useCallback(update => setState(update), []);
+  const change: ChangeState = useCallback(update => dispatch({type:'change',update}), []);
+  const edit=(workspaceId:string,update:(value:WorkbenchState)=>WorkbenchState,key?:string)=>dispatch({type:'edit',workspaceId,update,key,at:Date.now()});
   const persistence = useWorkbenchPersistence(state, change, loaded.error);
   const knowledge=useKnowledgeCollection(state,persistence.ready&&!persistence.readOnly&&persistence.saved);
   const nativeBrowsers = useNativeBrowserHost(state, change, persistence.ready);
@@ -129,7 +134,7 @@ export default function Workbench() {
   }
 
   useEffect(() => {recentSwitch.current = null;}, [space.id]);
-  function updateNode(node: MindNode) {updateSpace(s => ({...s, nodes: s.nodes.map(n => n.id === node.id ? node : n)}));}
+  function updateNode(node: MindNode) {edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===node.id?{...n,materials:node.materials}:n)})));}
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {event.preventDefault(); setDialog(d => d === 'search' ? null : 'search'); return;}
@@ -168,12 +173,21 @@ export default function Workbench() {
     const nodeSessions = selected ? sessions.filter(s => sessionNodeIds(s).includes(selected.id) || selected.updates?.some(u=>u.sessionId===s.id)) : [];
     const changeView = (graph: GraphState) => changeGraph(graph, tab.id);
     return <div className="workspace-map-scene">
-      <main className="workspace-map" aria-label="工作区"><GraphView key={`${space.id}-${tab.id}`} space={{...space, graph}} onChange={changeView} onInspect={id=>{setNewNodeId(null);changeView({...graph,selectedId:id});}} onRename={(id,title)=>change(s=>renameMapNode(s,space.id,id,title))} autoEditId={newNodeId === graph.selectedId ? newNodeId : null} onAdd={parentId => {if (space.nodes.length >= 250) return; const id = crypto.randomUUID(); change(s => createMapNode(s, space.id, parentId, id, tab.id)); setNewNodeId(id);}} sessionCounts={sessionCounts}/></main>
-      {selected && <NodeInspector key={`${space.id}-${selected.id}`} space={space} node={selected} onEditBody={value=>change(s=>editNodeBody(s,space.id,selected.id,value))} onClose={() => changeView({...graph, selectedId: null})} onFocus={() => changeView({...graph, focusId: selected.id, selectedId: null, collapsed: [], camera: null})}>
-        <div className="inspector-scroll unified-node-details"><NodeOverview key={selected.id} space={space} node={selected} onProgress={(id,progress)=>change(s=>setTaskProgress(s,space.id,id,progress))} onDue={due=>updateSpace(w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,due}:n)}))} onOpen={id=>changeView({...graph,selectedId:id,focusId:null,camera:null})} onAdd={()=>{const id=crypto.randomUUID();change(s=>{const next=addSubtask(s,space.id,selected.id,id);return next===s?s:updateWorkspace(next,space.id,w=>updateMapGraph(w,{...mapGraph(w,tab.id),selectedId:id,focusId:null,collapsed:graph.collapsed.filter(value=>value!==selected.id),camera:null},tab.id));});setNewNodeId(id);}}/>
+      <main className="workspace-map" aria-label="工作区"><GraphView key={`${space.id}-${tab.id}`} space={{...space, graph}} onChange={changeView} editing={{
+        canUndo:!!editor.past[space.id]?.length,canRedo:!!editor.future[space.id]?.length,error:editor.error,
+        undo:()=>{setNewNodeId(null);dispatch({type:'undo',workspaceId:space.id});},redo:()=>{setNewNodeId(null);dispatch({type:'redo',workspaceId:space.id});},
+        sibling:nodeId=>{const id=crypto.randomUUID();edit(space.id,s=>createMapSibling(s,space.id,nodeId,id,tab.id));setNewNodeId(id);},
+        remove:nodeId=>{setNewNodeId(null);edit(space.id,s=>deleteMapBranch(s,space.id,nodeId));},
+        move:(nodeId,targetId,position)=>edit(space.id,s=>moveMapBranch(s,space.id,nodeId,targetId,position,tab.id)),
+        copy:(nodeId,cut)=>{const owner=current.current.spaces.find(w=>w.id===space.id)!;const ids=(typeof nodeId==='string'?[nodeId]:nodeId).filter(id=>owner.nodes.some(n=>n.id===id&&(!cut||n.parentId)));if(!ids.length)return null;const copied=copyMapBranch(owner,ids);nodeClipboard.current=copied;if(cut){setNewNodeId(null);edit(space.id,s=>deleteMapBranch(s,space.id,ids));}return copied;},
+        paste:(nodeId,text,token)=>{try{const internal=text===undefined||token===nodeClipboard.current?.token?nodeClipboard.current:null;const nodes=clipboardNodes(text??nodeClipboard.current?.text??'',internal);const ids=nodes.map(()=>crypto.randomUUID());edit(space.id,s=>pasteMapBranch(s,space.id,nodeId,nodes,ids,tab.id));return ids[0]||null;}catch(error){dispatch({type:'error',message:String(error)});return null;}},
+        failure:message=>dispatch({type:'error',message})
+      }} onInspect={id=>{setNewNodeId(null);changeView({...graph,selectedId:id});}} onRename={(id,title)=>{edit(space.id,s=>renameMapNode(s,space.id,id,title));if(id===newNodeId){setNewNodeId(null);changeView({...graph,selectedId:null});}}} autoEditId={newNodeId === graph.selectedId ? newNodeId : null} onAdd={parentId => {if (space.nodes.length >= 250) return; const id = crypto.randomUUID(); edit(space.id,s => createMapNode(s, space.id, parentId, id, tab.id)); setNewNodeId(id);}} sessionCounts={sessionCounts}/></main>
+      {selected && <NodeInspector key={`${space.id}-${selected.id}`} space={space} node={selected} onDelete={()=>{setNewNodeId(null);edit(space.id,s=>deleteMapBranch(s,space.id,selected.id));}} onEditBody={value=>edit(space.id,s=>editNodeBody(s,space.id,selected.id,value),"body:"+selected.id)} onClose={() => changeView({...graph, selectedId: null})} onFocus={() => changeView({...graph, focusId: selected.id, selectedId: null, collapsed: [], camera: null})}>
+        <div className="inspector-scroll unified-node-details"><NodeOverview key={selected.id} space={space} node={selected} onProgress={(id,progress)=>edit(space.id,s=>setTaskProgress(s,space.id,id,progress))} onDue={due=>edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,due}:n)})))} onOpen={id=>changeView({...graph,selectedId:id,focusId:null,camera:null})} onAdd={()=>{const id=crypto.randomUUID();edit(space.id,s=>{const next=addSubtask(s,space.id,selected.id,id);return next===s?s:updateWorkspace(next,space.id,w=>updateMapGraph(w,{...mapGraph(w,tab.id),selectedId:id,focusId:null,collapsed:graph.collapsed.filter(value=>value!==selected.id),camera:null},tab.id));});setNewNodeId(id);}}/>
           <NodeMaterials key={selected.id} node={selected} onChange={updateNode} onOpen={material => openMaterial(material, selected)}/>
           <section className="node-detail-section"><div className="detail-section-heading"><h3>关联会话（{nodeSessions.length}）</h3></div><BackendPicker text="新建会话" label={`在${selected.title}中新建会话`} onChoose={agent => startSession(agent, selected.id)} onOpen={() => {setInbox(false); updateSpace(w => ({...w, sessionPanelOpen: false}));}} onLink={() => setDialog('link')}/>{nodeSessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!nodeSessions.length && <p className="quiet-note">还没有关联会话</p>}</section>
-          <section className="node-detail-section"><div className="detail-section-heading"><h3>更新记录</h3></div><div className="node-timeline">{[...(selected.updates || [])].reverse().map(update => {const source = sessions.find(s => s.id === update.sessionId); return <div key={update.id}><strong>{update.text}</strong><small>{update.at === 0 && update.id.startsWith('migration-') ? '旧数据迁移' : new Date(update.at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})} · {source ? `${agentNames[source.agentId || 'codex']}${source.integrationId === 'demo-agent' ? '（模拟）' : ''}` : '我'}</small>{source && <button className="text-button" onClick={() => openAgent(source.id)}>查看来源会话<ChevronRight size={12}/></button>}</div>;})}{!selected.updates?.length && <p className="quiet-note">执行结果与手动记录会留在这里</p>}</div><ProgressForm onSubmit={text => {const id = crypto.randomUUID(); const at = Date.now(); updateNode({...selected, updates: [...(selected.updates || []), {id, text, at}]});}}/></section>
+          <section className="node-detail-section"><div className="detail-section-heading"><h3>更新记录</h3></div><div className="node-timeline">{[...(selected.updates || [])].reverse().map(update => {const source = sessions.find(s => s.id === update.sessionId); return <div key={update.id}><strong>{update.text}</strong><small>{update.at === 0 && update.id.startsWith('migration-') ? '旧数据迁移' : new Date(update.at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})} · {source ? `${agentNames[source.agentId || 'codex']}${source.integrationId === 'demo-agent' ? '（模拟）' : ''}` : '我'}</small>{source && <button className="text-button" onClick={() => openAgent(source.id)}>查看来源会话<ChevronRight size={12}/></button>}</div>;})}{!selected.updates?.length && <p className="quiet-note">执行结果与手动记录会留在这里</p>}</div><ProgressForm onSubmit={text => {const id = crypto.randomUUID(); const at = Date.now(); edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,updates:[...(n.updates||[]),{id,text,at}]}:n)})));}}/></section>
         </div>
       </NodeInspector>}
     </div>;

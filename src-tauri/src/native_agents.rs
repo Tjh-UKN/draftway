@@ -83,6 +83,16 @@ impl AgentHost {
     }
     pub fn list(&self) -> Result<Vec<AgentSession>> {let mut all: Vec<_> = self.sessions.lock().map_err(|e| e.to_string())?.values().cloned().collect(); all.sort_by_key(|s| s.created_at); Ok(all)}
     pub fn session(&self, id: &str) -> Result<AgentSession> {self.sessions.lock().map_err(|e| e.to_string())?.get(id).cloned().ok_or_else(|| "会话不存在".into())}
+    pub fn reconcile_nodes(&self,snapshot:&Value)->Result<()> {
+        let changes={let sessions=self.sessions.lock().map_err(|e|e.to_string())?;sessions.values().filter_map(|session|{
+            let front=snapshot["sessions"].as_array()?.iter().find(|s|s["id"]==session.id&&s["workspaceId"]==session.workspace_id)?;
+            let space=snapshot["spaces"].as_array()?.iter().find(|w|w["id"]==session.workspace_id)?;
+            let desired=front["nodeId"].as_str().filter(|id|space["nodes"].as_array().is_some_and(|nodes|nodes.iter().any(|n|n["id"]==*id))).map(String::from);
+            (desired!=session.node_id).then(||(session.id.clone(),session.node_id.clone(),desired))
+        }).collect::<Vec<_>>()};
+        for (id,expected,desired) in changes {self.update(&id,|session|{if session.node_id==expected {session.node_id=desired;}})?;}
+        Ok(())
+    }
     pub fn configure_tools(&self, tools: WorkspaceTools) {if let Ok(mut config)=self.tools.lock(){*config=Some(tools);}}
     fn update(&self, id: &str, change: impl FnOnce(&mut AgentSession)) -> Result<AgentSession> {
         self.update_stream(id, false, change)?.ok_or_else(||"执行记录快照未发布".into())
@@ -286,6 +296,13 @@ pub fn backends() -> Vec<Backend> {["codex", "claude", "pi"].into_iter().map(|id
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn deleting_and_undoing_a_node_only_changes_session_binding(){
+        let root=std::env::temp_dir().join(format!("northstar-node-binding-{}",uuid::Uuid::new_v4()));let host=AgentHost::open(root.clone(),Arc::new(|_|{})).unwrap();let mut session=record();session.node_id=Some("node".into());session.messages.push(Message{id:"user".into(),role:"user".into(),text:"Keep prompt".into(),at:1});host.persist(&session).unwrap();host.sessions.lock().unwrap().insert("s".into(),session);
+        let mut snapshot=json!({"spaces":[{"id":"w","nodes":[{"id":"root"}]}],"sessions":[{"id":"s","workspaceId":"w","nodeId":null}]});host.reconcile_nodes(&snapshot).unwrap();let detached=host.session("s").unwrap();assert!(detached.node_id.is_none());assert_eq!(detached.messages[0].text,"Keep prompt");assert_eq!(detached.runs[0].state,"running");assert_eq!(detached.source_id.as_deref(),Some("thread"));
+        snapshot["spaces"][0]["nodes"]=json!([{"id":"node"}]);snapshot["sessions"][0]["nodeId"]=json!("node");host.reconcile_nodes(&snapshot).unwrap();assert_eq!(host.session("s").unwrap().node_id.as_deref(),Some("node"));
+        host.shutdown();drop(host);assert_eq!(AgentHost::open(root,Arc::new(|_|{})).unwrap().session("s").unwrap().node_id.as_deref(),Some("node"));
+    }
     fn record() -> AgentSession {AgentSession {id: "s".into(), workspace_id: "w".into(), node_id: None, backend: "codex".into(), title: "test".into(), cwd: String::new(), source_id: Some("thread".into()), created_at: 0, revision: 1, messages: vec![], requests: vec![], error: None, runs: vec![Run {id: "run".into(), state: "running".into(), started_at: 0, finished_at: None, source_turn_id: Some("turn".into()), error: None, cancel_requested: false, context: None}]}}
     #[test]
     fn streams_without_duplicate_final_messages_and_never_maps_failure_to_success() {

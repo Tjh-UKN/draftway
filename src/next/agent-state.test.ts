@@ -4,6 +4,11 @@ import {mergeNativeSession, type NativeSession} from './agent-state';
 
 const native = (revision = 1): NativeSession => ({id: 'real', workspaceId: 'design', nodeId: null, backend: 'codex', title: '实际会话', cwd: 'C:\\project', sourceId: 'thread', createdAt: 1, revision, messages: [{id: 'r-item', role: 'assistant', text: '真实结果', at: 2}], runs: [{id: 'r', state: 'succeeded', startedAt: 1, finishedAt: 3, error: null}], requests: [], error: null});
 describe('native session projection', () => {
+  it('never resurrects a deleted node binding from a later native session snapshot',()=>{
+    const initial=createSession(initialWorkbench(),'design',null,'real',1);const payload=native();payload.nodeId='simplicity';
+    expect(mergeNativeSession(initial,payload).sessions[0].nodeId).toBeNull();
+    payload.nodeId='missing';expect(mergeNativeSession(initialWorkbench(),payload).sessions[0].nodeId).toBeNull();
+  });
   it('keeps node identity, drafts and map unchanged while persisting real transcript and source', () => {
     const initial = createSession(initialWorkbench(), 'design', 'link', 'real', 1);
     initial.sessions[0].draft = 'next'; const map = initial.spaces[0].nodes;

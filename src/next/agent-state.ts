@@ -13,7 +13,9 @@ export function mergeNativeSession(state: WorkbenchState, native: NativeSession,
   if (!space || (old && old.workspaceId !== native.workspaceId) || (old?.nativeRevision || 0) >= native.revision) return state;
   const visible = foreground && state.activeId === space.id && groups(space.dock.root).some(group => group.activeId === native.id);
   const changed = native.runs.filter(run => ['succeeded', 'failed', 'needs_input'].includes(run.state) && state.runs.find(old => old.id === run.id)?.state !== run.state);
-  const session: AgentSession = {...old, id: native.id, workspaceId: native.workspaceId, nodeId: old?.nodeId ?? native.nodeId, agentId: native.backend, integrationId: native.backend, title: native.title, messages: native.messages, draft: old?.draft || '', createdAt: native.createdAt, unread: !visible && (!!changed.length || !!old?.unread), cwd: native.cwd, sourceId: native.sourceId, nativeRevision: native.revision, requests: native.requests, connectionError: native.error || undefined};
+  const linked=old?old.nodeId:native.nodeId;
+  const nodeId=space.nodes.some(n=>n.id===linked)?linked:null;
+  const session: AgentSession = {...old, id: native.id, workspaceId: native.workspaceId, nodeId, agentId: native.backend, integrationId: native.backend, title: native.title, messages: native.messages, draft: old?.draft || '', createdAt: native.createdAt, unread: !visible && (!!changed.length || !!old?.unread), cwd: native.cwd, sourceId: native.sourceId, nativeRevision: native.revision, requests: native.requests, connectionError: native.error || undefined};
   const runIds = new Set(native.runs.map(run => run.id));
   const runs = [...state.runs.filter(run => !runIds.has(run.id)), ...native.runs.map(run => ({id: run.id, sessionId: native.id, state: run.state, startedAt: run.startedAt, dueAt: run.finishedAt || run.startedAt, error: run.error, context: run.context || undefined, stopping: !!run.cancelRequested && run.state === 'running'}))];
   const notices = [...state.notices]; const artifacts = [...state.artifacts];

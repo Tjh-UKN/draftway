@@ -37,7 +37,7 @@ async fn review_report(state: tauri::State<'_, Arc<background::Background>>, wor
 #[tauri::command]
 async fn load_shell_state(state: tauri::State<'_, AppState>) -> Result<Option<Value>> {workspace_state::load(&state.store)}
 #[tauri::command]
-async fn save_shell_state(state: tauri::State<'_, AppState>, snapshot: Value) -> Result<()> {workspace_state::save(&state.store, &snapshot)}
+async fn save_shell_state(state: tauri::State<'_, AppState>, agents:tauri::State<'_,Arc<native_agents::AgentHost>>, snapshot: Value) -> Result<()> {workspace_state::save(&state.store, &snapshot)?;agents.reconcile_nodes(&snapshot)}
 #[tauri::command]
 async fn agent_backends() -> Vec<native_agents::Backend> {native_agents::backends()}
 #[tauri::command]
