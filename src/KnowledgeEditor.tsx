@@ -46,7 +46,7 @@ export default function KnowledgeEditor({initial,onClose,inline=false,draftKey,r
   return <div className={`kg-editor ${inline?'note-inline-editor':''} ${markdown?'note-document':''}`} role={inline?'region':'dialog'} aria-modal={inline?undefined:true} aria-label={`${knowledgeLabels[format]}编辑器`}>
     <header className="kg-editor-toolbar">
       {!inline&&<button className="button" disabled={closing} onClick={()=>void close()}><ArrowLeft size={15}/>返回</button>}
-      {markdown?<span className="note-document-label">笔记</span>:<input aria-label="内容标题" maxLength={120} value={record.title} readOnly={initial.archived} onChange={e=>draft.patch({title:e.target.value})}/>}
+      {!markdown&&<input aria-label="内容标题" maxLength={120} value={record.title} readOnly={initial.archived} onChange={e=>draft.patch({title:e.target.value})}/>}
       <span role="status">{status}</span><div className="spacer"/>
       {!markdown&&format!=='mindmap'&&<button className="button" onClick={()=>setSource(old=>!old)}>{source?'预览':'编辑源码'}</button>}
       <button className="icon-button" title="资料与附件" aria-label="资料与附件" aria-expanded={details} onClick={()=>setDetails(old=>!old)}><Info size={16}/></button>
@@ -55,7 +55,7 @@ export default function KnowledgeEditor({initial,onClose,inline=false,draftKey,r
     </header>
     {draft.error&&<p className="note-save-error" role="alert">{draft.error}，草稿仍保留。<button className="text-button" onClick={()=>void flush().catch(()=>{})}>重试保存</button></p>}
     <div className="note-document-layout"><div className="note-document-main">
-      {markdown?<><input className="note-document-title" aria-label="笔记标题" placeholder="未命名笔记" maxLength={120} value={record.title} readOnly={initial.archived} onChange={e=>draft.patch({title:e.target.value})} onKeyDown={e=>{if(e.key==='Enter'&&!e.nativeEvent.isComposing){e.preventDefault();e.currentTarget.parentElement?.querySelector<HTMLElement>('[aria-label="笔记正文"]')?.focus();}}}/><MarkdownEditor autoFocus documentId={record.id} title={record.title} value={record.body} onChange={body=>draft.patch({body})} readOnly={initial.archived} allowRemoteImages={!record.knowledgeSource} onOpenLink={url=>void ctx.run(()=>api.openExternalUrl(url))}/></>
+      {markdown?<MarkdownEditor autoFocus heading={<input className="note-document-title" aria-label="笔记标题" placeholder="未命名笔记" maxLength={120} value={record.title} readOnly={initial.archived} onChange={e=>draft.patch({title:e.target.value})} onKeyDown={e=>{if(e.key==='Enter'&&!e.nativeEvent.isComposing){e.preventDefault();e.currentTarget.closest('.note-writing-surface')?.querySelector<HTMLElement>('[aria-label="笔记正文"]')?.focus();}}}/>} documentId={record.id} title={record.title} value={record.body} onChange={body=>draft.patch({body})} readOnly={initial.archived} allowRemoteImages={!record.knowledgeSource} onOpenLink={url=>void ctx.run(()=>api.openExternalUrl(url))}/>
       :format==='mindmap'?<KnowledgeMapEditor initial={initial} title={record.title} onChange={body=>draft.patch({body})}/>:source?<textarea className="kg-source-editor" aria-label="HTML 源码" value={record.body} readOnly={initial.archived} onChange={e=>draft.patch({body:e.target.value})}/>:<HtmlPreview className="kg-html-full" title="HTML 网页" body={record.body}/>}
     </div>
     {details&&<aside className="note-document-details" aria-label="笔记资料"><header><strong>资料与附件</strong><button className="icon-button" aria-label="关闭笔记资料" onClick={()=>setDetails(false)}><X size={15}/></button></header>

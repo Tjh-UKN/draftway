@@ -1,4 +1,4 @@
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {Bold,Italic,Link2,List} from 'lucide-react';
 import {Compartment,EditorState} from '@codemirror/state';
 import {Decoration,EditorView,keymap,placeholder,ViewPlugin,type DecorationSet,type ViewUpdate} from '@codemirror/view';
@@ -22,7 +22,7 @@ const livePreview=ViewPlugin.fromClass(class {
  build(view:EditorView){return Decoration.set(markdownDecorations(view.state,view.hasFocus,view.visibleRanges).map(range=>range.line?Decoration.line({class:range.className}).range(range.from):Decoration.replace({}).range(range.from,range.to)),true);}
 },{decorations:plugin=>plugin.decorations});
 
-export default function MarkdownEditor({value,onChange,onOpenLink,readOnly=false,allowRemoteImages=true,autoFocus=false,documentId='',title=''}:{value:string;onChange:(value:string)=>void;onOpenLink:(url:string)=>void;readOnly?:boolean;allowRemoteImages?:boolean;autoFocus?:boolean;documentId?:string;title?:string}){
+export default function MarkdownEditor({value,onChange,onOpenLink,readOnly=false,allowRemoteImages=true,autoFocus=false,documentId='',title='',heading}:{value:string;onChange:(value:string)=>void;onOpenLink:(url:string)=>void;readOnly?:boolean;allowRemoteImages?:boolean;autoFocus?:boolean;documentId?:string;title?:string;heading?:ReactNode}){
  const [mode,setMode]=useState<'live'|'source'|'reading'>(readOnly?'reading':'live');const host=useRef<HTMLDivElement>(null);const reading=useRef<HTMLDivElement>(null);const priorMode=useRef(mode);const view=useRef<EditorView|null>(null);const options=useRef({onChange,readOnly});options.current={onChange,readOnly};const live=useRef(new Compartment());const readonly=useRef(new Compartment());
  const revision=useRef(0);const metadata=useRef({id:documentId,title});metadata.current={id:documentId,title};
  const plugins=useNotePlugins({
@@ -41,8 +41,10 @@ export default function MarkdownEditor({value,onChange,onOpenLink,readOnly=false
  useEffect(()=>{view.current?.dispatch({effects:[live.current.reconfigure(mode==='live'?livePreview:[]),readonly.current.reconfigure(EditorState.readOnly.of(readOnly))]});if(mode!=='reading')view.current?.requestMeasure();},[mode,readOnly]);
  useEffect(()=>{if(mode!==priorMode.current){if(mode==='reading')reading.current?.focus();else view.current?.focus();priorMode.current=mode;}},[mode]);
  return <section className={`note-markdown-editor ${mode}`} aria-label="Markdown 笔记编辑器" onKeyDown={event=>{if(event.currentTarget.querySelector('dialog[open]'))return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='e'){event.preventDefault();setMode(old=>old==='reading'?(readOnly?'source':'live'):'reading');}}}>
+  <div className="note-plugin-workarea"><div className="note-writing-surface">
   <header className="note-writing-tools"><div className="note-mode-tabs" role="tablist" aria-label="笔记编辑模式">{([['live','实时预览'],['source','源码'],['reading','阅读']] as const).filter(([key])=>!readOnly||key!=='live').map(([key,label])=><button type="button" role="tab" aria-selected={mode===key} key={key} onClick={()=>setMode(key)}>{label}</button>)}</div><div className="note-tools-right">{mode!=='reading'&&!readOnly&&<div className="note-format-tools">{([{action:'bold',label:'加粗',icon:Bold},{action:'italic',label:'斜体',icon:Italic},{action:'list',label:'列表',icon:List},{action:'link',label:'链接',icon:Link2}] as const).map(({action,label,icon:Icon})=><button type="button" title={label} aria-label={label} key={action} onMouseDown={e=>e.preventDefault()} onClick={()=>insert(action)}><Icon size={14}/></button>)}</div>}{plugins.controls}</div></header>
-  <div className="note-plugin-workarea"><div className="note-writing-surface"><div ref={host} className="note-cm-host" hidden={mode==='reading'}/>
+  {heading}
+  <div ref={host} className="note-cm-host" hidden={mode==='reading'}/>
   {mode==='reading'&&<div ref={reading} className="note-reading" tabIndex={0}>{value?<MarkdownView value={value} allowRemoteImages={allowRemoteImages} onOpenLink={onOpenLink}/>:<p className="muted">空白笔记</p>}</div>}
   </div>{plugins.panel}</div>{plugins.runner}
   <footer className="note-writing-status"><span>Ctrl E 切换阅读 · Ctrl F 查找</span><span>{value.length.toLocaleString()} 字符</span></footer>

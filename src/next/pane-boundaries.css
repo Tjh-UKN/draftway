@@ -1,12 +1,53 @@
-.dock-layout .dock-group{border:1px solid #c9cbd0;border-radius:6px;background:#fff;box-sizing:border-box}
-.dock-layout .dock-group.focused{border-color:#8c9098;box-shadow:inset 0 0 0 1px #8c909817}
-.dock-layout .dock-group-header{background:#f4f4f5;border-bottom-color:#cfd1d5}
-.dock-layout .dock-group.focused>.dock-group-header{background:#eeeef0}
-.dock-layout .dock-tab.active{background:#fff;color:#252525}
-.dock-layout .dock-divider{background:#e6e7e9;z-index:8}
-.dock-layout .dock-divider:hover,.dock-layout .dock-divider:focus-visible{background:#b7bbc3}
-.dock-layout .dock-divider:after{content:'';position:absolute;border-radius:3px;background:#969ba5;pointer-events:none}
-.dock-layout .split-row>.dock-divider:after{width:2px;height:30px;left:50%;top:50%;transform:translate(-50%,-50%)}
-.dock-layout .split-column>.dock-divider:after{width:30px;height:2px;left:50%;top:50%;transform:translate(-50%,-50%)}
-.dock-layout .dock-scene-layer>.dock-scene{border-radius:0 0 5px 5px}
-.dock-layout>.dock-drop-preview{border:2px solid #717e94;background:#d7dfed99}
+.dock-layout {
+  --dock-divider-width: 9px;
+  --dock-seam: #d6d7da;
+}
+
+.dock-layout .dock-group-header {
+  background: #f6f6f7;
+  border-bottom-color: var(--dock-seam);
+  padding-inline: 7px;
+}
+
+.dock-layout .dock-tab.active {
+  background: #fff;
+  color: #363638;
+}
+
+.dock-layout .focused > .dock-group-header .dock-tab.active {
+  border-bottom-color: #484952;
+  color: #171719;
+}
+
+.dock-layout .dock-split > .dock-divider {
+  border: 0;
+  background: #f1f1f3;
+  z-index: 8;
+}
+
+.dock-layout .dock-divider::before,
+.dock-layout .dock-divider::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+
+.dock-layout .split-row > .dock-divider::before { inset: 0 4px; }
+.dock-layout .split-column > .dock-divider::before { inset: 4px 0; }
+.dock-layout .dock-divider::before { background: var(--dock-seam); }
+.dock-layout .dock-divider::after {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 3px;
+  background: #90929a;
+}
+.dock-layout .split-row > .dock-divider::after { width: 3px; height: 28px; }
+.dock-layout .split-column > .dock-divider::after { width: 28px; height: 3px; }
+.dock-layout .dock-split > .dock-divider:hover,
+.resizing-panes .dock-divider:active { background: #e4e5e9; }
+.dock-layout .dock-divider:focus-visible { outline-offset: -2px; }
+.dock-layout > .dock-drop-preview {
+  border: 1px solid #81899b;
+  background: #dce2edb8;
+}

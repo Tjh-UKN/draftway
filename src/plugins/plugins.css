@@ -24,7 +24,7 @@
 .note-tools-right{display:flex;align-items:center;gap:14px}
 .note-plugin-tools{position:relative;display:flex;align-items:center}
 .note-plugin-tools>button{display:flex;align-items:center;justify-content:center;padding:5px;color:var(--muted)}
-.note-plugin-menu{position:absolute;right:0;top:30px;width:240px;max-height:380px;overflow:auto;z-index:25;background:var(--bg);border:1px solid #c9cbd0;box-shadow:0 8px 24px #0001;border-radius:8px;padding:8px}
+.note-plugin-menu{position:absolute;right:0;top:30px;width:min(240px,calc(100cqi - 36px));max-height:380px;overflow:auto;z-index:25;background:var(--bg);border:1px solid var(--note-seam,#c9cbd0);box-shadow:0 8px 24px #0001;border-radius:8px;padding:8px}
 .note-plugin-menu p{font-size:10px;color:var(--muted);padding:8px 10px;margin:0}
 .note-plugin-menu section>span{display:block;padding:8px 10px;font-size:10px;color:var(--muted)}
 .note-plugin-menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;font-size:11px;padding:10px;border:0;background:none;color:var(--text);border-radius:5px}
@@ -33,10 +33,10 @@
 .note-plugin-menu .plugin-manage-entry{border-top:1px solid #dedfe2;margin-top:6px;border-radius:0;padding-top:14px}
 .note-plugin-workarea{display:flex;flex:1;min-height:0;min-width:0}
 .note-writing-surface{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
-.note-extension-panel{display:flex;flex-direction:column;width:260px;flex-shrink:0;border-left:1px solid #c9cbd0;min-height:0;background:var(--bg)}
-.note-extension-panel>header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #dedfe2;font-size:11px}
+.note-extension-panel{display:flex;flex-direction:column;width:min(260px,38%);flex-shrink:0;border-left:1px solid var(--note-seam,#c9cbd0);min-height:0;background:var(--bg)}
+.note-extension-panel>header{display:flex;align-items:center;justify-content:space-between;flex:0 0 41px;padding:0 16px;border-bottom:1px solid var(--line);font-size:11px}
 .plugin-panel-frame{display:flex;flex:1;min-height:0;min-width:0}
 .plugin-panel-frame iframe{width:100%;flex:1;border:0;background:#fff}
 .plugin-command-frame{display:none}
 .plugin-command-error{display:flex;align-items:center;gap:12px;padding:10px 24px;border-top:1px solid #e1e2e4}
-@container (max-width:420px){.note-format-tools{display:none}.note-writing-tools{padding-inline:14px;gap:8px}.note-mode-tabs{gap:10px}.note-writing-status>span:first-child{display:none}.note-plugin-workarea{position:relative}.note-extension-panel{position:absolute;right:0;top:0;bottom:0;width:min(280px,100%);z-index:10;box-shadow:-6px 0 20px #0001}}
+@container (max-width:420px){.note-format-tools{display:none}.note-writing-tools{gap:8px}.note-mode-tabs{gap:10px}.note-writing-status>span:first-child{display:none}.note-plugin-workarea{position:relative}.note-extension-panel{position:absolute;right:0;top:41px;bottom:0;width:min(260px,100%);z-index:10;box-shadow:-6px 0 20px #0001}}
