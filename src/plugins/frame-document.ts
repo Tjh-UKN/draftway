@@ -25,9 +25,11 @@ export function pluginDocument(plugin:PluginPackage,entry?:string){
   const style='<style>:root{color-scheme:light;--northstar-background:#fff;--northstar-foreground:#252525;--northstar-muted:#737373;--northstar-line:#d1d3d7}body{margin:0;background:var(--northstar-background);color:var(--northstar-foreground);font:13px/1.7 "Segoe UI","Microsoft YaHei",sans-serif}</style>';
   if(!entry)return '<!doctype html><meta charset="utf-8">'+sdk+script(plugin.files[plugin.manifest.main!]);
   const document=new DOMParser().parseFromString(plugin.files[entry],'text/html');
+  let expanded=new TextEncoder().encode(plugin.files[entry]+sdk+style).length;
   document.querySelectorAll('base,meta[http-equiv]').forEach(element=>element.remove());
   for(const element of document.querySelectorAll('script[src],link[rel="stylesheet"]')){
     const path=pluginAsset(entry,element.getAttribute(element.tagName==='SCRIPT'?'src':'href')||'');const asset=plugin.files[path];if(asset===undefined)throw Error(`插件资源不存在：${path}`);
+    expanded+=new TextEncoder().encode(asset).length;if(expanded>900_000)throw Error('插件界面资源展开超过 900 KB');
     const replacement=document.createElement(element.tagName==='SCRIPT'?'script':'style');replacement.textContent=asset.replace(/<\/script/gi,'<\\/script');element.replaceWith(replacement);
   }
   return '<!doctype html><html><head><meta charset="utf-8">'+sdk+style+document.head.innerHTML+'</head><body>'+document.body.innerHTML+'</body></html>';
