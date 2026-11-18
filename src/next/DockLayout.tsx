@@ -8,6 +8,7 @@ import {agentNames} from './integrations';
 import {useAgentRuntime} from './NativeAgents';
 import {businessComponents,type BusinessPage} from '../business-components';
 import type {ExternalIntegration} from './integration-manifest';
+import './pane-boundaries.css';
 
 type CreateKind = 'map' | 'browser' | 'review' | 'events' | NonNullable<AgentSession['agentId']> | `business:${BusinessPage}` | `integration:${string}`;
 interface Props {

@@ -1,0 +1,14 @@
+{
+  "manifestVersion": 1,
+  "execution": "sandboxed-ui",
+  "id": "local.note-tools",
+  "name": "笔记工具",
+  "version": "1.0.0",
+  "description": "按需整理 Markdown 空行，并在侧面板浏览和定位笔记标题。",
+  "capabilities": ["note.read", "note.edit", "storage.own"],
+  "main": "main.js",
+  "contributes": {
+    "commands": [{"id": "tidy-lines", "title": "整理多余空行"}],
+    "panels": [{"id": "outline", "title": "笔记大纲", "entry": "panel.html"}]
+  }
+}

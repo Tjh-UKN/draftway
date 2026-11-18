@@ -11,6 +11,7 @@ mod review_service;
 mod background;
 mod resources;
 mod map_ops;
+mod plugins;
 mod workspace_tools;
 pub use workspace_tools::cli as workspace_tools_cli;
 pub use workspace_tools::definitions as workspace_tool_definitions;
@@ -24,6 +25,10 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
 struct AppState {store:Arc<Store>,quit:AtomicBool}
+#[tauri::command]
+fn load_plugins(state:tauri::State<'_,AppState>)->Result<Value>{plugins::load(&state.store)}
+#[tauri::command]
+fn change_plugins(state:tauri::State<'_,AppState>,app:tauri::AppHandle,operation:Value)->Result<Value>{let registry=plugins::change(&state.store,&operation)?;let _=app.emit("northstar-plugins-changed",());Ok(registry)}
 #[tauri::command]
 async fn collect_knowledge(state:tauri::State<'_,AppState>)->Result<usize>{knowledge::collect(&state.store)}
 #[tauri::command]
@@ -268,7 +273,7 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_get,read_workspace_html,open_session_path,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_plugins,change_plugins,html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_get,read_workspace_html,open_session_path,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
                 if invoke.message.webview_ref().state::<AppState>().store.maintenance.load(Ordering::SeqCst)&&invoke.message.command()!="quit_app"{invoke.resolver.reject("正在恢复数据，暂时停止写入");return true;}

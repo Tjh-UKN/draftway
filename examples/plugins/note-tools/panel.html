@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<style>
+body{padding:20px 16px}header{font-size:11px;color:var(--northstar-muted);padding-bottom:18px;border-bottom:1px solid var(--northstar-line)}nav{display:flex;flex-direction:column;gap:8px;padding-top:16px}button{border:0;background:none;text-align:left;color:inherit;cursor:pointer;font:inherit;font-size:12px;line-height:1.8;padding:6px 8px;border-radius:5px}button:hover{background:#f0f0f2}p{font-size:12px;color:var(--northstar-muted);line-height:1.9}
+</style><header>当前笔记</header><nav aria-label="标题大纲"></nav>
+<script>
+async function refresh() {
+  const note = await northstar.note.read();
+  const nav = document.querySelector('nav');
+  nav.replaceChildren();
+  let offset = 0;
+  let fence = null;
+  for (const line of note.text.split('\n')) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) {if (!fence) fence = marker;else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;}
+    const heading = !fence && /^(#{1,6})\s+(.+)$/.exec(line);
+    if (heading) {
+      const button = document.createElement('button');
+      button.textContent = heading[2];
+      button.style.paddingLeft = `${8 + (heading[1].length - 1) * 12}px`;
+      const from = offset;
+      button.onclick = () => northstar.note.select({from, to: from + line.length});
+      nav.append(button);
+    }
+    offset += line.length + 1;
+  }
+  if (!nav.children.length) {const empty = document.createElement('p');empty.textContent = '用 # 写下标题，大纲会出现在这里。';nav.append(empty);}
+}
+northstar.on('note.changed', () => {void refresh();});
+void refresh();
+</script></html>

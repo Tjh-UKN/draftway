@@ -6,6 +6,7 @@ import {parseDrawingScene} from './drawings';
 import {validateKnowledge} from './knowledge-graph';
 import {parseWorkspaceLayout, webWorkspaceUrl, type WorkspaceLayout} from './workspace-layout';
 import {knowledgeNote,refreshKnowledgeNote,knowledgeSourceKey,type KnowledgeCandidate} from './knowledge';
+import {applyPluginOperation,emptyPlugins,parsePluginRegistry,type PluginOperation,type PluginRegistry} from './plugins/manifest';
 
 const host=embeddedInternals();
 const invoke:typeof nativeInvoke=(command,args)=>host?host.invoke(command,args as Record<string,unknown>):nativeInvoke(command,args);
@@ -22,6 +23,17 @@ async function put(store:string,value:unknown,key?:string) {const db=await datab
 async function remove(store:string,id:string) {const db=await database;return new Promise<void>((resolve,reject)=>{const tx=db.transaction(store,'readwrite');tx.objectStore(store).delete(id);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});}
 let serial=Promise.resolve();
 function queue<T>(fn:()=>Promise<T>):Promise<T>{const result=serial.then(fn);serial=result.then(()=>{},()=>{});return result;}
+export async function loadPlugins():Promise<PluginRegistry>{return parsePluginRegistry(desktop?await invoke('load_plugins'):await meta('plugins-v1')||emptyPlugins());}
+export async function changePlugins(operation:PluginOperation):Promise<PluginRegistry>{
+  if(desktop)return parsePluginRegistry(await invoke('change_plugins',{operation}));
+  return queue(async()=>{
+    const db=await database;return new Promise<PluginRegistry>((resolve,reject)=>{
+      const tx=db.transaction('meta','readwrite');const store=tx.objectStore('meta');let next:PluginRegistry;let failure:unknown;
+      const request=store.get('plugins-v1');request.onsuccess=()=>{try{next=applyPluginOperation(parsePluginRegistry(request.result||emptyPlugins()),operation);store.put(next,'plugins-v1');}catch(error){failure=error;tx.abort();}};
+      tx.oncomplete=()=>{const channel=new BroadcastChannel('northstar-plugins');channel.postMessage('changed');channel.close();window.dispatchEvent(new Event('northstar-plugins-changed'));resolve(next);};tx.onerror=tx.onabort=()=>reject(failure||tx.error||Error('插件保存失败'));
+    });
+  });
+}
 export async function saveWorkspaceLayout(layout: WorkspaceLayout): Promise<void> {
   parseWorkspaceLayout(layout);
   return queue(async () => {

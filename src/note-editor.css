@@ -20,6 +20,12 @@
 .kg-editor.note-inline-editor{position:relative;inset:auto;z-index:auto;flex:1;min-width:0;width:100%}
 .note-document .kg-editor-toolbar{min-height:48px;padding:8px 24px;gap:14px}
 .note-document .kg-editor-toolbar>.note-document-label{font-size:11px;color:var(--muted)}
+.notes-workspace .notes-explorer{border-right-color:#c9cbd0}
+.notes-workspace>.notes-explorer{width:clamp(140px,25%,230px)}
+.note-document .kg-editor-toolbar{border-bottom-color:#d1d3d7}
+.note-document .note-markdown-editor{margin:0 24px 18px;border:1px solid #c9cbd0;border-radius:8px;overflow:hidden;container-type:inline-size}
+.note-document .note-writing-tools{padding-top:10px;border-bottom:1px solid #dedfe2;background:var(--panel,var(--bg))}
+.note-document .note-document-details{border-left-color:#c9cbd0}
 .note-document-layout{display:flex;flex:1;min-height:0;min-width:0}
 .note-document-main{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
 .note-document-main>.kg-map-editor{flex:1;min-height:0}
