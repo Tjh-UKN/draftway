@@ -16,13 +16,15 @@ const source='# Markdown 笔记\n\n**重点**与*强调*，还有 ~~删除线~~�
   assert.equal(await page.locator('.note-reading pre code').innerText(),'const ready = true;\nconsole.log(ready);\n');
   await page.getByRole('tab',{name:'源码',exact:true}).click();
   await body.press('Control+End');await body.press('End');await body.press('Shift+Home');await body.press('Control+b');
-  const finalSource=await body.innerText();assert.ok(finalSource.includes('**'));
+  const finalSource=source.replace('[^note]: 这里是脚注。','**[^note]: 这里是脚注。**');
+  const readSource=async()=> (await body.locator('.cm-line').allTextContents()).join('\n');
+  assert.equal(await readSource(),finalSource);
   await body.press('Control+s');await page.getByRole('status').filter({hasText:'已保存'}).waitFor();
   await page.getByRole('button',{name:'欢迎来到北极星',exact:false}).click();
   await page.getByRole('button',{name:'Markdown 完整验证',exact:false}).click();
-  await page.getByRole('tab',{name:'源码',exact:true}).click();assert.equal(await body.innerText(),finalSource);
+  await page.getByRole('tab',{name:'源码',exact:true}).click();assert.equal(await readSource(),finalSource);
   await page.reload();await page.getByRole('button',{name:'Markdown 完整验证',exact:false}).click();
-  await page.getByRole('tab',{name:'源码',exact:true}).click();assert.equal(await body.innerText(),finalSource);
+  await page.getByRole('tab',{name:'源码',exact:true}).click();assert.equal(await readSource(),finalSource);
   const downloaded=page.waitForEvent('download');await page.getByRole('button',{name:'导出笔记',exact:true}).click();const download=await downloaded;assert.equal(fs.readFileSync(await download.path(),'utf8'),finalSource);assert.equal(download.suggestedFilename(),'Markdown 完整验证.md');
   for(const width of [1440,1024,768]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));}
   await page.setViewportSize({width:1440,height:1000});await page.getByRole('tab',{name:'实时预览',exact:true}).click();
