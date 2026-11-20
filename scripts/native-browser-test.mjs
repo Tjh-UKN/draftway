@@ -20,7 +20,7 @@ const server = createServer((request, response) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 env.NORTHSTAR_BROWSER_FIXTURE = `http://127.0.0.1:${server.address().port}/`;
 env.NORTHSTAR_BROWSER_REPORT = path.join(root, 'artifacts/native-browser-runtime.json');
-env.TAURI_CONFIG = JSON.stringify({identifier: 'com.northstar.browser-smoke', build: {frontendDist: '../artifacts/native-browser-smoke-assets'}, app: {windows: [{label: 'main', title: '北极星 · 浏览器运行验证', width: 900, height: 650, decorations: true}]}});
+env.TAURI_CONFIG = JSON.stringify({identifier: 'com.northstar.browser-smoke', build: {frontendDist: '../artifacts/native-browser-smoke-assets'}, app: {windows: [{label: 'main', title: 'Draftway · 浏览器运行验证', width: 900, height: 650, decorations: true}]}});
 const run = (executable, args) => new Promise((resolve, reject) => {
   const child = spawn(executable, args, {env, stdio: 'inherit', windowsHide: true});
   const timeout = setTimeout(() => {child.kill(); reject(new Error(`${executable} timed out`));}, 240000);

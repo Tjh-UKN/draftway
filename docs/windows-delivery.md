@@ -1,6 +1,6 @@
 # Windows 工作区预览交付
 
-运行 `artifacts/native-preview/northstar.exe`；安装包为 `artifacts/Northstar-Workspace-Preview-Setup.exe`。预览的应用标识是 `com.northstar.workbench.preview`，与已安装原版的数据目录分开。安装包仅在本机生成，没有上传为 GitHub Release，也没有合并主分支。
+此前本地预览交付使用 `artifacts/native-preview/northstar.exe`，安装包为 `artifacts/Northstar-Workspace-Preview-Setup.exe`。预览的应用标识是 `com.northstar.workbench.preview`，与已安装原版的数据目录分开。这些文件来自前期本地交付。当前 Draftway 的构建方式见[项目首页](../README.md)。
 
 ## 核心组件
 
@@ -38,7 +38,7 @@
 
 Claude 适配已实现，本机实际生成受现有订阅状态限制。Windows GUI 工具的窗口激活与捕获失败，原生物理按键、鼠标拖放、Obsidian 唤起及系统通知横幅没有完成目视验收；原生 API 检查不能替代这些验收。
 
-材料与 MCP 工作区工具按宿主目录范围校验；执行器的其他工具权限沿用其各自配置。完全退出会停止北极星拥有的执行器；独立检视服务继续由原服务管理。网页登录态、外部项目文件和执行器认证的恢复范围见 [备份说明](backup-recovery.md)。
+材料与 MCP 工作区工具按宿主目录范围校验；执行器的其他工具权限沿用其各自配置。完全退出会停止 Draftway 拥有的执行器；独立检视服务继续由原服务管理。网页登录态、外部项目文件和执行器认证的恢复范围见 [备份说明](backup-recovery.md)。
 
 ## 复现检查
 

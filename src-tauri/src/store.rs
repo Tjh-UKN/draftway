@@ -21,7 +21,7 @@ impl Store {
         fs::create_dir_all(root.join("backups")).map_err(error)?;
         let db=Connection::open(root.join("northstar.sqlite3")).map_err(error)?;
         let version:i64=db.query_row("PRAGMA user_version",[],|r|r.get(0)).map_err(error)?;
-        if version>5 {return Err("数据来自更新版本的北极星，请使用相应版本打开".into());}
+        if version>5 {return Err("数据来自更新版本的 Draftway，请使用相应版本打开".into());}
         db.busy_timeout(std::time::Duration::from_secs(5)).map_err(error)?;
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
           CREATE TABLE IF NOT EXISTS entities(id TEXT PRIMARY KEY, kind TEXT NOT NULL, data TEXT NOT NULL CHECK(json_valid(data)), version INTEGER NOT NULL, archived INTEGER NOT NULL DEFAULT 0, archive_root TEXT);
@@ -48,7 +48,7 @@ impl Store {
               json!({"kind":"project","title":"我的第一个项目","description":"你可以编辑这里的内容，或者新建自己的项目。","goalId":goal,"targetDate":null,"status":"active","id":project}),
               json!({"kind":"task","title":"写下今天最重要的一件事","description":"","projectId":project,"status":"todo","priority":"high","dueAt":null,"remindAt":null,"repeat":"none","completedAt":null,"tags":[],"id":uuid::Uuid::new_v4().to_string()}),
               json!({"kind":"task","title":"为第一个项目设置一个里程碑","description":"","projectId":project,"status":"todo","priority":"normal","dueAt":null,"remindAt":null,"repeat":"none","completedAt":null,"tags":[],"id":uuid::Uuid::new_v4().to_string()}),
-              json!({"kind":"note","title":"欢迎来到北极星","projectId":project,"body":"从左侧导航开始，或者按 Ctrl + N 快速新建。\n\n你的目标、项目、任务、节点和笔记可以互相关联。按 Ctrl + K 搜索全部内容。\n\n数据保存在当前用户的 AppData 目录。备份同时包含数据库与附件。关闭窗口默认进入托盘；需要完全退出时，请使用托盘菜单。\n\n这些入门记录可以编辑或归档。","tags":["入门"],"id":uuid::Uuid::new_v4().to_string()})
+              json!({"kind":"note","title":"欢迎来到 Draftway","projectId":project,"body":"从左侧导航开始，或者按 Ctrl + N 快速新建。\n\n你的目标、项目、任务、节点和笔记可以互相关联。按 Ctrl + K 搜索全部内容。\n\n数据保存在当前用户的 AppData 目录。备份同时包含数据库与附件。关闭窗口默认进入托盘；需要完全退出时，请使用托盘菜单。\n\n这些入门记录可以编辑或归档。","tags":["入门"],"id":uuid::Uuid::new_v4().to_string()})
             ];
             for r in &mut entries {r["createdAt"]=json!(now);r["updatedAt"]=json!(now);r["version"]=json!(1);r["archived"]=json!(false);domain::normalize(r);domain::validate(r)?;write(&tx,r,None)?;}
         }

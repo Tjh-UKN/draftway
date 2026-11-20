@@ -150,7 +150,7 @@ export async function openAttachment(id:string) {if(desktop)return invoke<void>(
 export async function removeAttachment(id:string) {if(desktop)return invoke<void>('remove_attachment',{id});await remove('files',id);}
 export const listBackups=()=>desktop?invoke<BackupInfo[]>('list_backups'):Promise.resolve([]);
 export const createBackup=async()=>{if(!desktop)throw Error('完整备份请在 Windows 应用中操作');await flushHostWorkspace();return invoke<BackupInfo>('create_backup');};
-export async function restoreBackup(name?:string) {if(!desktop)throw new Error('请在 Windows 应用中恢复备份');if(name){await flushHostWorkspace();return invoke<void>('restore_backup',{name,path:null});}const path=await openDialog({multiple:false,directory:false,title:'恢复北极星备份',filters:[{name:'北极星备份',extensions:['zip']}]});if(typeof path==='string'){await flushHostWorkspace();return invoke<void>('restore_backup',{name:null,path});}return false;}
+export async function restoreBackup(name?:string) {if(!desktop)throw new Error('请在 Windows 应用中恢复备份');if(name){await flushHostWorkspace();return invoke<void>('restore_backup',{name,path:null});}const path=await openDialog({multiple:false,directory:false,title:'恢复 Draftway 备份',filters:[{name:'Draftway 备份',extensions:['zip']}]});if(typeof path==='string'){await flushHostWorkspace();return invoke<void>('restore_backup',{name:null,path});}return false;}
 export async function exportBackup(name:string){if(!desktop)return;const path=await saveDialog({defaultPath:name,filters:[{name:'备份压缩包',extensions:['zip']}]});if(path)await invoke('export_backup',{name,path});}
 export const openDataFolder=()=>desktop?invoke<void>('open_data_folder'):Promise.reject(new Error('浏览器预览的数据由浏览器管理'));
 export const testNotification=()=>desktop?invoke<void>('test_notification'):Promise.reject(new Error('请在 Windows 应用中测试系统通知'));
@@ -172,9 +172,9 @@ export async function subscribe(onChange:()=>void,onCapture:()=>void,onReminder:
   return ()=>unlisteners.forEach(fn=>fn());
 }
 export async function exportRecords(records:RecordItem[]) {
-  if(desktop){const path=await saveDialog({defaultPath:`北极星记录-${new Date().toISOString().slice(0,10)}.json`,filters:[{name:'JSON 记录',extensions:['json']}]});if(path)await invoke('export_records',{path});return;}
+  if(desktop){const path=await saveDialog({defaultPath:`Draftway 记录-${new Date().toISOString().slice(0,10)}.json`,filters:[{name:'JSON 记录',extensions:['json']}]});if(path)await invoke('export_records',{path});return;}
   const blob=new Blob([JSON.stringify({format:'northstar-records',version:1,exportedAt:new Date().toISOString(),records},null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`北极星记录-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Draftway 记录-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
 export async function exportDrawingBlob(blob:Blob,name:string,extension:'excalidraw'|'png'|'svg'){
  if(desktop){const path=await saveDialog({defaultPath:name,filters:[{name:'画板文件',extensions:[extension]}]});if(!path)return false;await invoke('export_drawing_file',{path,bytes:Array.from(new Uint8Array(await blob.arrayBuffer()))});return true;}

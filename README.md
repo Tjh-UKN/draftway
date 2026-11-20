@@ -1,12 +1,19 @@
-# 北极星 · 个人工作台
+# Draftway
 
 一个以目标、项目、任务和重要日期为主线的 Windows 桌面应用。采用 Tauri 2、React、TypeScript、Rust 和 SQLite，默认使用深绿主题，支持浅色主题及今日专注布局。
 
 ## 使用
 
-从 [GitHub Releases](https://github.com/Tjh-UKN/northstar-workbench/releases/latest) 下载最新 Windows 64 位版本：`Northstar-v<版本号>-setup.exe` 为安装版，`Northstar.exe` 为直接运行版。私有仓库需要登录获授权的 GitHub 账号后下载。
+从 [Draftway 源码仓库](https://github.com/Tjh-UKN/draftway) 获取项目。私有仓库需要使用已获授权的 GitHub 账号。
 
-安装 `artifacts/北极星-0.6.2-安装程序.exe`。安装后从开始菜单打开 **Northstar**。也可以运行 `artifacts/北极星.exe`，它需要已安装的 Microsoft Edge WebView2 运行环境。
+在装有 Node.js、Rust MSVC 工具链、Microsoft C++ 桌面开发工具和 WebView2 的 Windows 环境中运行：
+
+```powershell
+npm ci
+npm run desktop:next:build
+```
+
+构建完成后运行 `src-tauri/target/debug/northstar.exe`。此处沿用内部可执行文件名，窗口中显示 Draftway。需要构建安装包时，运行 `npm run desktop:next:release`。
 
 ## 工作区重构预览
 
@@ -29,7 +36,7 @@ Windows 运行版与安装包、快捷键和验收边界见 [Windows 交付](doc
 
 工作区可以是已有网页工具。新建工作区时选择“网页工作区（Edge）”，填写名称与完整网页地址；也可从“现有工具”选择自动 PR 检视看板（`http://127.0.0.1:8765/`）。点击工作区标签或“用 Edge 打开”会请求 Microsoft Edge 打开原页面。已有工作区可在“管理工作区”切换类型，原组件配置保留。
 
-网页工作区只保存名称与地址；PR 看板继续使用原服务和原数据。服务需要保持运行。启动北极星或恢复上次工作区不会自动打开浏览器。浏览器预览通过普通网页链接打开新页面；Windows 桌面版通过 Edge 打开。
+网页工作区只保存名称与地址；PR 看板继续使用原服务和原数据。服务需要保持运行。启动 Draftway 或恢复上次工作区不会自动打开浏览器。浏览器预览通过普通网页链接打开新页面；Windows 桌面版通过 Edge 打开。
 
 ## v0.6.1：组件弹窗
 
@@ -135,7 +142,7 @@ Markdown 使用开源 [react-markdown](https://github.com/remarkjs/react-markdow
 - 文件复制到应用的附件目录。移除附件不删除源文件。
 - 归档目标或项目时会一起归档其未归档子记录。恢复时恢复本次一起归档的记录，不恢复此前单独归档的内容。
 - 关闭窗口默认进入托盘，提醒服务继续运行。完全退出请使用托盘菜单“退出”；完全退出后不发送提醒。
-- 系统通知请使用安装后的版本，并在 Windows 通知设置中允许 Northstar。
+- 系统通知请使用安装后的版本，并在 Windows 通知设置中允许 Draftway。
 
 首次运行会创建五条可编辑的入门记录。不会生成虚构行情或财务数据。
 
@@ -165,7 +172,7 @@ Markdown 使用开源 [react-markdown](https://github.com/remarkjs/react-markdow
 
 需要 Node.js 20+、Rust MSVC 工具链、Microsoft C++ 桌面开发工具和 WebView2。项目内 `.tools/` 中的 Rust 工具链由脚本自动识别；从 GitHub 克隆时请使用系统安装的 Rust MSVC 工具链，开发工具链不随仓库上传。
 
-源码仓库不包含 `artifacts/`、本地数据库、个人记录、测试数据、依赖目录或构建缓存。Windows 程序在 Releases 单独提供，构建后也可从 `src-tauri/target/release/` 获取。
+源码仓库不包含 `artifacts/`、本地数据库、个人记录、测试数据、依赖目录或构建缓存。Windows 安装包通过上述构建命令生成。
 
 ```powershell
 npm install

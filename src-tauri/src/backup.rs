@@ -64,7 +64,7 @@ pub fn resolve_backup(store:&Store,name:&str)->Result<PathBuf> {
 fn restore_marker(store:&Store)->PathBuf{store.root.join("restore-in-progress.json")}
 fn mark_restore(store:&Store,name:&str)->Result<()> {let temporary=store.root.join(format!("restore-marker-{}.tmp",uuid::Uuid::new_v4()));let mut file=File::create(&temporary).map_err(error)?;file.write_all(serde_json::to_string(&json!({"version":1,"backup":name})).map_err(error)?.as_bytes()).map_err(error)?;file.sync_all().map_err(error)?;drop(file);fs::rename(temporary,restore_marker(store)).map_err(error)}
 pub fn recover_interrupted(store:&Store)->Result<bool>{let marker=restore_marker(store);if !marker.is_file(){return Ok(false);}let value:serde_json::Value=serde_json::from_slice(&fs::read(marker).map_err(error)?).map_err(error)?;if value["version"]!=1{return Err("恢复保护记录版本不兼容，请保留数据目录中的备份。".into());}let backup=resolve_backup(store,value["backup"].as_str().ok_or("恢复保护记录无效，请保留数据目录中的备份")?)?;store.maintenance.store(true,std::sync::atomic::Ordering::SeqCst);restore_inner(store,&backup,true)?;store.maintenance.store(false,std::sync::atomic::Ordering::SeqCst);Ok(true)}
-pub fn restore(store:&Store,source:&Path)->Result<()> {if restore_marker(store).exists(){return Err("上次恢复尚未结束，请重新打开北极星完成保护恢复。".into());}restore_inner(store,source,false)}
+pub fn restore(store:&Store,source:&Path)->Result<()> {if restore_marker(store).exists(){return Err("上次恢复尚未结束，请重新打开 Draftway 完成保护恢复。".into());}restore_inner(store,source,false)}
 fn restore_inner(store:&Store,source:&Path,recovering:bool)->Result<()> {
     let stage=store.root.join(format!("restore-{}",uuid::Uuid::new_v4()));
     fs::create_dir_all(stage.join("attachments")).map_err(error)?;

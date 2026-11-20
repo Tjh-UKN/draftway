@@ -84,7 +84,7 @@ export function SessionView({state, session, change, onNode, active = true,visib
       {run?.state === 'needs_input' && demo && <div className="run-attention"><CircleAlert size={16}/><span>需要你的输入</span><button className="primary-button" disabled={!adapter} onClick={() => {const at = Date.now(); change(current => adapter!.resume(current, run.id, at));}}>继续模拟</button></div>}
       {!demo && session.requests?.map(request => <AgentRequestForm key={request.id} request={request} onRespond={answer => runtime?.respond(session.id, request.id, answer)}/>)}
       {(session.connectionError || run?.error) && <p className="agent-error" role="alert">{session.connectionError || run?.error}</p>}
-      {run?.state === 'interrupted' && <p className="quiet-note" role="status">北极星退出时本轮尚未结束，消息的处理结果可能尚未确认。查看记录后，可输入新消息继续此会话。</p>}
+      {run?.state === 'interrupted' && <p className="quiet-note" role="status">Draftway 退出时本轮尚未结束，消息的处理结果可能尚未确认。查看记录后，可输入新消息继续此会话。</p>}
       {run?.state === 'cancelled' && <p className="quiet-note">本轮已停止。会话记录保留。</p>}
       {state.artifacts.filter(a => a.sessionId === session.id).map(artifact => {const placed = space.nodes.find(n => n.sourceArtifactId === artifact.id); return <details className="artifact" key={artifact.id}><summary><Check size={14}/>{artifact.title}</summary><p>{artifact.text}</p><button className="text-button" disabled={!placed && space.nodes.length >= 250} onClick={() => {const at = Date.now(); change(current => placeArtifact(current, artifact.id, at)); onNode(placed?.id || `artifact-${artifact.id}`);}}>{placed ? '查看地图节点' : '保留到地图'}<ChevronRight size={13}/></button></details>;})}
       {run?.context && <details className="artifact"><summary>本轮引用的节点与材料</summary><pre className="material-text">{run.context}</pre></details>}
@@ -99,7 +99,7 @@ export function SessionView({state, session, change, onNode, active = true,visib
           sessions:current.sessions.map(item=>item.id===session.id ? {...item,selectedModel:model,selectedEffort:effort} : item),
         }))}
         onRetry={()=>setOptionsRetry(attempt=>attempt+1)}/>}/>
-    <p className="composer-footnote">{demo ? '模拟模式 · 尚未连接真实 Agent' : runtime ? session.nativeRevision ? '由本机执行器运行 · 记录保存在北极星' : session.connectionError ? '会话未就绪，请查看上方错误。' : '正在创建会话…' : '请在 Windows 版继续此会话'}</p>
+    <p className="composer-footnote">{demo ? '模拟模式 · 尚未连接真实 Agent' : runtime ? session.nativeRevision ? '由本机执行器运行 · 记录保存在 Draftway' : session.connectionError ? '会话未就绪，请查看上方错误。' : '正在创建会话…' : '请在 Windows 版继续此会话'}</p>
   </div>;
 }
 

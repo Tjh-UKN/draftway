@@ -132,6 +132,6 @@ export function starter(): RecordItem[] {
   const project = {...makeRecord('project'),title:'我的第一个项目',description:'你可以编辑这里的内容，或者新建自己的项目。',goalId:goal.id} as Project;
   const t1 = {...makeRecord('task'),title:'写下今天最重要的一件事',projectId:project.id,priority:'high'} as Task;
   const t2 = {...makeRecord('task'),title:'为第一个项目设置一个里程碑',projectId:project.id} as Task;
-  const note = {...makeRecord('note'),title:'欢迎来到北极星',projectId:project.id,body:'从左侧导航开始，或者按 Ctrl + N 快速新建。\n\n你的目标、项目、任务、节点和笔记可以互相关联。按 Ctrl + K 搜索全部内容。\n\nWindows 版的数据保存在当前用户的 AppData 目录。备份会同时包含数据库与附件。关闭窗口默认进入托盘；需要完全退出时，请使用托盘菜单。\n\n这些入门记录可以编辑或归档。',tags:['入门']} as Note;
+  const note = {...makeRecord('note'),title:'欢迎来到 Draftway',projectId:project.id,body:'从左侧导航开始，或者按 Ctrl + N 快速新建。\n\n你的目标、项目、任务、节点和笔记可以互相关联。按 Ctrl + K 搜索全部内容。\n\nWindows 版的数据保存在当前用户的 AppData 目录。备份会同时包含数据库与附件。关闭窗口默认进入托盘；需要完全退出时，请使用托盘菜单。\n\n这些入门记录可以编辑或归档。',tags:['入门']} as Note;
   return [goal,project,t1,t2,note];
 }

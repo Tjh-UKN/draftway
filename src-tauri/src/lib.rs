@@ -192,7 +192,7 @@ fn export_markdown(id:String,path:String,state:tauri::State<AppState>)->Result<(
     fs::write(path,domain::text(&record,"body").as_bytes()).map_err(error)
 }
 #[tauri::command]
-fn test_notification(app:tauri::AppHandle)->Result<()> {app.notification().builder().title("北极星 · 提醒测试").body("提醒服务已连接。托盘运行期间会继续检查任务和节点提醒。").show().map_err(error)}
+fn test_notification(app:tauri::AppHandle)->Result<()> {app.notification().builder().title("Draftway · 提醒测试").body("提醒服务已连接。托盘运行期间会继续检查任务和节点提醒。").show().map_err(error)}
 #[tauri::command]
 fn export_drawing_file(path:String,bytes:Vec<u8>)->Result<()> {
     if PathBuf::from(&path).extension().and_then(|e|e.to_str()).is_none_or(|e|!["excalidraw","png","svg","html","md","mindmap"].contains(&e.to_ascii_lowercase().as_str())){return Err("请选择 .excalidraw、.png、.svg、.html、.md 或 .mindmap 文件".into());}
@@ -205,7 +205,7 @@ fn quit_app(app:tauri::AppHandle,state:tauri::State<AppState>){state.quit.store(
 fn send_workspace_notice(app: &tauri::AppHandle, notice: &background::Notice) -> Result<()> {
     #[cfg(windows)] {
         let target_app=app.clone(); let id=notice.id.clone();
-        tauri_winrt_notification::Toast::new(&app.config().identifier).title(&format!("北极星 · {}",notice.title)).text1(&notice.body).on_activated(move |_| {reveal(&target_app); let _=target_app.emit_to("main","notice-activate",id.clone()); Ok(())}).show().map_err(error)
+        tauri_winrt_notification::Toast::new(&app.config().identifier).title(&format!("Draftway · {}",notice.title)).text1(&notice.body).on_activated(move |_| {reveal(&target_app); let _=target_app.emit_to("main","notice-activate",id.clone()); Ok(())}).show().map_err(error)
     }
     #[cfg(not(windows))] {app.notification().builder().title(&notice.title).body(&notice.body).show().map_err(error)}
 }
@@ -225,7 +225,7 @@ fn start_services(app:tauri::AppHandle,store:Arc<Store>) {
                             let db=match store.write_db(){Ok(db)=>db,Err(_)=>continue};
                             let exists:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM reminders WHERE token=?1)",[&token],|r|r.get(0)).unwrap_or(true);
                             if exists{continue;}
-                            if app.notification().builder().title("北极星 · 该推进了").body(domain::text(record,"title")).show().is_ok() {
+                            if app.notification().builder().title("Draftway · 该推进了").body(domain::text(record,"title")).show().is_ok() {
                                 let _=db.execute("INSERT OR IGNORE INTO reminders(token,delivered_at) VALUES(?1,?2)",rusqlite::params![token,domain::now()]);
                                 let _=app.emit("reminder",json!({"id":record["id"],"title":record["title"]}));
                             }
@@ -273,11 +273,11 @@ pub fn run() {
             agents.configure_tools(native_agents::WorkspaceTools{executable:std::env::current_exe()?,root:store.root.clone(),definitions:workspace_tools::definitions()});
             for session in agents.list().map_err(std::io::Error::other)? {background.observe_agent(&session).map_err(std::io::Error::other)?;}
             app.manage(agents); app.manage(background.clone()); background.start();
-            let show=MenuItem::with_id(app,"show","打开北极星",true,None::<&str>)?;
+            let show=MenuItem::with_id(app,"show","打开 Draftway",true,None::<&str>)?;
             let quick=MenuItem::with_id(app,"new","新建任务",true,None::<&str>)?;
             let quit=MenuItem::with_id(app,"quit","退出",true,None::<&str>)?;
             let preview=app.config().identifier.ends_with(".preview");let menu=if preview{Menu::with_items(app,&[&show,&quit])?}else{Menu::with_items(app,&[&show,&quick,&quit])?};
-            TrayIconBuilder::new().icon(app.default_window_icon().ok_or("应用图标缺失")?.clone()).tooltip(if preview{"北极星 · 工作区预览"}else{"北极星 · 个人工作台"}).menu(&menu).show_menu_on_left_click(false)
+            TrayIconBuilder::new().icon(app.default_window_icon().ok_or("应用图标缺失")?.clone()).tooltip(if preview{"Draftway · 工作区预览"}else{"Draftway · 个人工作台"}).menu(&menu).show_menu_on_left_click(false)
                 .on_menu_event(|app,event|match event.id.as_ref(){"show"=>reveal(app),"new"=>{reveal(app);let _=app.emit("quick-capture",());},"quit"=>{app.state::<AppState>().quit.store(true,Ordering::SeqCst);app.exit(0);},_=>()})
                 .on_tray_icon_event(|tray,event|{if let TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}=event{reveal(tray.app_handle());}}).build(app)?;
             if std::env::args().any(|a|a=="--tray")&&!restored {if let Some(w)=app.get_webview_window("main"){let _=w.hide();}}if restored{reveal(app.handle());}
@@ -292,14 +292,14 @@ pub fn run() {
         .invoke_handler({
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_plugins,change_plugins,html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_model_options,agent_prefetch_model_options,agent_list,agent_get,read_workspace_html,open_session_path,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
             move |invoke| {
-                if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
+                if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问 Draftway 宿主命令"); return true;}
                 if invoke.message.webview_ref().state::<AppState>().store.maintenance.load(Ordering::SeqCst)&&invoke.message.command()!="quit_app"{invoke.resolver.reject("正在恢复数据，暂时停止写入");return true;}
                 handler(invoke)
             }
         })
         .build(tauri::generate_context!());
     match application{Ok(application)=>application.run(|app, event| {if let tauri::RunEvent::Exit = event {app.state::<Arc<background::Background>>().stop(); app.state::<Arc<native_agents::AgentHost>>().shutdown();}}),Err(error)=>{
-        #[cfg(windows)]unsafe{use windows::{core::{HSTRING,PCWSTR},Win32::UI::WindowsAndMessaging::{MessageBoxW,MB_OK,MB_ICONERROR}};let text=HSTRING::from(format!("无法打开北极星。\n\n{error}\n\n请保留数据目录和备份后重试。"));let title=HSTRING::from("北极星");let _=MessageBoxW(None,PCWSTR(text.as_ptr()),PCWSTR(title.as_ptr()),MB_OK|MB_ICONERROR);}
-        #[cfg(not(windows))]eprintln!("北极星启动失败：{error}");
+        #[cfg(windows)]unsafe{use windows::{core::{HSTRING,PCWSTR},Win32::UI::WindowsAndMessaging::{MessageBoxW,MB_OK,MB_ICONERROR}};let text=HSTRING::from(format!("无法打开 Draftway。\n\n{error}\n\n请保留数据目录和备份后重试。"));let title=HSTRING::from("Draftway");let _=MessageBoxW(None,PCWSTR(text.as_ptr()),PCWSTR(title.as_ptr()),MB_OK|MB_ICONERROR);}
+        #[cfg(not(windows))]eprintln!("Draftway 启动失败：{error}");
     }}
 }

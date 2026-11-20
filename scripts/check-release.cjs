@@ -1,7 +1,7 @@
 const {spawn}=require('node:child_process');const path=require('node:path');const fs=require('node:fs');const assert=require('node:assert/strict');const crypto=require('node:crypto');
 let playwright;try{playwright=require('playwright');}catch{playwright=require(require.resolve('playwright',{paths:[path.join(process.env.USERPROFILE,'.cache/codex-runtimes/codex-primary-runtime/dependencies/node')]}));}
 (async()=>{
- const exe=path.resolve('artifacts/北极星.exe');let startupLog='';let startupExit=null;const app=spawn(exe,[],{windowsHide:true,env:{...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9240'},stdio:['ignore','pipe','pipe']});app.stdout.on('data',value=>startupLog+=value);app.stderr.on('data',value=>startupLog+=value);app.on('exit',code=>startupExit=code);app.on('error',error=>startupLog+=error.message);
+ const exe=path.resolve('artifacts/Draftway.exe');let startupLog='';let startupExit=null;const app=spawn(exe,[],{windowsHide:true,env:{...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9240'},stdio:['ignore','pipe','pipe']});app.stdout.on('data',value=>startupLog+=value);app.stderr.on('data',value=>startupLog+=value);app.on('exit',code=>startupExit=code);app.on('error',error=>startupLog+=error.message);
  try{
   let browser,page;
   for(let i=0;i<40;i++){try{browser=await playwright.chromium.connectOverCDP('http://127.0.0.1:9240');page=browser.contexts()[0].pages()[0];await page.locator('.workspace-page h1').waitFor({timeout:1000});break;}catch{await new Promise(r=>setTimeout(r,500));}}

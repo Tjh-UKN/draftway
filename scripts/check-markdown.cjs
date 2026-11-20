@@ -20,7 +20,7 @@ const source='# Markdown 笔记\n\n**重点**与*强调*，还有 ~~删除线~~�
   const readSource=async()=> (await body.locator('.cm-line').allTextContents()).join('\n');
   assert.equal(await readSource(),finalSource);
   await body.press('Control+s');await page.getByRole('status').filter({hasText:'已保存'}).waitFor();
-  await page.getByRole('button',{name:'欢迎来到北极星',exact:false}).click();
+  await page.getByRole('button',{name:'欢迎来到 Draftway',exact:false}).click();
   await page.getByRole('button',{name:'Markdown 完整验证',exact:false}).click();
   await page.getByRole('tab',{name:'源码',exact:true}).click();assert.equal(await readSource(),finalSource);
   await page.reload();await page.getByRole('button',{name:'Markdown 完整验证',exact:false}).click();

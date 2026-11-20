@@ -27,7 +27,7 @@ fn label(id: &str) -> String {format!("browser-{id}")}
 fn browser_url(value: &str, host_origin: Option<&str>) -> Result<Url> {
     let url = Url::parse(value).map_err(|_| "网页地址无效")?;
     if !["http", "https"].contains(&url.scheme()) || !url.username().is_empty() || url.password().is_some() || url.host_str().is_none() {return Err("只支持不含登录凭据的 HTTP／HTTPS 地址".into());}
-    if url.host_str().is_some_and(|host| ["tauri.localhost", "ipc.localhost", "asset.localhost"].contains(&host)) || host_origin.is_some_and(|origin| url.origin().ascii_serialization() == origin) {return Err("请通过北极星本身访问工作区界面".into());}
+    if url.host_str().is_some_and(|host| ["tauri.localhost", "ipc.localhost", "asset.localhost"].contains(&host)) || host_origin.is_some_and(|origin| url.origin().ascii_serialization() == origin) {return Err("请通过 Draftway 本身访问工作区界面".into());}
     Ok(url)
 }
 fn validate_snapshot(snapshot: &BrowserSnapshot, origin: Option<&str>) -> Result<()> {
@@ -42,7 +42,7 @@ fn validate_snapshot(snapshot: &BrowserSnapshot, origin: Option<&str>) -> Result
     Ok(())
 }
 fn host_origin(app: &tauri::AppHandle) -> Option<String> {app.config().build.dev_url.as_ref().map(|url| url.origin().ascii_serialization())}
-fn host_only(caller: &Webview) -> Result<()> {if caller.label() == "main" {Ok(())} else {Err("网页不能控制北极星宿主".into())}}
+fn host_only(caller: &Webview) -> Result<()> {if caller.label() == "main" {Ok(())} else {Err("网页不能控制 Draftway 宿主".into())}}
 fn shortcut_key(key:u32,ctrl:bool,alt:bool,shift:bool)->Option<&'static str>{
     if alt&&!ctrl&&!shift{return match key{0x31=>Some("1"),0x32=>Some("2"),0x33=>Some("3"),0x34=>Some("4"),0x35=>Some("5"),0x36=>Some("6"),0x37=>Some("7"),0x38=>Some("8"),0x39=>Some("9"),_=>None};}
     if ctrl&&!alt{return match key{0x09=>Some("Tab"),0x4b if !shift=>Some("k"),0x4c if !shift=>Some("l"),0x54 if !shift=>Some("t"),0x57 if !shift=>Some("w"),0xdb if shift=>Some("["),0xdd if shift=>Some("]"),_=>None};}if !ctrl&&!alt&&!shift&&key==0x75{Some("F6")}else{None}

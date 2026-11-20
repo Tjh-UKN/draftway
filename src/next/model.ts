@@ -24,7 +24,7 @@ export function seedState(): DesignState {
     id: 'design', name: '产品设计', intent: '让想法与行动，在同一个空间生长。', symbol: 'star', components: ['map', 'events', 'notes'], website: '',
     notes: '好的工具，应该让事情变简单。\n\n先有一个清晰的方向，再让想法自然生长。只有需要时，才展开下一层。',
     nodes: [
-      node('northstar', null, '新的北极星', 1, 'root', 0, '一个方向，两种生长。想清楚，然后做出来。'),
+      node('northstar', null, '新的 Draftway', 1, 'root', 0, '一个方向，两种生长。想清楚，然后做出来。'),
       node('think', 'northstar', '想清楚', -1, 'idea', 0, '从想法出发，保留思考的自由。'),
       node('simplicity', 'think', '一个中心，逐层展开', -1, 'idea', 0, '首屏只保留一个中心。复杂度随人的意图出现，而不是一开始堆在眼前。'),
       node('composition', 'think', '工具围绕事情组织', -1, 'idea', 0, '工作区属于业务；组件属于工作区。不同的事情，有不同的工具组合。'),

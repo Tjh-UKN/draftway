@@ -1,7 +1,7 @@
 [package]
 name = "northstar"
 version = "0.6.2"
-description = "北极星个人工作台"
+description = "Draftway 个人工作台"
 authors = ["Northstar"]
 edition = "2021"
 

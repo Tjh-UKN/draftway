@@ -1,4 +1,4 @@
-# 北极星第一阶段：地图与会话骨架
+# Draftway 第一阶段：地图与会话骨架
 
 状态：已实现本地前端骨架，入口 `/next.html`。Windows 原生网页容器已接入独立预览版；Codex、Claude Code、Pi 适配器已实现，Codex 和 Pi 通过真实生命周期验证；原业务数据库迁移和 Review 后台观察继续开发。
 
@@ -31,7 +31,7 @@
 
 原生实现使用仓库锁定的 Tauri 2.12.1 `unstable` 多 WebView API。坐标按宿主实际像素尺寸换算，跟随分隔线、窗口大小和 DPI；菜单、对话框、通知、拖动时暂时隐藏原生视图，关闭后恢复。网页聚焦时的全局工作区快捷键尚未统一拦截。
 
-宿主权限仅授予主 WebView `main`。网页使用独立浏览器配置目录，不能执行北极星自定义命令；导航限定 HTTP／HTTPS，并拒绝宿主和 IPC 地址。不放宽看板的 `X-Frame-Options` 或 CSP。
+宿主权限仅授予主 WebView `main`。网页使用独立浏览器配置目录，不能执行 Draftway 自定义命令；导航限定 HTTP／HTTPS，并拒绝宿主和 IPC 地址。不放宽看板的 `X-Frame-Options` 或 CSP。
 
 `npm run test:native-browser` 启动临时的禁止 iframe 嵌入页面，用原生 API 验证创建、真实历史与后退、隐藏恢复、尺寸换算、访客命令拒绝和关闭释放。设置 `NORTHSTAR_BROWSER_DASHBOARD=http://127.0.0.1:8765/` 可额外加载正在运行的真实 PR 看板。运行结果保存在 `artifacts/native-browser-runtime.json`；本轮 7 项检查通过，真实看板标题为 `PR Review Control`，原响应头仍为 DENY／frame-ancestors none。
 
@@ -87,7 +87,7 @@ Windows GUI 截图工具连续返回 capture timeout，鼠标点测、菜单遮�
 
 ## Orca 源码参考
 
-参考固定为 `stablyai/orca@ea7c94faef45600e7efb6a39bd560cb912e7cf3d`。采用其会话身份独立、宿主管理记录、适配器提供能力和持久化工作现场的机制。当前北极星让地图与会话、网页、审查共享分区与页签；没有移植 Orca 的 Electron 进程管理代码，也未引入 Orca 依赖。
+参考固定为 `stablyai/orca@ea7c94faef45600e7efb6a39bd560cb912e7cf3d`。采用其会话身份独立、宿主管理记录、适配器提供能力和持久化工作现场的机制。当前 Draftway 让地图与会话、网页、审查共享分区与页签；没有移植 Orca 的 Electron 进程管理代码，也未引入 Orca 依赖。
 
 - [会话适配器契约](https://github.com/stablyai/orca/blob/ea7c94faef45600e7efb6a39bd560cb912e7cf3d/src/main/native-chat/agent-session-wire/providers/structured-agent-session-adapter.ts)：宿主记录与提供方执行分离。
 - [Agent 注册表](https://github.com/stablyai/orca/blob/ea7c94faef45600e7efb6a39bd560cb912e7cf3d/src/main/native-chat/agent-session-wire/providers/structured-agent-registry.ts)：只启用有实现的执行能力。

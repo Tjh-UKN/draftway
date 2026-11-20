@@ -57,7 +57,7 @@ export function knowledgeHierarchy(records:RecordItem[],query=''):MindNode[] {
 export async function importKnowledge(file:File,parentId:string|null):Promise<KnowledgeRecord> {
   if(file.size>MAX_SCENE_BYTES)throw Error('文件超过 20 MB');const text=await file.text();const extension=file.name.split('.').at(-1)?.toLowerCase();
   const format=extension==='excalidraw'?'excalidraw':['html','htm'].includes(extension||'')?'html':['mindmap','northmap'].includes(extension||'')?'mindmap':['md','markdown','txt'].includes(extension||'')?'markdown':extension==='json'?(JSON.parse(text).type==='excalidraw'?'excalidraw':'mindmap'):null;
-  if(!format)throw Error('支持 Markdown、HTML、Excalidraw 和北极星思维导图 JSON');
+  if(!format)throw Error('支持 Markdown、HTML、Excalidraw 和 Draftway 思维导图 JSON');
   const record=newKnowledge(format,parentId);record.title=file.name.replace(/\.[^.]+$/,'').slice(0,120)||record.title;
   if(record.kind==='drawing'){parseDrawingScene(text);record.scene=text;}else{record.body=format==='mindmap'?JSON.stringify(parseKnowledgeMap(text)):text;if(new TextEncoder().encode(record.body).length>1_000_000)throw Error('文档超过 1 MB');}
   return record;

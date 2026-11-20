@@ -24,5 +24,5 @@ export default async function(pi) {
   if (typeof pi.registerMcpServer === 'function') {pi.registerMcpServer('northstar', server);return;}
   const require=createRequire(realpathSync(process.argv[1]));
   const {Type}=await import(pathToFileURL(require.resolve('typebox')).href);
-  for(const tool of tools)pi.registerTool({name:tool.name,label:'北极星',description:tool.description,parameters:Type.Unsafe(tool.inputSchema),async execute(_id,params,signal){const result=await callTool(tool.name,params,signal);if(result.isError)throw new Error(result.content.map(part=>part.text||'').join('\n'));return {...result,details:{source:'northstar-workspace'}};}});
+  for(const tool of tools)pi.registerTool({name:tool.name,label:'Draftway',description:tool.description,parameters:Type.Unsafe(tool.inputSchema),async execute(_id,params,signal){const result=await callTool(tool.name,params,signal);if(result.isError)throw new Error(result.content.map(part=>part.text||'').join('\n'));return {...result,details:{source:'northstar-workspace'}};}});
 }

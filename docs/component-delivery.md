@@ -1,4 +1,4 @@
-# 北极星核心组件交付
+# Draftway 核心组件交付
 
 目标：完成 Windows 桌面工作区的实际工作链路，每个阶段验证后提交并推送 `codex/workspace-components`。保留侧栏、留白和直接交互，不扩展为手机界面。
 

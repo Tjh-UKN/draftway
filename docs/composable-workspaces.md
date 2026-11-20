@@ -25,7 +25,7 @@
 
 拖动只调整应用内分区，保持网页和编辑器实例，不关闭会话、不停止 Agent，也不清空网页未提交输入、会话草稿或审查文件。最后一个页签移走后，空分区自动收起。最多保留现有的 8 个分区；达到上限仍能重排和合并已有分区。
 
-交互参考 [Orca 的分区布局](https://www.onorca.dev/docs/model/tabs-panes-splits)；实现核对了 Orca `225baa2477a9d6c4bb5f92933874fb965acf2ee2` 的 [落点区域](https://github.com/stablyai/orca/blob/225baa2477a9d6c4bb5f92933874fb965acf2ee2/src/renderer/src/components/tab-group/drag/tab-drop-zone.ts)与拖拽提交方式，复用北极星已有分区树，没有引入新的布局依赖。
+交互参考 [Orca 的分区布局](https://www.onorca.dev/docs/model/tabs-panes-splits)；实现核对了 Orca `225baa2477a9d6c4bb5f92933874fb965acf2ee2` 的 [落点区域](https://github.com/stablyai/orca/blob/225baa2477a9d6c4bb5f92933874fb965acf2ee2/src/renderer/src/components/tab-group/drag/tab-drop-zone.ts)与拖拽提交方式，复用 Draftway 已有分区树，没有引入新的布局依赖。
 
 ## 布局模板
 
@@ -35,7 +35,7 @@
 
 ## 接入声明
 
-在「自定工作区」导入 `northstar.integration/1` JSON。示例见 [PR 看板声明](../examples/integrations/pr-review.json)。导入后从「＋ → 业务组件 → 接入工具」打开。Windows 版使用隔离的 WebView2；远程页面没有北极星命令权限。
+在「自定工作区」导入 `northstar.integration/1` JSON。示例见 [PR 看板声明](../examples/integrations/pr-review.json)。导入后从「＋ → 业务组件 → 接入工具」打开。Windows 版使用隔离的 WebView2；远程页面没有 Draftway 命令权限。
 
 第一版声明式接入只启用网页入口。声明中的未知能力会保留，不能因此取得运行命令、文件读取或启动/取消检视的权限。本机检视状态观察、Obsidian 材料和 Agent 会话使用已实现并验证过的宿主适配器，分别在相应界面配置。
 

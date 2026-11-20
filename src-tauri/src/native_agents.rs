@@ -120,7 +120,7 @@ impl Rpc {
         Ok(reply["result"].clone())
     }
     fn initialize_codex(&self, timeout: Duration) -> Result<()> {
-        self.request_with_timeout("initialize", json!({"clientInfo":{"name":"northstar_workbench","title":"北极星","version":env!("CARGO_PKG_VERSION")}}), timeout)?;
+        self.request_with_timeout("initialize", json!({"clientInfo":{"name":"northstar_workbench","title":"Draftway","version":env!("CARGO_PKG_VERSION")}}), timeout)?;
         self.write(json!({"method":"initialized"}))
     }
 }
