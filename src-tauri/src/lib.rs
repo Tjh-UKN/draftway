@@ -50,6 +50,16 @@ async fn save_shell_state(state: tauri::State<'_, AppState>, agents:tauri::State
 #[tauri::command]
 async fn agent_backends() -> Result<Vec<native_agents::Backend>> {tauri::async_runtime::spawn_blocking(native_agents::backends).await.map_err(error)}
 #[tauri::command]
+async fn agent_model_options(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String) -> Result<native_agents::ModelOptions> {
+    let host = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || host.model_options(&id)).await.map_err(error)?
+}
+#[tauri::command]
+async fn agent_prefetch_model_options(state: tauri::State<'_, Arc<native_agents::AgentHost>>, backend: String, workspace_id: String, cwd: Option<String>) -> Result<()> {
+    let host = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || host.prefetch_model_options(backend, workspace_id, cwd)).await.map_err(error)?
+}
+#[tauri::command]
 async fn agent_list(state: tauri::State<'_, Arc<native_agents::AgentHost>>) -> Result<Vec<native_agents::AgentSession>> {state.list()}
 #[tauri::command]
 async fn agent_get(state: tauri::State<'_, Arc<native_agents::AgentHost>>,id:String) -> Result<native_agents::AgentSession> {state.session(&id)}
@@ -65,7 +75,10 @@ async fn open_session_path(state:tauri::State<'_,AppState>,agents:tauri::State<'
 #[tauri::command]
 async fn agent_create(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, workspace_id: String, node_id: Option<String>, backend: String, title: String, cwd: Option<String>) -> Result<native_agents::AgentSession> {let host=state.inner().clone();tauri::async_runtime::spawn_blocking(move||host.create(id, workspace_id, node_id, backend, title, cwd)).await.map_err(error)?}
 #[tauri::command]
-async fn agent_send(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, run_id: String, text: String) -> Result<native_agents::AgentSession> {state.inner().send(&id, run_id, text)}
+async fn agent_send(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, run_id: String, text: String, model: Option<String>, effort: Option<String>) -> Result<native_agents::AgentSession> {
+    let host = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || host.send_with_options(&id, run_id, text, model, effort)).await.map_err(error)?
+}
 #[tauri::command]
 async fn read_material(state: tauri::State<'_, AppState>, workspace_id: String, node_id: String, material_id: String) -> Result<resources::TextFile> {resources::read_material(&state.store,&workspace_id,&node_id,&material_id)}
 #[tauri::command]
@@ -253,6 +266,10 @@ pub fn run() {
             let agent_app = app.handle().clone(); let agent_background = background.clone();
             let agents = native_agents::AgentHost::open(store.root.join("agents"), Arc::new(move |session| {let _ = agent_background.observe_agent(session); let _ = agent_app.emit_to("main", "agent-session", session);})).map_err(std::io::Error::other)?;
             let transcript_app=app.handle().clone();agents.configure_transcript_sink(Arc::new(move |frame|{let _=transcript_app.emit_to("main","agent-transcript",frame);}));
+            let catalog_app=app.handle().clone();
+            agents.configure_model_catalog_sink(Arc::new(move |backend,cwd| {
+                let _ = catalog_app.emit_to("main", "agent-model-catalog", serde_json::json!({"backend":backend,"cwd":cwd}));
+            }));
             agents.configure_tools(native_agents::WorkspaceTools{executable:std::env::current_exe()?,root:store.root.clone(),definitions:workspace_tools::definitions()});
             for session in agents.list().map_err(std::io::Error::other)? {background.observe_agent(&session).map_err(std::io::Error::other)?;}
             app.manage(agents); app.manage(background.clone()); background.start();
@@ -273,7 +290,7 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_plugins,change_plugins,html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_list,agent_get,read_workspace_html,open_session_path,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_plugins,change_plugins,html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_model_options,agent_prefetch_model_options,agent_list,agent_get,read_workspace_html,open_session_path,agent_create,agent_send,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问北极星宿主命令"); return true;}
                 if invoke.message.webview_ref().state::<AppState>().store.maintenance.load(Ordering::SeqCst)&&invoke.message.command()!="quit_app"{invoke.resolver.reject("正在恢复数据，暂时停止写入");return true;}

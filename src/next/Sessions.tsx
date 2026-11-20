@@ -1,13 +1,16 @@
-import {useCallback,useState} from 'react';
+import {useCallback,useEffect,useMemo,useState} from 'react';
 import {Check, ChevronRight, CircleAlert, LoaderCircle, MessageSquare, Terminal} from 'lucide-react';
 import {latestRun, placeArtifact, statusNames, type AgentRequest, type AgentSession, type WorkbenchState} from './core';
 import {sessionAdapter} from './adapters';
 import {agentNames} from './integrations';
 import {Empty} from './ui';
-import {useAgentRuntime} from './NativeAgents';
+import {modelCatalogDirectory, useAgentRuntime, type AgentModelOptions} from './NativeAgents';
 import {invoke} from '@tauri-apps/api/core';
+import {listen} from '@tauri-apps/api/event';
 import {SessionComposer} from './SessionComposer';
 import {SessionTranscript} from './SessionTranscript';
+import {RunActivity} from './RunActivity';
+import {AgentComposerOptions} from './AgentComposerOptions';
 import {isHtmlReport,openLocalReport} from './local-report';
 
 export type ChangeState = (update: (state: WorkbenchState) => WorkbenchState) => void;
@@ -22,6 +25,38 @@ export function SessionView({state, session, change, onNode, active = true,visib
   const adapter = sessionAdapter(session.integrationId);
   const runtime = useAgentRuntime();
   const demo = session.integrationId === 'demo-agent';
+  const hasModelOptions = Object.hasOwn(agentNames, session.integrationId);
+  const pi = session.integrationId === 'pi';
+  const hasNativeProgress = session.integrationId === 'codex' || pi;
+  const [modelOptions, setModelOptions] = useState<{scope: string; options?: AgentModelOptions; error?: string} | null>(null);
+  const [optionsRetry, setOptionsRetry] = useState(0);
+  const readModelOptions = runtime?.modelOptions;
+  const {id, integrationId: backend, cwd} = session;
+  const activityRuns = useMemo(() => pi ? state.runs.filter(run => run.sessionId === id) : undefined, [pi, state.runs, id]);
+  const directory = cwd && modelCatalogDirectory(cwd);
+  const modelOptionsScope = JSON.stringify([id, backend, directory]);
+  const fetchOptions = hasModelOptions && !!session.nativeRevision && visible && !runtime?.readOnly;
+  useEffect(() => {
+    if (!readModelOptions || !fetchOptions) return;
+    let active = true;
+    let request = 0;
+    const refresh = () => {
+      if (!active) return;
+      const revision = ++request;
+      void readModelOptions(id).then(
+        options => {if (active && revision === request) setModelOptions({scope: modelOptionsScope, options});},
+        error => {if (active && revision === request) setModelOptions(current => current?.scope === modelOptionsScope && current.options
+          ? current : {scope: modelOptionsScope, error: String(error)});},
+      );
+    };
+    setModelOptions(current => current?.scope === modelOptionsScope && current.options ? current : {scope: modelOptionsScope});
+    const subscription = listen<{backend: string; cwd: string}>('agent-model-catalog', ({payload}) => {
+      if (payload.backend === backend && directory && modelCatalogDirectory(payload.cwd) === directory) refresh();
+    });
+    void subscription.then(refresh, refresh);
+    return () => {active = false; void subscription.then(unlisten => unlisten()).catch(() => {});};
+  }, [readModelOptions, fetchOptions, id, backend, directory, modelOptionsScope, optionsRetry]);
+  const currentOptions = modelOptions?.scope === modelOptionsScope ? modelOptions : undefined;
   const canSend = demo ? !!adapter : !!runtime && !runtime.readOnly && !!session.nativeRevision;
   const [linkError,setLinkError]=useState('');
   const openLink=useCallback((url:string)=>{setLinkError('');void invoke('open_external_url',{url}).catch(error=>setLinkError(String(error)));},[]);
@@ -42,17 +77,28 @@ export function SessionView({state, session, change, onNode, active = true,visib
     {!demo && session.cwd && <div className="session-directory" title={session.cwd}>{session.cwd}</div>}
     {node && <div className="session-node-context"><button className="text-button" onClick={() => onNode(node.id)}>{node.title}<ChevronRight size={12}/></button></div>}
     {linkError&&<p className="agent-error session-file-error" role="alert">{linkError}</p>}
-    <SessionTranscript session={session} store={runtime?.transcripts} provider={provider} demo={demo} visible={visible} onOpenLink={runtime?openLink:undefined} onOpenLocalPath={!demo&&runtime?openLocalPath:undefined}>
+    <SessionTranscript session={session} store={runtime?.transcripts} provider={provider} demo={demo} visible={visible} onOpenLink={runtime?openLink:undefined} onOpenLocalPath={!demo&&runtime?openLocalPath:undefined} activityRuns={activityRuns}>
       {!session.messages.length && <Empty title="开始对话"/>}
-      {run?.state === 'running' && <div className="run-progress"><LoaderCircle size={15} className="spinning"/><span>{run.stopping ? '正在停止…' : '正在回复…'}</span></div>}
+      {run && hasNativeProgress && <RunActivity key={run.id} run={run} placedInTranscript={pi}/>}
+      {!hasNativeProgress && run?.state === 'running' && <div className="run-progress"><LoaderCircle size={15} className="spinning"/><span>{run.stopping ? '正在停止…' : '正在回复…'}</span></div>}
       {run?.state === 'needs_input' && demo && <div className="run-attention"><CircleAlert size={16}/><span>需要你的输入</span><button className="primary-button" disabled={!adapter} onClick={() => {const at = Date.now(); change(current => adapter!.resume(current, run.id, at));}}>继续模拟</button></div>}
       {!demo && session.requests?.map(request => <AgentRequestForm key={request.id} request={request} onRespond={answer => runtime?.respond(session.id, request.id, answer)}/>)}
       {(session.connectionError || run?.error) && <p className="agent-error" role="alert">{session.connectionError || run?.error}</p>}
+      {run?.state === 'interrupted' && <p className="quiet-note" role="status">北极星退出时本轮尚未结束，消息的处理结果可能尚未确认。查看记录后，可输入新消息继续此会话。</p>}
       {run?.state === 'cancelled' && <p className="quiet-note">本轮已停止。会话记录保留。</p>}
       {state.artifacts.filter(a => a.sessionId === session.id).map(artifact => {const placed = space.nodes.find(n => n.sourceArtifactId === artifact.id); return <details className="artifact" key={artifact.id}><summary><Check size={14}/>{artifact.title}</summary><p>{artifact.text}</p><button className="text-button" disabled={!placed && space.nodes.length >= 250} onClick={() => {const at = Date.now(); change(current => placeArtifact(current, artifact.id, at)); onNode(placed?.id || `artifact-${artifact.id}`);}}>{placed ? '查看地图节点' : '保留到地图'}<ChevronRight size={13}/></button></details>;})}
       {run?.context && <details className="artifact"><summary>本轮引用的节点与材料</summary><pre className="material-text">{run.context}</pre></details>}
     </SessionTranscript>
-    <SessionComposer key={session.id} session={session} change={change} active={active} busy={busy} stopping={!!run?.stopping} disabled={demo?!adapter:!runtime} canSend={canSend} onSend={send} onStop={stop}/>
+    <SessionComposer key={session.id} session={session} change={change} active={active} busy={busy} stopping={!!run?.stopping} disabled={demo?!adapter:!runtime} canSend={canSend} onSend={send} onStop={stop}
+      options={runtime && hasModelOptions && <AgentComposerOptions provider={provider} options={currentOptions?.options}
+        error={currentOptions?.error ?? (runtime.readOnly ? '会话为只读' : !session.nativeRevision ? session.connectionError : undefined)}
+        model={session.selectedModel} effort={session.selectedEffort} effectiveModel={session.effectiveModel} effectiveEffort={session.effectiveEffort}
+        disabled={busy || !!runtime.readOnly || !session.nativeRevision}
+        onSelect={(model, effort)=>change(current=>({
+          ...current,
+          sessions:current.sessions.map(item=>item.id===session.id ? {...item,selectedModel:model,selectedEffort:effort} : item),
+        }))}
+        onRetry={()=>setOptionsRetry(attempt=>attempt+1)}/>}/>
     <p className="composer-footnote">{demo ? '模拟模式 · 尚未连接真实 Agent' : runtime ? session.nativeRevision ? '由本机执行器运行 · 记录保存在北极星' : session.connectionError ? '会话未就绪，请查看上方错误。' : '正在创建会话…' : '请在 Windows 版继续此会话'}</p>
   </div>;
 }

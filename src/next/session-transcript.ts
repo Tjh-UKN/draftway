@@ -1,7 +1,30 @@
-import type {Message} from './core';
+import type {Message, Run, RunActivity} from './core';
 
 export interface TranscriptFrame {id:string;baseRevision:number;revision:number;messages:Message[]}
 export interface TranscriptSnapshot {revision:number;messages:Message[]}
+
+export interface TranscriptActivity {
+  item: RunActivity;
+  runId: string;
+  live: boolean;
+  waiting: boolean;
+}
+
+export function activityByMessage(runs?: readonly Run[]): Map<string, TranscriptActivity[]> {
+  const groups = new Map<string, TranscriptActivity[]>();
+  for (const run of runs ?? []) {
+    const waiting = run.state === 'needs_input';
+    const live = run.state === 'running' || waiting;
+    for (const item of run.activity ?? []) {
+      const anchor = item.afterMessageId ?? `${run.id}-user`;
+      const entry = {item, runId: run.id, live, waiting};
+      const group = groups.get(anchor);
+      if (group) group.push(entry);
+      else groups.set(anchor, [entry]);
+    }
+  }
+  return groups;
+}
 
 export function reuseMessages(previous:Message[],next:Message[]):Message[] {
   const byId=new Map(previous.map(message=>[message.id,message]));

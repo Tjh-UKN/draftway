@@ -1,13 +1,14 @@
-import {memo,useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {memo,useCallback,useEffect,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
 import {Send,Square} from 'lucide-react';
 import type {AgentSession} from './core';
 import type {ChangeState} from './Sessions';
 const draftKey=(id:string)=>`northstar-session-draft:${id}`;
 function readDraft(session:AgentSession){try{return localStorage.getItem(draftKey(session.id))??session.draft;}catch{return session.draft;}}
 
-export const SessionComposer=memo(function SessionComposer({session,change,active,busy,stopping,disabled,canSend,onSend,onStop}:{
+export const SessionComposer=memo(function SessionComposer({session,change,active,busy,stopping,disabled,canSend,onSend,onStop,options}:{
   session:AgentSession;change:ChangeState;active:boolean;busy:boolean;stopping:boolean;
   disabled:boolean;canSend:boolean;onSend:(text:string)=>void;onStop:()=>void;
+  options?:ReactNode;
 }){
   const [draft,setDraft]=useState(()=>readDraft(session));
   const [draftError,setDraftError]=useState('');
@@ -41,7 +42,7 @@ export const SessionComposer=memo(function SessionComposer({session,change,activ
       onBlur={flush} onCompositionStart={()=>{composing.current=true;}} onCompositionEnd={()=>{composing.current=false;}}
       onChange={event=>{const value=event.target.value;local.current.value=value;local.current.dirty=true;setDraft(value);try{localStorage.setItem(draftKey(session.id),value);setDraftError('');}catch{setDraftError('草稿暂存在当前窗口，请勿关闭');}}}
       onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing&&!composing.current&&event.nativeEvent.keyCode!==229){event.preventDefault();send();}}}/>
-    <div className="composer-toolbar chat-composer-actions"><span className="composer-key-hint" role={draftError?'alert':undefined}>{draftError||'Shift + Enter 换行'}</span>{busy?
+    <div className="composer-toolbar chat-composer-actions">{options}<span className="composer-key-hint" role={draftError?'alert':undefined}>{draftError||'Shift + Enter 换行'}</span>{busy?
       <button type="button" className="icon-button stop-button" disabled={disabled||stopping} aria-label="停止生成" onClick={onStop}><Square size={14}/></button>:
       <button type="button" className="send-button" aria-label="发送消息" disabled={!draft.trim()||!canSend} onClick={send}><Send size={15}/></button>}
     </div>

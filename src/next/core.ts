@@ -8,7 +8,7 @@ import {emptyGraph, validGraph, type GraphState} from './graph-state';
 export type {GraphState} from './graph-state';
 import {closeDockTab, groups, initialDock, moveDockTab, openDockTab, repairBrowserIds, selectDockTab, validateDock, type DockState, type DockTab} from './docking';
 
-export type RunState = 'running' | 'needs_input' | 'succeeded' | 'failed' | 'cancelled';
+export type RunState = 'running' | 'needs_input' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
 export type DemoOutcome = 'succeeded' | 'needs_input' | 'failed';
 export interface Surface {id: string; integrationId: string; title: string; resourceId?: string; text?: string; url?: string}
 export interface Pane {id: string; tabs: string[]; activeId: string}
@@ -30,9 +30,20 @@ export interface AgentSession {
   title: string; messages: Message[]; draft: string; unread: boolean; createdAt: number;
   agentId?: 'codex' | 'claude' | 'pi'; linkedNodeIds?: string[];
   cwd?: string; sourceId?: string | null; nativeRevision?: number; requests?: AgentRequest[]; connectionError?: string;
+  selectedModel?: string; selectedEffort?: string;
+  effectiveModel?: string; effectiveEffort?: string;
 }
 export interface AgentRequest {id: string; kind: string; title: string; payload: Record<string, unknown>; sourceId: unknown}
 export type MapAction = 'reply' | 'progress' | 'update' | 'artifact';
+export type RunPhase = 'sending' | 'connecting' | 'submitting' | 'executing' | 'responding';
+export interface RunActivity {
+  id: string;
+  kind: 'command' | 'files' | 'search' | 'tool' | 'thinking' | 'plan';
+  title: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  detail?: string;
+  afterMessageId?: string;
+}
 export interface Run {
   id: string; sessionId: string; state: RunState; outcome?: DemoOutcome;
   startedAt: number; dueAt: number;
@@ -40,6 +51,8 @@ export interface Run {
   error?: string | null;
   stopping?: boolean;
   context?: string;
+  phase?: RunPhase;
+  activity?: RunActivity[];
 }
 export interface Artifact {id: string; sessionId: string; runId: string; title: string; text: string}
 export type NoticeTarget = {kind: 'session'; sessionId: string} | {kind: 'report'; url: string; file: string} | {kind: 'workspace'};
@@ -278,7 +291,7 @@ export function applyRunMapChange(state: WorkbenchState, runId: string, at: numb
   })}));
 }
 export const latestRun = (state: WorkbenchState, sessionId: string) => [...state.runs].reverse().find(r => r.sessionId === sessionId);
-export const statusNames: Record<RunState | 'idle', string> = {idle: '未开始', running: '运行中', needs_input: '需要输入', succeeded: '已完成', failed: '失败', cancelled: '已停止'};
+export const statusNames: Record<RunState | 'idle', string> = {idle: '未开始', running: '运行中', needs_input: '需要输入', succeeded: '已完成', failed: '失败', cancelled: '已停止', interrupted: '已中断'};
 
 export function parseWorkbench(value: unknown): WorkbenchState {
   const raw = structuredClone(value) as WorkbenchState;
@@ -319,6 +332,17 @@ export function parseWorkbench(value: unknown): WorkbenchState {
   }
   for (const session of state.sessions) {
     const space = state.spaces.find(s => s.id === session.workspaceId);
+    const legacy = session as AgentSession & {codexModel?: string; codexEffort?: string};
+    const modelOptions = [session.selectedModel, session.selectedEffort, session.effectiveModel, session.effectiveEffort, legacy.codexModel, legacy.codexEffort];
+    if (modelOptions.some(option => option !== undefined && (typeof option !== 'string' || !option.trim() || option.length > 256))) return fail();
+    if (legacy.codexModel !== undefined) {
+      session.selectedModel ??= legacy.codexModel;
+      delete legacy.codexModel;
+    }
+    if (legacy.codexEffort !== undefined) {
+      session.selectedEffort ??= legacy.codexEffort;
+      delete legacy.codexEffort;
+    }
     if ((session.cwd !== undefined && typeof session.cwd !== 'string') || (session.sourceId != null && typeof session.sourceId !== 'string') || (session.nativeRevision !== undefined && (!Number.isInteger(session.nativeRevision) || session.nativeRevision < 1)) || (session.connectionError !== undefined && typeof session.connectionError !== 'string') || (session.requests !== undefined && (!Array.isArray(session.requests) || session.requests.some(request => !request || typeof request.id !== 'string' || typeof request.kind !== 'string' || typeof request.title !== 'string' || !request.payload || typeof request.payload !== 'object')))) return fail();
     if (!space || (session.nodeId !== null && !space.nodes.some(n => n.id === session.nodeId)) || typeof session.integrationId !== 'string' || typeof session.title !== 'string' || typeof session.draft !== 'string' || typeof session.unread !== 'boolean' || !Number.isFinite(session.createdAt) || !Array.isArray(session.messages) || !unique(session.messages) || session.messages.some(m => !['user', 'assistant'].includes(m.role) || typeof m.text !== 'string' || !Number.isFinite(m.at))) return fail();
     if ((session.agentId !== undefined && !['codex', 'claude', 'pi'].includes(session.agentId)) || (session.linkedNodeIds !== undefined && (!Array.isArray(session.linkedNodeIds) || session.linkedNodeIds.some(id => !space.nodes.some(n => n.id === id))))) return fail();

@@ -15,7 +15,7 @@ import {BackendPicker} from './BackendPicker';
 import {NodeMaterials} from './NodeMaterials';
 import {useWorkbenchPersistence} from './persistence';
 import {useNativeBrowserHost} from './native-browser';
-import {AgentRuntimeContext, useAgentRuntime, useNativeAgents} from './NativeAgents';
+import {AgentRuntimeContext, modelCatalogDirectory, useAgentRuntime, useNativeAgents} from './NativeAgents';
 import {useNativeBackground} from './NativeBackground';
 import {ReportView} from './ReportView';
 import {MaterialView} from './MaterialView';
@@ -65,6 +65,30 @@ export default function Workbench() {
   const nativeBrowsers = useNativeBrowserHost(state, change, persistence.ready);
   const agents = useNativeAgents(state, change, persistence.ready,!knowledgeOpen);
   const agentRuntime=useMemo(()=>agents?{...agents,readOnly:persistence.readOnly,backends:persistence.readOnly?[]:agents.backends}:null,[agents,persistence.readOnly]);
+  const prefetchModels = agents?.prefetchModelOptions;
+  const localBackends = agents?.backends;
+  const canPrefetchModels = persistence.ready && !persistence.readOnly && !knowledgeOpen;
+  useEffect(() => {
+    if (!canPrefetchModels || !prefetchModels) return;
+    const scope = new AbortController();
+    for (const backend of localBackends ?? []) {
+      if (backend.available && Object.hasOwn(agentNames, backend.id)) void prefetchModels(backend.id, space.id, space.cwd, scope.signal);
+    }
+    return () => scope.abort();
+  }, [canPrefetchModels, prefetchModels, localBackends, space.id, space.cwd]);
+  const focusedTab = space.dock.tabs.find(tab => tab.id === focusedTabId);
+  const focusedSession = focusedTab?.kind === 'session' ? sessions.find(session => session.id === focusedTab.sessionId) : undefined;
+  const focusedSessionBackend = focusedSession?.integrationId;
+  const focusedSessionCwd = focusedSession?.cwd;
+  useEffect(() => {
+    if (!canPrefetchModels || !prefetchModels || !focusedSessionBackend || !focusedSessionCwd ||
+      (space.cwd && modelCatalogDirectory(focusedSessionCwd) === modelCatalogDirectory(space.cwd))) return;
+    if (localBackends?.some(backend => backend.id === focusedSessionBackend && backend.available)) {
+      const scope = new AbortController();
+      void prefetchModels(focusedSessionBackend, space.id, focusedSessionCwd, scope.signal);
+      return () => scope.abort();
+    }
+  }, [canPrefetchModels, prefetchModels, localBackends, space.id, space.cwd, focusedSessionBackend, focusedSessionCwd]);
   const background = useNativeBackground(state, change, persistence.ready, openNotice);
   const mapError = useMapOperations(state, change, persistence.ready);
   const updateSpace = (update: (space: Workspace) => Workspace) => change(s => updateWorkspace(s, space.id, update));

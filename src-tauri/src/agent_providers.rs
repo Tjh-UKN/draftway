@@ -1,6 +1,14 @@
-use super::{AgentSession, Message, Request, Result, ToolConfig, now};
+use super::{feedback, AgentSession, Message, Request, Result, RunPhase, ToolConfig, now};
 use serde_json::{json, Value};
-use std::{path::{Path, PathBuf}, process::{Command, Stdio}, time::{Duration, Instant}};
+use std::{io::{Read, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, time::{Duration, Instant}};
+
+#[cfg(windows)]
+static PI_WSL_EXECUTABLE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+pub fn invalidate_pi_discovery() {
+    #[cfg(windows)]
+    if let Ok(mut path) = PI_WSL_EXECUTABLE.lock() {*path = None;}
+}
 
 #[derive(Clone)]
 pub struct Provider {pub backend: String, pub program: PathBuf, pub wsl: bool, prefix: Vec<String>}
@@ -15,20 +23,39 @@ pub fn discover(backend: &str) -> Option<Provider> {
             let script = Path::new(&appdata).join(if backend == "claude" {"npm/node_modules/@anthropic-ai/claude-code/cli.js"} else {"npm/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"});
             if script.is_file() {for directory in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {let node = directory.join("node.exe"); if node.is_file() {return Some(Provider {backend: backend.into(), program: node, wsl: false, prefix: vec![script.to_string_lossy().into_owned()]});}}}
         }
+        if backend == "pi" {
+            if let Some(program) = PI_WSL_EXECUTABLE.lock().ok().and_then(|entry| entry.clone()) {
+                return Some(Provider {backend: backend.into(), program, wsl: true, prefix: vec![]});
+            }
+        }
         let mut command = Command::new("wsl.exe");
         command.args(["--exec", "/bin/bash", "-ic", if backend == "claude" {"command -v claude"} else {"command -v pi"}]);
         let output = timed_output(command, 8)?;
         let path = String::from_utf8_lossy(&output).lines().find(|line| line.starts_with('/'))?.trim().to_string();
-        return Some(Provider {backend: backend.into(), program: PathBuf::from(path), wsl: true, prefix: vec![]});
+        let program = PathBuf::from(path);
+        if backend == "pi" {
+            if let Ok(mut entry) = PI_WSL_EXECUTABLE.lock() {*entry = Some(program.clone());}
+        }
+        return Some(Provider {backend: backend.into(), program, wsl: true, prefix: vec![]});
     }
     #[cfg(not(windows))] None
 }
-fn timed_output(mut command: Command, seconds: u64) -> Option<Vec<u8>> {
+fn timed_output(command: Command, seconds: u64) -> Option<Vec<u8>> {
+    timed_output_with_input(command, None, seconds)
+}
+fn timed_output_with_input(mut command: Command, input: Option<Vec<u8>>, seconds: u64) -> Option<Vec<u8>> {
+    command.stdin(if input.is_some() {Stdio::piped()} else {Stdio::null()});
     command.stdout(Stdio::piped()).stderr(Stdio::null());
     #[cfg(windows)] {use std::os::windows::process::CommandExt; command.creation_flags(0x08000000);}
     let mut child = command.spawn().ok()?; let start = Instant::now();
+    let mut stdout = child.stdout.take()?;
+    let output = std::thread::spawn(move || {let mut bytes = Vec::new(); stdout.read_to_end(&mut bytes).ok()?; Some(bytes)});
+    if let Some(input) = input {
+        let mut stdin = child.stdin.take()?;
+        std::thread::spawn(move || {let _ = stdin.write_all(&input);});
+    }
     loop {
-        if child.try_wait().ok()?.is_some() {let output = child.wait_with_output().ok()?; return output.status.success().then_some(output.stdout);}
+        if let Some(status) = child.try_wait().ok()? {return if status.success() {output.join().ok()?} else {None};}
         if start.elapsed() > Duration::from_secs(seconds) {let _ = child.kill(); let _ = child.wait(); return None;}
         std::thread::sleep(Duration::from_millis(40));
     }
@@ -38,6 +65,18 @@ fn wsl_path(path: &str) -> Result<String> {
     let mut command = Command::new("wsl.exe"); command.args(["--exec", "wslpath", "-a", "-u", path]);
     timed_output(command, 8).and_then(|bytes| String::from_utf8(bytes).ok()).map(|s| s.trim().to_string()).filter(|s| s.starts_with('/')).ok_or_else(|| "无法把工作目录转换为 WSL 路径".into())
 }
+fn wsl_paths(paths: &[String]) -> Result<Vec<String>> {
+    let mut command = Command::new("wsl.exe");
+    let script = r#"for path; do case "$path" in /*) converted="$path";; *) converted=$(wslpath -a -u "$path") || exit 1;; esac; printf '%s\0' "$converted"; done"#;
+    command.args(["--exec", "/bin/bash", "-c", script, "northstar"]).args(paths);
+    let output = timed_output(command, 8).and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or("无法批量转换 Pi 的 WSL 路径")?;
+    let translated: Vec<_> = output.split_terminator('\0').map(str::to_owned).collect();
+    if translated.len() != paths.len() || translated.iter().any(|path| !path.starts_with('/')) {
+        return Err("Pi 返回的 WSL 路径不完整".into());
+    }
+    Ok(translated)
+}
 fn relocate_pi_header(path:&Path,cwd:&str)->Result<()> {
     use std::io::{BufRead,Write};
     let mut input=std::io::BufReader::new(std::fs::File::open(path).map_err(|e|e.to_string())?);let mut line=String::new();input.read_line(&mut line).map_err(|e|e.to_string())?;let mut header:Value=serde_json::from_str(&line).map_err(|_|"Pi 来源会话头无效，历史文件已保留")?;
@@ -45,30 +84,88 @@ fn relocate_pi_header(path:&Path,cwd:&str)->Result<()> {
     let temporary=path.with_extension(format!("{}.tmp",uuid::Uuid::new_v4()));let result=(||{let mut output=std::fs::File::create(&temporary).map_err(|e|e.to_string())?;serde_json::to_writer(&mut output,&header).map_err(|e|e.to_string())?;output.write_all(b"\n").map_err(|e|e.to_string())?;std::io::copy(&mut input,&mut output).map_err(|e|e.to_string())?;output.sync_all().map_err(|e|e.to_string())?;drop(output);drop(input);std::fs::rename(&temporary,path).map_err(|e|e.to_string())})();if result.is_err(){let _=std::fs::remove_file(temporary);}result
 }
 impl Provider {
-    pub fn command(&self, cwd: &str, source: Option<&str>, session_root: &Path, tools: Option<&ToolConfig>) -> Result<(Command, Option<String>, Option<String>)> {
+    pub fn pi_model_scope(&self, cwd: &str, models: &Value) -> Option<Vec<String>> {
+        let helper = include_str!("pi-model-scope.mjs");
+        let command = if self.wsl {
+            let mut command = Command::new("wsl.exe");
+            command.args(["--cd", cwd, "--exec", "/bin/bash", "-ic",
+                r#"dist="$(dirname "$(readlink -f "$1")")"; exec node --input-type=module -e "$2" "$dist/index.js""#,
+                "northstar"]).arg(&self.program).arg(helper);
+            command
+        } else {
+            let cli = Path::new(self.prefix.first()?);
+            let mut command = Command::new(&self.program);
+            command.current_dir(cwd).args(["--input-type=module", "-e", helper]).arg(cli.with_file_name("index.js"));
+            command
+        };
+        let inventory: Vec<_> = models.as_array()?.iter().map(|model| json!({
+            "id":model["id"], "provider":model["provider"], "name":model["name"], "reasoning":model["reasoning"],
+            "thinkingLevelMap":model["thinkingLevelMap"]
+        })).collect();
+        let bytes = timed_output_with_input(command, Some(serde_json::to_vec(&inventory).ok()?), 5)?;
+        serde_json::from_slice(bytes.split(|&byte| byte == b'\n').rfind(|line| line.starts_with(b"["))?).ok()
+    }
+    pub fn command(&self, cwd: &str, source: Option<&str>, session_root: &Path, tools: Option<&ToolConfig>, probe: bool, (model, effort): (Option<&str>, Option<&str>)) -> Result<(Command, Option<String>, Option<String>)> {
         let mut args: Vec<String> = Vec::new(); let mut planned = None;
-        let runtime_cwd=if self.wsl{wsl_path(cwd)?}else{cwd.into()};
+        let pi_file = (self.backend == "pi" && !probe).then(|| source.map(String::from)
+            .unwrap_or_else(|| session_root.join(format!("{}.jsonl", uuid::Uuid::new_v4())).to_string_lossy().into_owned()));
+        let pi_owned = pi_file.as_ref().and_then(|file| file.rsplit(['\\', '/']).next())
+            .map(|name| session_root.join(name)).filter(|path| path.is_file());
+        let pi_extension = if self.backend == "pi" {
+            tools.map(|tools| tools.args.last().ok_or("缺少工具会话范围")
+                .map(|id| session_root.join(format!("northstar-{id}.ts")))).transpose()?
+        } else { None };
+        let pi_paths = if let Some(file) = pi_file.as_ref().filter(|_| self.wsl) {
+            let mut paths = vec![cwd.to_owned(), file.clone()];
+            paths.extend(pi_owned.as_ref().map(|path| path.to_string_lossy().into_owned()));
+            paths.extend(tools.map(|tool| tool.command.clone()));
+            paths.extend(pi_extension.as_ref().map(|path| path.to_string_lossy().into_owned()));
+            let translated = wsl_paths(&paths)?;
+            paths.into_iter().zip(translated).collect::<Vec<_>>()
+        } else { Vec::new() };
+        let translate = |path: &str| -> Result<String> {
+            if !self.wsl { return Ok(path.to_owned()); }
+            if !pi_paths.is_empty() {
+                return pi_paths.iter().find(|(original, _)| original == path)
+                    .map(|(_, translated)| translated.clone()).ok_or_else(|| "未找到 Pi 的 WSL 路径".into());
+            }
+            wsl_path(path)
+        };
+        let runtime_cwd = if probe { cwd.into() } else { translate(cwd)? };
         match self.backend.as_str() {
             "codex" => args.extend(["app-server", "--listen", "stdio://"].map(String::from)),
             "claude" => {
                 args.extend(["--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", "manual", "--permission-prompts", "host"].map(String::from));
-                let id = source.map(String::from).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                args.extend([if source.is_some() {"--resume"} else {"--session-id"}.to_string(), id.clone()]); planned = Some(id);
+                if probe {
+                    args.extend(["--no-session-persistence", "--strict-mcp-config", "--settings", r#"{"disableAllHooks":true}"#].map(String::from));
+                } else {
+                    let id = source.map(String::from).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    args.extend([if source.is_some() {"--resume"} else {"--session-id"}.to_string(), id.clone()]); planned = Some(id);
+                    if let Some(model) = model {args.extend(["--model".into(), model.into()]);}
+                    if let Some(effort) = effort {args.extend(["--effort".into(), effort.into()]);}
+                }
             },
+            "pi" if probe => args.extend(["--mode", "rpc", "--no-session"].map(String::from)),
             "pi" => {
                 std::fs::create_dir_all(session_root).map_err(|e| e.to_string())?;
-                let file = source.map(String::from).unwrap_or_else(|| session_root.join(format!("{}.jsonl", uuid::Uuid::new_v4())).to_string_lossy().into_owned());
-                let file = if self.wsl {wsl_path(&file)?} else {file};
-                if let Some(name)=file.rsplit(['\\','/']).next(){let owned=session_root.join(name);if owned.is_file(){let expected=if self.wsl{wsl_path(&owned.to_string_lossy())?}else{owned.to_string_lossy().into_owned()};if file==expected{relocate_pi_header(&owned,&runtime_cwd)?;}}}
+                let file = translate(pi_file.as_deref().ok_or("缺少 Pi 会话路径")?)?;
+                if let Some(owned) = &pi_owned {
+                    if file == translate(&owned.to_string_lossy())? { relocate_pi_header(owned, &runtime_cwd)?; }
+                }
                 args.extend(["--mode".into(), "rpc".into(), "--session".into(), file.clone()]); planned = Some(file);
             },
             _ => return Err("不支持的执行器".into()),
         }
         if let Some(tools)=tools {
-            let executable=if self.wsl {wsl_path(&tools.command)?}else{tools.command.clone()};
+            let executable=translate(&tools.command)?;
             let server=json!({"command":executable,"args":tools.args});
             if self.backend=="claude" {args.extend(["--mcp-config".into(),json!({"mcpServers":{"northstar":server}}).to_string()]);}
-            if self.backend=="pi" {std::fs::create_dir_all(session_root).map_err(|e|e.to_string())?;let path=session_root.join(format!("northstar-{}.ts",tools.args.last().ok_or("缺少工具会话范围")?));let code=include_str!("pi-workspace-tools.ts").replace("__NORTHSTAR_SERVER__",&server.to_string()).replace("__NORTHSTAR_TOOLS__",&tools.definitions.to_string());std::fs::write(&path,code).map_err(|e|e.to_string())?;let path=if self.wsl{wsl_path(&path.to_string_lossy())?}else{path.to_string_lossy().into_owned()};args.extend(["--extension".into(),path]);}
+            if let Some(path) = pi_extension {
+                std::fs::create_dir_all(session_root).map_err(|e|e.to_string())?;
+                let code=include_str!("pi-workspace-tools.ts").replace("__NORTHSTAR_SERVER__",&server.to_string()).replace("__NORTHSTAR_TOOLS__",&tools.definitions.to_string());
+                std::fs::write(&path,code).map_err(|e|e.to_string())?;
+                args.extend(["--extension".into(), translate(&path.to_string_lossy())?]);
+            }
         }
         let token = self.wsl.then(|| uuid::Uuid::new_v4().to_string());
         let mut command = if self.wsl {
@@ -101,10 +198,23 @@ pub fn reply(backend: &str, value: &Value) -> Option<(u64, Value)> {
 }
 fn text(content: &Value) -> String {content.as_array().map(|items| items.iter().filter(|part| part["type"] == "text").filter_map(|part| part["text"].as_str()).collect::<Vec<_>>().join("\n\n")).unwrap_or_default()}
 fn assistant(session: &mut AgentSession, value: &str, replace: bool) {
+    assistant_segment(session, value, replace, None, 0);
+}
+fn assistant_segment(session: &mut AgentSession, value: &str, replace: bool, timestamp: Option<u64>, block: usize) {
     let Some(run) = session.runs.last().filter(|run| ["running", "needs_input"].contains(&run.state.as_str())) else {return;};
-    if value.is_empty() {return;} let key = format!("{}-assistant", run.id);
-    if !session.messages.iter().any(|message| message.id == key) {session.messages.push(Message {id: key.clone(), role: "assistant".into(), text: String::new(), at: now()});}
-    let message = session.messages.iter_mut().find(|message| message.id == key).unwrap();
+    if value.is_empty() {return;}
+    let key = match (timestamp, block) {
+        (Some(at), _) => format!("{}-assistant-{at}-{block}", run.id),
+        (None, 0) => format!("{}-assistant", run.id),
+        (None, _) => format!("{}-assistant-{block}", run.id),
+    };
+    let message = match session.messages.iter().position(|message| message.id == key) {
+        Some(index) => &mut session.messages[index],
+        None => {
+            session.messages.push(Message {id: key, role: "assistant".into(), text: String::new(), at: timestamp.unwrap_or_else(now)});
+            session.messages.last_mut().unwrap()
+        }
+    };
     if replace {message.text = value.into();} else {message.text.push_str(value);}
 }
 fn finish(session: &mut AgentSession, state: &str, error: Option<String>) {
@@ -116,14 +226,25 @@ fn finish(session: &mut AgentSession, state: &str, error: Option<String>) {
 pub fn relevant(backend: &str, value: &Value) -> bool {
     match backend {
         "claude" => if value["type"] == "stream_event" {value["parent_tool_use_id"].is_null() && value["event"]["delta"]["type"] == "text_delta"} else {["system", "assistant", "result", "control_request"].contains(&value["type"].as_str().unwrap_or(""))},
-        "pi" => if value["type"] == "message_update" {value["assistantMessageEvent"]["type"] == "text_delta"} else {["agent_start", "agent_end", "agent_settled", "message_end", "extension_ui_request"].contains(&value["type"].as_str().unwrap_or(""))},
+        "pi" => match value["type"].as_str().unwrap_or("") {
+            "message_update" => ["text_delta", "thinking_start", "thinking_end"].contains(&value["assistantMessageEvent"]["type"].as_str().unwrap_or("")),
+            "message_end" => value["message"]["role"] == "assistant",
+            "extension_error" => value["event"] == "command",
+            "agent_start" | "agent_settled" | "tool_execution_start" | "tool_execution_end" |
+            "auto_retry_start" | "auto_retry_end" | "auto_compaction_start" | "auto_compaction_end" |
+            "extension_ui_request" => true,
+            _ => false,
+        },
         _ => false,
     }
 }
 pub fn apply_event(session: &mut AgentSession, value: &Value) {
     if session.backend == "claude" {
         match value["type"].as_str().unwrap_or("") {
-            "system" if value["subtype"] == "init" => {if let Some(id) = value["session_id"].as_str() {session.source_id = Some(id.into());}},
+            "system" if value["subtype"] == "init" => {
+                if let Some(id) = value["session_id"].as_str() {session.source_id = Some(id.into());}
+                if let Some(model) = value["model"].as_str() {session.effective_model = Some(model.into());}
+            },
             "stream_event" if value["parent_tool_use_id"].is_null() && value["event"]["delta"]["type"] == "text_delta" => assistant(session, value["event"]["delta"]["text"].as_str().unwrap_or(""), false),
             "assistant" if value["parent_tool_use_id"].is_null() => assistant(session, &text(&value["message"]["content"]), true),
             "result" => {
@@ -143,11 +264,44 @@ pub fn apply_event(session: &mut AgentSession, value: &Value) {
             _ => {}
         }
     } else if session.backend == "pi" {
+        let Some(run) = session.runs.last_mut().filter(|run| ["running", "needs_input"].contains(&run.state.as_str())) else {return;};
+        if let Some(mut activity) = feedback::pi_activity(value) {
+            activity.after_message_id = session.messages.last().map(|message| message.id.clone());
+            feedback::upsert(&mut run.activity, activity);
+            return;
+        }
         match value["type"].as_str().unwrap_or("") {
-            "agent_start" => {if let Some(run) = session.runs.last_mut() {if run.state != "cancelled" {run.error = None;}}},
-            "message_update" if value["assistantMessageEvent"]["type"] == "text_delta" => assistant(session, value["assistantMessageEvent"]["delta"].as_str().unwrap_or(""), false),
+            "agent_start" => {run.advance_phase(RunPhase::Executing); run.error = None;},
+            "extension_error" if value["event"] == "command" && run.phase == Some(RunPhase::Submitting) => {
+                run.error = Some(value["error"].as_str().unwrap_or("Pi 扩展命令执行失败").chars().take(1000).collect());
+            }
+            "message_update" if value["assistantMessageEvent"]["type"] == "text_delta" => {
+                run.advance_phase(RunPhase::Responding);
+                let update = &value["assistantMessageEvent"];
+                let message = &value["message"];
+                let partial = &update["partial"];
+                let at = message["timestamp"].as_u64().or_else(|| partial["timestamp"].as_u64());
+                let blocks = partial["content"].as_array().or_else(|| message["content"].as_array());
+                let index = update["contentIndex"].as_u64().and_then(|index| usize::try_from(index).ok())
+                    .or_else(|| blocks.and_then(|items| items.iter().rposition(|item| item["type"] == "text")))
+                    .unwrap_or(0);
+                if let Some(text) = blocks.and_then(|items| items.get(index))
+                    .filter(|block| block["type"] == "text").and_then(|block| block["text"].as_str()) {
+                    assistant_segment(session, text, true, at, index);
+                } else {
+                    assistant_segment(session, update["delta"].as_str().unwrap_or(""), false, at, index);
+                }
+            }
             "message_end" if value["message"]["role"] == "assistant" => {
-                let message = &value["message"]; assistant(session, &text(&message["content"]), true);
+                let message = &value["message"];
+                let texts = message["content"].as_array().into_iter().flatten().enumerate()
+                    .filter(|(_, part)| part["type"] == "text").filter_map(|(index, part)| {
+                        part["text"].as_str().filter(|text| !text.is_empty()).map(|text| (index, text))
+                    }).collect::<Vec<_>>();
+                if !texts.is_empty() {run.advance_phase(RunPhase::Responding);}
+                for (index, text) in texts {
+                    assistant_segment(session, text, true, message["timestamp"].as_u64(), index);
+                }
                 if ["error", "aborted"].contains(&message["stopReason"].as_str().unwrap_or("")) {if let Some(run) = session.runs.last_mut() {run.error = Some(message["errorMessage"].as_str().unwrap_or("Pi 执行中断或失败").into());}}
             },
             "agent_settled" => {
@@ -164,6 +318,10 @@ pub fn apply_event(session: &mut AgentSession, value: &Value) {
             _ => {}
         }
     }
+}
+
+pub fn pi_idle(state: &Value) -> bool {
+    state["isStreaming"] == false && state["isCompacting"] == false && state["pendingMessageCount"].as_u64() == Some(0)
 }
 pub fn response(backend: &str, request: &Request, answer: Value) -> Result<Value> {
     if backend == "pi" {
@@ -200,6 +358,19 @@ mod tests {
         let mut s = session("pi"); apply_event(&mut s, &json!({"type":"agent_end","willRetry":true,"messages":[]})); assert_eq!(s.runs[0].state, "running");
         apply_event(&mut s, &json!({"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"provider unavailable"}}));
         apply_event(&mut s, &json!({"type":"agent_settled","aborted":false})); assert_eq!(s.runs[0].state, "failed");
+    }
+    #[test]
+    fn pi_command_error_is_retained_until_idle_confirmation() {
+        let mut s = session("pi");
+        s.runs[0].phase = Some(RunPhase::Submitting);
+        let event = json!({"type":"extension_error","event":"command","error":"command failed"});
+        assert!(relevant("pi", &event));
+        apply_event(&mut s, &event);
+        assert_eq!(s.runs[0].state, "running");
+        assert_eq!(s.runs[0].error.as_deref(), Some("command failed"));
+        let idle = json!({"isStreaming":false,"isCompacting":false,"pendingMessageCount":0});
+        assert!(pi_idle(&idle));
+        assert!(!pi_idle(&json!({"isStreaming":false,"isCompacting":true,"pendingMessageCount":0})));
     }
     #[test]
     fn pi_retry_can_recover_and_abort_never_becomes_success() {
