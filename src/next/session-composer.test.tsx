@@ -15,6 +15,15 @@ it('stopping a turn cannot turn the clicked button into a native form submission
   }
 });
 
+it('keeps Stop separate from queueing and allows a file-only draft',()=>{
+  const state=createSession(initialWorkbench(),'design',null,'chat',1);
+  const session={...state.sessions[0],draftFiles:[{kind:'attachment' as const,path:'C:/QA/photo.png',name:'photo.png'}]};
+  const html=renderToStaticMarkup(<SessionComposer session={session} change={()=>{}} active={false} busy stopping={false}
+    disabled={false} canSend queueEnabled onSend={()=>{}} onStop={()=>{}}/>);
+  expect(html).toMatch(/<button type="button" class="outline-button chat-queue-add">加入队列<\/button>/);
+  expect(html).toMatch(/<button type="button" class="icon-button stop-button" aria-label="停止生成"/);
+});
+
 it('displays the effective Codex settings and the efforts available for that model', () => {
   const options: AgentModelOptions = {
     model: 'model-a', effort: 'low',

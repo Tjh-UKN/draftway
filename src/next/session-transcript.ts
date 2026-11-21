@@ -30,7 +30,12 @@ export function reuseMessages(previous:Message[],next:Message[]):Message[] {
   const byId=new Map(previous.map(message=>[message.id,message]));
   const reused=next.map(message=>{
     const old=byId.get(message.id);
-    return old&&old.role===message.role&&old.text===message.text&&old.at===message.at?old:message;
+    const filesMatch = old?.files === message.files || (old?.files?.length === message.files?.length &&
+      message.files?.every((file, index) => {
+        const previous = old?.files?.[index];
+        return file.kind === previous?.kind && file.name === previous.name && file.path === previous.path;
+      }));
+    return old&&old.role===message.role&&old.text===message.text&&old.at===message.at&&filesMatch?old:message;
   });
   return reused.length===previous.length&&reused.every((message,i)=>message===previous[i])?previous:reused;
 }
@@ -41,6 +46,11 @@ export class SessionTranscripts {
   private bases=new Map<string,number>();
   private listeners=new Map<string,Set<()=>void>>();
   get(id:string){return this.values.get(id);}
+  remove(id: string) {
+    this.values.delete(id);
+    this.bases.delete(id);
+    this.listeners.get(id)?.forEach(listener => listener());
+  }
   clear(){this.values.clear();this.bases.clear();this.listeners.forEach(listeners=>listeners.forEach(listener=>listener()));}
   subscribe(id:string,listener:()=>void){
     let listeners=this.listeners.get(id);

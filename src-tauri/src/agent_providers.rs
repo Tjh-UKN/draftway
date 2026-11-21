@@ -198,24 +198,46 @@ pub fn reply(backend: &str, value: &Value) -> Option<(u64, Value)> {
 }
 fn text(content: &Value) -> String {content.as_array().map(|items| items.iter().filter(|part| part["type"] == "text").filter_map(|part| part["text"].as_str()).collect::<Vec<_>>().join("\n\n")).unwrap_or_default()}
 fn assistant(session: &mut AgentSession, value: &str, replace: bool) {
-    assistant_segment(session, value, replace, None, 0);
-}
-fn assistant_segment(session: &mut AgentSession, value: &str, replace: bool, timestamp: Option<u64>, block: usize) {
     let Some(run) = session.runs.last().filter(|run| ["running", "needs_input"].contains(&run.state.as_str())) else {return;};
+    write_assistant(session, format!("{}-assistant", run.id), value, replace, None);
+}
+fn write_assistant(session: &mut AgentSession, key: String, value: &str, replace: bool, timestamp: Option<u64>) {
     if value.is_empty() {return;}
-    let key = match (timestamp, block) {
-        (Some(at), _) => format!("{}-assistant-{at}-{block}", run.id),
-        (None, 0) => format!("{}-assistant", run.id),
-        (None, _) => format!("{}-assistant-{block}", run.id),
-    };
     let message = match session.messages.iter().position(|message| message.id == key) {
         Some(index) => &mut session.messages[index],
         None => {
-            session.messages.push(Message {id: key, role: "assistant".into(), text: String::new(), at: timestamp.unwrap_or_else(now)});
+            session.messages.push(Message {id: key, role: "assistant".into(), text: String::new(), at: timestamp.unwrap_or_else(now), files: Vec::new()});
             session.messages.last_mut().unwrap()
         }
     };
     if replace {message.text = value.into();} else {message.text.push_str(value);}
+    if let Some(at) = timestamp {message.at = at;}
+}
+fn pi_block_id(run_id: &str, assistant: u32, block: Option<usize>) -> String {
+    match block {
+        Some(index) => format!("{run_id}-assistant-pi-{assistant}-{index}"),
+        None => format!("{run_id}-assistant-pi-{assistant}-draft"),
+    }
+}
+fn bind_pi_draft(session: &mut AgentSession, run_id: &str, assistant: u32, texts: &[(usize, &str)]) -> Option<usize> {
+    let draft = pi_block_id(run_id, assistant, None);
+    if !session.messages.iter().any(|part| part.id == draft) {return None;}
+    let first = texts.first()?.0;
+    for &(index, _) in texts {
+        let indexed = pi_block_id(run_id, assistant, Some(index));
+        if !session.messages.iter().any(|part| part.id == indexed) {return Some(index);}
+    }
+    // Every final block already has a row, so the unindexed draft is redundant.
+    let first = pi_block_id(run_id, assistant, Some(first));
+    session.messages.retain(|part| part.id != draft);
+    if let Some(run) = session.runs.last_mut() {
+        for activity in &mut run.activity {
+            if activity.after_message_id.as_deref() == Some(draft.as_str()) {
+                activity.after_message_id = Some(first.clone());
+            }
+        }
+    }
+    None
 }
 fn finish(session: &mut AgentSession, state: &str, error: Option<String>) {
     let cancelled = session.runs.last().is_some_and(|run| run.cancel_requested);
@@ -227,8 +249,8 @@ pub fn relevant(backend: &str, value: &Value) -> bool {
     match backend {
         "claude" => if value["type"] == "stream_event" {value["parent_tool_use_id"].is_null() && value["event"]["delta"]["type"] == "text_delta"} else {["system", "assistant", "result", "control_request"].contains(&value["type"].as_str().unwrap_or(""))},
         "pi" => match value["type"].as_str().unwrap_or("") {
-            "message_update" => ["text_delta", "thinking_start", "thinking_end"].contains(&value["assistantMessageEvent"]["type"].as_str().unwrap_or("")),
-            "message_end" => value["message"]["role"] == "assistant",
+            "message_update" => ["text_delta", "text_end", "thinking_start", "thinking_end"].contains(&value["assistantMessageEvent"]["type"].as_str().unwrap_or("")),
+            "message_start" | "message_end" => value["message"]["role"] == "assistant",
             "extension_error" => value["event"] == "command",
             "agent_start" | "agent_settled" | "tool_execution_start" | "tool_execution_end" |
             "auto_retry_start" | "auto_retry_end" | "auto_compaction_start" | "auto_compaction_end" |
@@ -240,7 +262,16 @@ pub fn relevant(backend: &str, value: &Value) -> bool {
 }
 pub fn apply_event(session: &mut AgentSession, value: &Value) {
     if session.backend == "claude" {
-        match value["type"].as_str().unwrap_or("") {
+        let event = value["type"].as_str().unwrap_or("");
+        if session.runs.last().is_none_or(|run| !["running", "needs_input"].contains(&run.state.as_str())
+            || (run.cancel_requested && event != "result"))
+        {
+            return;
+        }
+        if value["session_id"].as_str().is_some_and(|incoming| session.source_id.as_deref().is_some_and(|own| own != incoming)) {
+            return;
+        }
+        match event {
             "system" if value["subtype"] == "init" => {
                 if let Some(id) = value["session_id"].as_str() {session.source_id = Some(id.into());}
                 if let Some(model) = value["model"].as_str() {session.effective_model = Some(model.into());}
@@ -265,17 +296,24 @@ pub fn apply_event(session: &mut AgentSession, value: &Value) {
         }
     } else if session.backend == "pi" {
         let Some(run) = session.runs.last_mut().filter(|run| ["running", "needs_input"].contains(&run.state.as_str())) else {return;};
-        if let Some(mut activity) = feedback::pi_activity(value) {
+        let event = value["type"].as_str().unwrap_or("");
+        if event == "message_start" && value["message"]["role"] == "assistant" {
+            run.pi_messages.start();
+            return;
+        }
+        // Pi deliberately omits message snapshots from stdout deltas.
+        let assistant = matches!(event, "message_update" | "message_end").then(|| run.pi_messages.current());
+        if let Some(mut activity) = feedback::pi_activity(value, assistant) {
             activity.after_message_id = session.messages.last().map(|message| message.id.clone());
             feedback::upsert(&mut run.activity, activity);
             return;
         }
-        match value["type"].as_str().unwrap_or("") {
+        match event {
             "agent_start" => {run.advance_phase(RunPhase::Executing); run.error = None;},
             "extension_error" if value["event"] == "command" && run.phase == Some(RunPhase::Submitting) => {
                 run.error = Some(value["error"].as_str().unwrap_or("Pi 扩展命令执行失败").chars().take(1000).collect());
             }
-            "message_update" if value["assistantMessageEvent"]["type"] == "text_delta" => {
+            "message_update" if matches!(value["assistantMessageEvent"]["type"].as_str(), Some("text_delta" | "text_end")) => {
                 run.advance_phase(RunPhase::Responding);
                 let update = &value["assistantMessageEvent"];
                 let message = &value["message"];
@@ -283,14 +321,14 @@ pub fn apply_event(session: &mut AgentSession, value: &Value) {
                 let at = message["timestamp"].as_u64().or_else(|| partial["timestamp"].as_u64());
                 let blocks = partial["content"].as_array().or_else(|| message["content"].as_array());
                 let index = update["contentIndex"].as_u64().and_then(|index| usize::try_from(index).ok())
-                    .or_else(|| blocks.and_then(|items| items.iter().rposition(|item| item["type"] == "text")))
-                    .unwrap_or(0);
-                if let Some(text) = blocks.and_then(|items| items.get(index))
-                    .filter(|block| block["type"] == "text").and_then(|block| block["text"].as_str()) {
-                    assistant_segment(session, text, true, at, index);
-                } else {
-                    assistant_segment(session, update["delta"].as_str().unwrap_or(""), false, at, index);
-                }
+                    .or_else(|| blocks.and_then(|items| items.iter().rposition(|item| item["type"] == "text")));
+                let final_text = update["content"].as_str().filter(|_| update["type"] == "text_end");
+                let snapshot = index.and_then(|index| blocks.and_then(|items| items.get(index)))
+                    .filter(|block| block["type"] == "text").and_then(|block| block["text"].as_str());
+                let replacement = final_text.or(snapshot);
+                let text = replacement.or_else(|| update["delta"].as_str()).unwrap_or("");
+                let key = pi_block_id(&run.id, assistant.unwrap(), index);
+                write_assistant(session, key, text, replacement.is_some(), at);
             }
             "message_end" if value["message"]["role"] == "assistant" => {
                 let message = &value["message"];
@@ -299,8 +337,13 @@ pub fn apply_event(session: &mut AgentSession, value: &Value) {
                         part["text"].as_str().filter(|text| !text.is_empty()).map(|text| (index, text))
                     }).collect::<Vec<_>>();
                 if !texts.is_empty() {run.advance_phase(RunPhase::Responding);}
+                let run_id = run.id.clone();
+                run.pi_messages.finish();
+                let assistant = assistant.unwrap();
+                let unindexed = bind_pi_draft(session, &run_id, assistant, &texts);
                 for (index, text) in texts {
-                    assistant_segment(session, text, true, message["timestamp"].as_u64(), index);
+                    let key = pi_block_id(&run_id, assistant, (unindexed != Some(index)).then_some(index));
+                    write_assistant(session, key, text, true, message["timestamp"].as_u64());
                 }
                 if ["error", "aborted"].contains(&message["stopReason"].as_str().unwrap_or("")) {if let Some(run) = session.runs.last_mut() {run.error = Some(message["errorMessage"].as_str().unwrap_or("Pi 执行中断或失败").into());}}
             },
@@ -358,6 +401,39 @@ mod tests {
         let mut s = session("pi"); apply_event(&mut s, &json!({"type":"agent_end","willRetry":true,"messages":[]})); assert_eq!(s.runs[0].state, "running");
         apply_event(&mut s, &json!({"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"provider unavailable"}}));
         apply_event(&mut s, &json!({"type":"agent_settled","aborted":false})); assert_eq!(s.runs[0].state, "failed");
+    }
+    #[test]
+    fn pi_stdout_delta_and_final_share_the_message_and_block_identity() {
+        let mut s = session("pi");
+        let message = json!({"role":"assistant","timestamp":700,
+            "content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"Finished."}]});
+        let start = json!({"type":"message_start","message":{"role":"assistant","timestamp":700,"content":[]}});
+        let delta = json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"Finished"}});
+        let end = json!({"type":"message_end","message":message});
+        assert!(relevant("pi", &start));
+        apply_event(&mut s, &start);
+        apply_event(&mut s, &delta);
+        let streamed_id = s.messages[0].id.clone();
+        apply_event(&mut s, &end);
+        assert_eq!(s.messages.len(), 1);
+        assert_eq!(s.messages[0].id, streamed_id);
+        assert_eq!(s.messages[0].text, "Finished.");
+        apply_event(&mut s, &start);
+        apply_event(&mut s, &delta);
+        apply_event(&mut s, &end);
+        assert_eq!(s.messages.len(), 2);
+        assert_ne!(s.messages[0].id, s.messages[1].id);
+        assert_eq!(s.messages[0].text, s.messages[1].text);
+    }
+    #[test]
+    fn pi_unindexed_draft_does_not_add_a_second_final_row() {
+        let mut s = session("pi");
+        apply_event(&mut s, &json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Draft"}}));
+        apply_event(&mut s, &json!({"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":1,"content":"Final"}}));
+        apply_event(&mut s, &json!({"type":"message_end","message":{"role":"assistant","timestamp":700,
+            "content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"Final"}]}}));
+        assert_eq!(s.messages.len(), 1);
+        assert_eq!(s.messages[0].text, "Final");
     }
     #[test]
     fn pi_command_error_is_retained_until_idle_confirmation() {

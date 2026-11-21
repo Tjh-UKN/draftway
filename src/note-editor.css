@@ -60,6 +60,9 @@ body:has(.embedded-business>.notes-workspace){min-width:0}
 .note-cm-host .cm-focused{outline:none}
 .note-cm-host .cm-cursor{border-left-color:var(--text)}
 .note-cm-host .cm-selectionBackground{background:var(--hover)!important}
+:root:is([data-appearance=warm],[data-appearance=dark]) .note-cm-host .cm-selectionMatch,
+:root:is([data-appearance=warm],[data-appearance=dark]) .note-cm-host .cm-searchMatch{background:color-mix(in srgb,var(--app-warning) 24%,transparent)}
+:root:is([data-appearance=warm],[data-appearance=dark]) .note-cm-host .cm-searchMatch-selected{background:color-mix(in srgb,var(--app-warning) 36%,transparent);outline:1px solid var(--app-warning)}
 .note-cm-host .cm-placeholder{color:var(--faint)}
 .note-cm-host .cm-search{font-size:11px;background:var(--raised);border-color:var(--line);padding:8px;color:var(--text)}
 .note-cm-host .cm-textfield,.note-cm-host .cm-button{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;font-size:11px}

@@ -4,17 +4,28 @@ import {beginNativeSend,mergeNativeSession,rejectNativeSend, type NativeSession}
 
 const native = (revision = 1): NativeSession => ({id: 'real', workspaceId: 'design', nodeId: null, backend: 'codex', title: '实际会话', cwd: 'C:\\project', sourceId: 'thread', createdAt: 1, revision, messages: [{id: 'r-item', role: 'assistant', text: '真实结果', at: 2}], runs: [{id: 'r', state: 'succeeded', startedAt: 1, finishedAt: 3, error: null}], requests: [], error: null});
 describe('native session projection', () => {
-  it('shows a send immediately, keeps the exact prompt and restores rejected delivery to a draft',()=>{
+  it('shows a send immediately and keeps failed delivery separate from a newer draft across retry',()=>{
     const initial=mergeNativeSession(createSession(initialWorkbench(),'design',null,'real',1),native());
     const text=' \t\n原样传递\n ';
     const sent=beginNativeSend(initial,'real','next',text,4);
     expect(sent.sessions[0].messages.at(-1)?.text).toBe(text);expect(sent.runs.at(-1)).toMatchObject({state:'running',phase:'sending'});
-    const rejected=rejectNativeSend(sent,'real','next',text,1,'not accepted');
-    expect(rejected.sessions[0].draft).toBe(text);expect(rejected.sessions[0].messages).toEqual(initial.sessions[0].messages);
-    expect(rejected.runs).toEqual(initial.runs);
-    const accepted={...sent,sessions:sent.sessions.map(s=>({...s,nativeRevision:2,draft:'new draft'}))};
-    const lateError=rejectNativeSend(accepted,'real','next',text,1,'transport');
-    expect(lateError.sessions[0].draft).toBe('new draft');expect(lateError.sessions[0].messages).toEqual(accepted.sessions[0].messages);
+    const writing = {...sent,sessions:sent.sessions.map(s=>({...s,draft:'new draft'}))};
+    const renamed = mergeNativeSession(writing, {...native(2),title:'renamed while sending'});
+    expect(renamed.runs.at(-1)).toMatchObject({id:'next',state:'running'});
+    expect(renamed.sessions[0].messages.at(-1)?.text).toBe(text);
+    const rejected=rejectNativeSend(renamed,'real','next','not accepted');
+    expect(rejected.sessions[0].draft).toBe('new draft');expect(rejected.sessions[0].messages).toEqual(initial.sessions[0].messages);
+    expect(rejected.runs.at(-1)).toMatchObject({id:'next',state:'failed',pendingText:text,error:'not accepted'});
+    const retried=beginNativeSend(rejected,'real','next',text,5,true);
+    expect(retried.sessions[0].draft).toBe('new draft');
+    expect(retried.sessions[0].messages.at(-1)?.text).toBe(text);
+    const update=native(3);
+    update.messages.push({id:'next-user',role:'user',text,at:5});
+    update.runs.push({id:'next',state:'running',startedAt:5,finishedAt:null,error:null});
+    const accepted=mergeNativeSession(retried,update);
+    expect(accepted.runs.at(-1)?.pendingText).toBeUndefined();
+    expect(accepted.sessions[0].draft).toBe('new draft');
+    expect(rejectNativeSend(accepted,'real','next','late transport error')).toBe(accepted);
   });
   it('replaces optimistic delivery with observed Codex phases and activity without changing the transcript', () => {
     const initial = mergeNativeSession(initialWorkbench(), native());

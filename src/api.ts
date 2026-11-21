@@ -1,7 +1,7 @@
 import { invoke as nativeInvoke, isTauri,convertFileSrc } from '@tauri-apps/api/core';
 import {embeddedInternals,flushHostWorkspace,listenFromHost as listen} from './embedded-bridge';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { advanceRepeat, archiveClosure, dateKey, defaults, healthError, normalizeRecord, starter, uid, type Attachment, type BackupInfo, type Habit, type Note, type RecordItem, type Settings, type Task, type WorkbenchData } from './domain';
+import { advanceRepeat, archiveClosure, dateKey, defaults, isRetiredKind, normalizeRecord, starter, uid, type Attachment, type BackupInfo, type Habit, type Note, type RecordItem, type Settings, type Task, type WorkbenchData } from './domain';
 import {parseDrawingScene} from './drawings';
 import {validateKnowledge} from './knowledge-graph';
 import {parseWorkspaceLayout, webWorkspaceUrl, type WorkspaceLayout} from './workspace-layout';
@@ -41,12 +41,18 @@ export async function saveWorkspaceLayout(layout: WorkspaceLayout): Promise<void
     else await put('meta', layout, 'workspace-layout');
   });
 }
+type StoredRecord = RecordItem | {id: string; kind: 'journal' | 'sleep' | 'weight'};
+const activeRecord = (record: StoredRecord): record is RecordItem => !isRetiredKind(record.kind);
+
 export async function loadWorkspace():Promise<WorkbenchData> {
   if(desktop)return invoke('load_workspace');
   return queue(async()=>{
     if(!await meta('initialized')) {for(const item of starter())await put('records',{...item,version:1});await put('meta',true,'initialized');}
-    const records=(await readAll<RecordItem>('records')).map(normalizeRecord);const files=await readAll<Attachment & {blob:Blob}>('files');
-    return {records,attachments:files.map(({blob:_,...a})=>a),settings:await meta<Settings>('settings')||defaults,dataPath:'此浏览器的 IndexedDB（与 Windows 版数据独立）',workspaceLayout:await meta('workspace-layout')??null};
+    const stored=await readAll<StoredRecord>('records');
+    const records=stored.filter(activeRecord).map(normalizeRecord);
+    const retiredIds=new Set(stored.filter(record=>isRetiredKind(record.kind)).map(record=>record.id));
+    const files=await readAll<Attachment & {blob:Blob}>('files');
+    return {records,attachments:files.filter(file=>!file.entityId||!retiredIds.has(file.entityId)).map(({blob:_,...a})=>a),settings:await meta<Settings>('settings')||defaults,dataPath:'此浏览器的 IndexedDB（与 Windows 版数据独立）',workspaceLayout:await meta('workspace-layout')??null};
   });
 }
 export async function collectKnowledge(candidates:KnowledgeCandidate[]):Promise<number> {
@@ -68,16 +74,18 @@ export async function collectKnowledge(candidates:KnowledgeCandidate[]):Promise<
   });
 }
 export async function saveRecord(item:RecordItem):Promise<RecordItem> {
+  if(isRetiredKind(item.kind))throw new Error('这类旧记录仅随完整备份保留');
   if(desktop)return invoke('save_record',{record:item});
   return queue(async()=>{
-    const all=await readAll<RecordItem>('records');const previous=all.find(x=>x.id===item.id);
+    const stored=await readAll<StoredRecord>('records');
+    if(stored.some(record=>record.id===item.id&&isRetiredKind(record.kind)))throw new Error('这类旧记录仅随完整备份保留');
+    const all=stored.filter(activeRecord);const previous=all.find(x=>x.id===item.id);
     if(previous&&previous.version!==item.version)throw new Error('记录已更新，请重新打开后保存');
     const record={...normalizeRecord(item),title:item.title.trim(),version:item.version+1,updatedAt:new Date().toISOString()};
     if(previous?.archived)throw new Error('请先恢复归档记录');
     validateKnowledge(record,all);
     if(record.kind==='note'&&previous?.kind==='note'&&previous.knowledgeSource)record.knowledgeSource={...previous.knowledgeSource,...(record.title!==previous.title||record.body!==previous.body||record.format!==previous.format?{autoUpdate:false}:{})};
     if(record.kind==='drawing'){if(!record.title||record.title.length>120)throw new Error('画板名称需要 1–120 个字符');parseDrawingScene(record.scene);}
-    if(record.kind==='sleep'||record.kind==='weight'){const error=healthError(record);if(error)throw new Error(error);if(all.some(r=>r.kind===record.kind&&!r.archived&&r.date===record.date&&r.id!==record.id))throw new Error('该日期已有同类健康记录，请编辑已有记录');}
     if(record.kind==='habit'){
       if(!record.startDate||record.startDate>dateKey())throw new Error('开始日期不能晚于今天');
       if(Object.keys(record.checkIns).some(day=>day<record.startDate))throw new Error('开始日期不能晚于已有签到');
@@ -85,7 +93,6 @@ export async function saveRecord(item:RecordItem):Promise<RecordItem> {
       if(!previous&&Object.keys(record.checkIns).length)throw new Error('新习惯不能直接写入签到记录');
     }
     if('taskId'in record&&record.taskId){const parent=all.find(t=>t.id===record.taskId);if(!parent||parent.kind!=='task'||parent.archived)throw new Error('关联任务不存在或已归档');if(parent.projectId!==record.projectId)throw new Error('记录必须属于关联任务的同一项目');}
-    if(record.kind==='journal'&&all.some(r=>r.kind==='journal'&&!r.archived&&r.date===record.date&&r.id!==record.id))throw new Error('这一天已有工作记录，请编辑已有记录');
     if(record.kind==='issue'){if(record.status==='resolved'&&!record.solution.trim())throw new Error('解决问题前请填写解决方法');record.resolvedAt=record.status==='resolved'?(record.resolvedAt||new Date().toISOString()):null;}
     if(record.kind==='task'){
       const t=record as Task;
@@ -107,13 +114,12 @@ export async function saveRecord(item:RecordItem):Promise<RecordItem> {
 export async function archiveRecord(id:string,restore=false) {
   if(desktop)return invoke<void>('archive_record',{id,restore});
   return queue(async()=>{
-    const all=await readAll<RecordItem>('records');const target=all.find(x=>x.id===id);if(!target)throw new Error('记录不存在');
+    const all=(await readAll<StoredRecord>('records')).filter(activeRecord);const target=all.find(x=>x.id===id);if(!target)throw new Error('记录不存在');
     let ids=[id];
     if(restore){
       const parents=[target.kind==='project'?target.goalId:null,'projectId'in target?target.projectId:null,'taskId'in target?target.taskId:null];
       if(parents.some(parent=>parent&&all.find(x=>x.id===parent)?.archived))throw new Error('请先恢复所属目标、项目或任务');
       ids=[id,...await meta<string[]>(`archive:${id}`)||[]];
-      if((target.kind==='sleep'||target.kind==='weight')&&all.some(r=>r.kind===target.kind&&!r.archived&&r.date===target.date&&r.id!==target.id))throw new Error('该日期已有同类健康记录，不能重复恢复');
     }else{
       ids=archiveClosure(all,id);
       ids=ids.filter(x=>!all.find(r=>r.id===x)?.archived);
@@ -137,7 +143,52 @@ export async function checkHabit(id:string,day:string,checked:boolean):Promise<H
 }
 export async function deleteRecord(id:string) {
   if(desktop)return invoke<void>('delete_record',{id});
-  return queue(async()=>{const all=await readAll<RecordItem>('records');if(!all.find(x=>x.id===id)?.archived)throw new Error('请先归档');if(all.some(x=>(x.kind==='project'&&x.goalId===id)||('projectId'in x&&x.projectId===id)))throw new Error('请先移除关联的子记录');const files=await readAll<Attachment>('files');if(files.some(x=>x.entityId===id))throw new Error('请先移除关联附件');await remove('records',id);});
+  return queue(async()=>{const all=(await readAll<StoredRecord>('records')).filter(activeRecord);if(!all.find(x=>x.id===id)?.archived)throw new Error('请先归档');if(all.some(x=>(x.kind==='project'&&x.goalId===id)||('projectId'in x&&x.projectId===id)))throw new Error('请先移除关联的子记录');const files=await readAll<Attachment>('files');if(files.some(x=>x.entityId===id))throw new Error('请先移除关联附件');await remove('records',id);});
+}
+export async function deleteKnowledge(id:string,version:number) {
+  if(desktop)return invoke<void>('delete_knowledge',{id,version});
+  return queue(async()=>{
+    const db=await database;
+    await new Promise<void>((resolve,reject)=>{
+      const tx=db.transaction(['records','files','meta'],'readwrite');
+      const records=tx.objectStore('records'), files=tx.objectStore('files');
+      let failure='';
+      const loaded=records.getAll();
+      loaded.onsuccess=()=>{
+        const knowledge=(loaded.result as RecordItem[]).filter(record=>record.kind==='note'||record.kind==='drawing');
+        const item=knowledge.find(record=>record.id===id);
+        if(!item||item.archived||item.version!==version){
+          failure='知识条目已更新，请重新选择后删除';tx.abort();return;
+        }
+        let parent=item.knowledgeParentId||null;
+        const seen=new Set([id]);
+        for(let ancestor=parent;ancestor&&!ancestor.startsWith('source:');){
+          const entry=knowledge.find(record=>record.id===ancestor&&!record.archived);
+          if(!entry||seen.has(ancestor)){parent=null;break;}
+          seen.add(ancestor);
+          ancestor=entry.knowledgeParentId||null;
+        }
+        const updatedAt=new Date().toISOString();
+        for(const child of knowledge){
+          if(child.id!==id&&child.knowledgeParentId===id){
+            records.put({...child,knowledgeParentId:parent,version:child.version+1,updatedAt});
+          }
+        }
+        if(item.kind==='note'&&item.knowledgeSource){
+          tx.objectStore('meta').put(item.id,knowledgeSourceKey(item.knowledgeSource));
+        }
+        const attached=files.getAll();
+        attached.onsuccess=()=>{
+          for(const file of attached.result as Attachment[]){
+            if(file.entityId===id)files.put({...file,entityId:null});
+          }
+        };
+        records.delete(id);
+      };
+      tx.oncomplete=()=>resolve();
+      tx.onabort=()=>reject(Error(failure||tx.error?.message||'删除失败'));
+    });
+  });
 }
 export async function saveSettings(settings:Settings) {if(desktop)return invoke<void>('save_settings',{settings});await put('meta',settings,'settings');}
 export async function selectAttachments(entityId:string|null):Promise<Attachment[]> {

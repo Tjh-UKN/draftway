@@ -50,8 +50,9 @@ export function knowledgeHierarchy(records:RecordItem[],query=''):MindNode[] {
   }
   // Old or externally restored invalid parent links remain reachable at the root.
   for(const node of nodes.slice(1)){const seen=new Set([node.id]);let parent=node.parentId;while(parent){if(seen.has(parent)){node.parentId=knowledgeRoot;break;}seen.add(parent);parent=nodes.find(n=>n.id===parent)?.parentId||null;}}
-  if(!query.trim())return nodes;
-  const keep=new Set([knowledgeRoot]);for(const item of entries){let id:string|null=item.id;const ancestors:MindNode[]=[];while(id){const node=nodes.find(n=>n.id===id);if(!node)break;ancestors.push(node);id=node.parentId;}if((recordText(item)+' '+ancestors.map(n=>n.title).join(' ')).toLowerCase().includes(query.toLowerCase()))for(const node of ancestors)keep.add(node.id);}
+  const search=query.trim().toLowerCase();
+  if(!search)return nodes;
+  const keep=new Set([knowledgeRoot]);for(const item of entries){let id:string|null=item.id;const ancestors:MindNode[]=[];while(id){const node=nodes.find(n=>n.id===id);if(!node)break;ancestors.push(node);id=node.parentId;}if((recordText(item)+' '+ancestors.map(n=>n.title).join(' ')).toLowerCase().includes(search))for(const node of ancestors)keep.add(node.id);}
   return nodes.filter(n=>keep.has(n.id));
 }
 export async function importKnowledge(file:File,parentId:string|null):Promise<KnowledgeRecord> {

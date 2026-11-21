@@ -1,5 +1,7 @@
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode} from 'react';
-import {BookOpen, Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, Plus, Search, Settings2, Terminal, Puzzle, X} from 'lucide-react';
+import {BookOpen, Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, FolderOpen, Globe, MessageSquare, Pencil, Plus, Search, Settings2, Terminal, Trash2, Puzzle, X} from 'lucide-react';
+import {AppearancePicker} from '../AppearancePicker';
+import {useAppearance} from '../appearance';
 import {addSubtask, closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, mapGraph, openMapTab, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, reviewUrl, editNodeBody, renameMapNode, sessionNodeIds, shellStorageKey, updateMapGraph, updateWorkspace, type AgentSession, type GraphState, type Notice, type Workspace, type WorkbenchState} from './core';
 import {reconcileSessions} from './adapters';
 import {GraphView, NodeGlyph, NodeInspector, NodeOverview, TasksView} from './Graph';
@@ -29,8 +31,13 @@ import {fromTemplate,layoutTemplate} from './composition';
 import {CompositionSettings} from './CompositionSettings';
 import {PluginManagerDialog} from '../plugins/PluginManager';
 import {boundedText} from './text';
-import {Dialog, Empty, SpaceSymbol, Star} from './ui';
+import {Dialog, Empty, Star} from './ui';
 
+import {WorkspaceEntry} from './WorkspaceEntry';
+import {ManagementMenu, type ManagementAction} from './ManagementMenu';
+import {assertSessionsIdle, deleteSessions, deleteWorkspace, renameSession} from './session-management';
+import {DeleteDialog, RenameSessionDialog, SessionManagement} from './SessionManagement';
+import {LocalServices, type LocalService} from './LocalServices';
 function freshWorkbench(){const space=createWorkspace('我的工作区','blank');return initialWorkbench({version:2,activeId:space.id,spaces:[space]});}
 function loadWorkbench() {
   try {
@@ -42,15 +49,20 @@ function loadWorkbench() {
   } catch {return {state: freshWorkbench(), error: '无法读取已保存的数据。本次使用临时状态，原始内容不会被覆盖。'};}
 }
 export default function Workbench() {
+  const appearance = useAppearance();
   const [loaded] = useState(loadWorkbench);
   const [editor,dispatch]=useReducer(mapEditorReducer,loaded.state,initialMapEditor);
   const state=editor.state;
   const nodeClipboard=useRef<NodeClipboard|null>(null);
   const current = useRef(state); current.current = state;
   const recentSwitch = useRef<{workspaceId: string; ids: string[]; index: number} | null>(null);
-  const [dialog, setDialog] = useState<'workspace' | 'settings' | 'plugins' | 'search' | 'link' | 'customize' | null>(null);
+  const [dialog, setDialog] = useState<'workspace' | 'settings' | 'plugins' | 'search' | 'link' | 'customize' | 'localServices' | null>(null);
   const [newNodeId, setNewNodeId] = useState<string | null>(null);
   const [inbox, setInbox] = useState(false);
+  const [managementMenu, setManagementMenu] = useState<{kind: 'workspace' | 'session'; id: string; name: string; x: number; y: number; keyboard?: boolean} | null>(null);
+  const [renamingSession, setRenamingSession] = useState<AgentSession | null>(null);
+  const [renamingWorkspace, setRenamingWorkspace] = useState<Workspace | null>(null);
+  const [deletion, setDeletion] = useState<{kind: 'workspace' | 'session'; id: string; name: string} | null>(null);
   const [knowledgeOpen,setKnowledgeOpen]=useState(false);
   const [knowledgeVisited,setKnowledgeVisited]=useState(false);
   const space = state.spaces.find(s => s.id === state.activeId)!;
@@ -63,7 +75,7 @@ export default function Workbench() {
   const persistence = useWorkbenchPersistence(state, change, loaded.error);
   const knowledge=useKnowledgeCollection(state,persistence.ready&&!persistence.readOnly&&persistence.saved);
   const nativeBrowsers = useNativeBrowserHost(state, change, persistence.ready);
-  const agents = useNativeAgents(state, change, persistence.ready,!knowledgeOpen);
+  const agents = useNativeAgents(state, change, persistence.ready,!knowledgeOpen,!persistence.readOnly);
   const agentRuntime=useMemo(()=>agents?{...agents,readOnly:persistence.readOnly,backends:persistence.readOnly?[]:agents.backends}:null,[agents,persistence.readOnly]);
   const prefetchModels = agents?.prefetchModelOptions;
   const localBackends = agents?.backends;
@@ -92,6 +104,25 @@ export default function Workbench() {
   const background = useNativeBackground(state, change, persistence.ready, openNotice);
   const mapError = useMapOperations(state, change, persistence.ready);
   const updateSpace = (update: (space: Workspace) => Workspace) => change(s => updateWorkspace(s, space.id, update));
+  async function removeContent() {
+    if (!deletion || !persistence.ready || persistence.readOnly) throw Error('工作区尚未就绪，请重试读取后再删除。');
+    const target = deletion;
+    const ids = current.current.sessions.filter(session => target.kind === 'workspace' ? session.workspaceId === target.id : session.id === target.id).map(session => session.id);
+    assertSessionsIdle(current.current, ids);
+    if (agents) await agents.remove(ids, target.kind === 'workspace' ? target.id : undefined);
+    change(s => target.kind === 'workspace' ? deleteWorkspace(s, target.id) : deleteSessions(s, ids));
+    setDialog(null); setNewNodeId(null); setInbox(false);
+  }
+  async function renameManagedSession(id: string, title: string) {
+    if (!persistence.ready || persistence.readOnly) throw Error('工作区尚未就绪，请稍后重试。');
+    const session = current.current.sessions.find(session => session.id === id);
+    if (!session) throw Error('会话不存在。');
+    if (session.integrationId !== 'demo-agent') {
+      if (!agents) throw Error('请在 Windows 版重命名本机会话。');
+      await agents.rename(id, title);
+    }
+    change(s => renameSession(s, id, title));
+  }
   useEffect(() => {
     if (!persistence.ready) return;
     const tick = () => change(s => reconcileSessions(s, Date.now()));
@@ -153,16 +184,45 @@ export default function Workbench() {
     updateSpace(w => ({...w, dock: openDockTab(w.dock, tab, groupId)}));
   }
   function updateTab(tab: DockTab) {updateSpace(w => ({...w, dock: {...w.dock, tabs: w.dock.tabs.map(t => t.id === tab.id ? tab : t)}}));}
+  function openLocalService(service: LocalService) {
+    updateSpace(workspace => {
+      const existing = workspace.dock.tabs.find(tab => tab.kind === 'browser' && tab.url.startsWith(service.url));
+      const dock = existing ? selectDockTab(workspace.dock, existing.id) : openDockTab(workspace.dock, {
+        id: crypto.randomUUID(), kind: 'browser', title: service.title, url: service.url,
+      });
+      return {...workspace, dock};
+    });
+    setDialog(null);
+    setInbox(false);
+  }
   function openMaterial(material: NodeMaterial, selected: MindNode) {
     const parsed=parseMaterialTarget(material.target);
     const tab: DockTab=parsed.kind==='web' ? {id:crypto.randomUUID(),kind:'browser',title:material.title || parsed.title,url:parsed.target} : {id:`material:${selected.id}:${material.id}`,kind:'material',title:material.title || parsed.title,nodeId:selected.id,materialId:material.id};
-    updateSpace(w=>({...w,dock:openDockTab(w.dock,tab)}));
+    const open = () => updateSpace(workspace => workspace.nodes.some(node => node.id === selected.id && node.materials?.some(item => item.id === material.id))
+      ? {...workspace, dock: openDockTab(workspace.dock, tab)} : workspace);
+    if (tab.kind === 'material' && agents) {
+      void persistence.flush().then(open).catch(error => dispatch({type: 'error', message: String(error)}));
+    } else {
+      open();
+    }
   }
 
   useEffect(() => {recentSwitch.current = null;}, [space.id]);
-  function updateNode(node: MindNode) {edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===node.id?{...n,materials:node.materials}:n)})));}
+  function updateNode(node: MindNode) {
+    edit(space.id, s => updateWorkspace(s, space.id, workspace => {
+      const retained = new Set(node.materials?.map(material => material.id));
+      let dock = workspace.dock;
+      for (const tab of workspace.dock.tabs) {
+        if (tab.kind === 'material' && tab.nodeId === node.id && !retained.has(tab.materialId)) {
+          dock = closeDockTab(dock, tab.id);
+        }
+      }
+      return {...workspace, dock, nodes: workspace.nodes.map(item => item.id === node.id ? {...item, materials: node.materials} : item)};
+    }));
+  }
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
+      if (document.querySelector('dialog[open]')) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {event.preventDefault(); setDialog(d => d === 'search' ? null : 'search'); return;}
       if (dialog) return;
       if (event.altKey && !event.ctrlKey && /^[1-9]$/.test(event.key)) {const next=current.current.spaces[Number(event.key)-1];if(next){event.preventDefault();switchSpace(next.id);}return;}
@@ -173,8 +233,16 @@ export default function Workbench() {
       if (event.ctrlKey && event.key === 'Tab') {
         event.preventDefault();
         let cycle = recentSwitch.current;
-        if (!cycle || cycle.workspaceId !== space.id) {const ids = [...new Set([focusedGroup(space.dock).activeId, ...[...space.dock.recent].reverse(), ...space.dock.tabs.map(t => t.id)])].filter(Boolean); cycle = {workspaceId: space.id, ids, index: 0}; recentSwitch.current = cycle;}
-        cycle.index = (cycle.index + (event.shiftKey ? -1 : 1) + cycle.ids.length) % cycle.ids.length;
+        if (!cycle || cycle.workspaceId !== space.id) {
+          const activeId = focusedGroup(space.dock).activeId;
+          const ids = [...new Set([activeId, ...[...space.dock.recent].reverse(), ...space.dock.tabs.map(t => t.id)])].filter(Boolean);
+          cycle = {workspaceId: space.id, ids, index: activeId ? 0 : -1};
+          recentSwitch.current = cycle;
+        }
+        const direction = event.shiftKey ? -1 : 1;
+        cycle.index = cycle.index < 0
+          ? (event.shiftKey ? cycle.ids.length - 1 : 0)
+          : (cycle.index + direction + cycle.ids.length) % cycle.ids.length;
         selectTab(cycle.ids[cycle.index]); return;
       }
       if (event.ctrlKey && event.shiftKey && ['[', ']', '{', '}'].includes(event.key)) {
@@ -210,8 +278,8 @@ export default function Workbench() {
         failure:message=>dispatch({type:'error',message})
       }} onInspect={id=>{setNewNodeId(null);changeView({...graph,selectedId:id});}} onRename={(id,title)=>{edit(space.id,s=>renameMapNode(s,space.id,id,title));if(id===newNodeId){setNewNodeId(null);changeView({...graph,selectedId:null});}}} autoEditId={newNodeId === graph.selectedId ? newNodeId : null} onAdd={parentId => {if (space.nodes.length >= 250) return; const id = crypto.randomUUID(); edit(space.id,s => createMapNode(s, space.id, parentId, id, tab.id)); setNewNodeId(id);}} sessionCounts={sessionCounts}/></main>
       {selected && <NodeInspector key={`${space.id}-${selected.id}`} space={space} node={selected} onDelete={()=>{setNewNodeId(null);edit(space.id,s=>deleteMapBranch(s,space.id,selected.id));}} onEditBody={value=>edit(space.id,s=>editNodeBody(s,space.id,selected.id,value),"body:"+selected.id)} onClose={() => changeView({...graph, selectedId: null})} onFocus={() => changeView({...graph, focusId: selected.id, selectedId: null, collapsed: [], camera: null})}>
-        <div className="inspector-scroll unified-node-details"><NodeOverview key={selected.id} space={space} node={selected} onDue={due=>edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,due}:n)})))} onOpen={id=>changeView({...graph,selectedId:id,focusId:null,camera:null})} onAdd={()=>{const id=crypto.randomUUID();edit(space.id,s=>{const next=addSubtask(s,space.id,selected.id,id);return next===s?s:updateWorkspace(next,space.id,w=>updateMapGraph(w,{...mapGraph(w,tab.id),selectedId:id,focusId:null,collapsed:graph.collapsed.filter(value=>value!==selected.id),camera:null},tab.id));});setNewNodeId(id);}}/>
-          <NodeMaterials key={selected.id} node={selected} onChange={updateNode} onOpen={material => openMaterial(material, selected)}/>
+        <div className="inspector-scroll unified-node-details"><NodeOverview space={space} node={selected} onDue={due=>edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,due}:n)})))} onOpen={id=>changeView({...graph,selectedId:id,focusId:null,camera:null})} onAdd={()=>{const id=crypto.randomUUID();edit(space.id,s=>{const next=addSubtask(s,space.id,selected.id,id);return next===s?s:updateWorkspace(next,space.id,w=>updateMapGraph(w,{...mapGraph(w,tab.id),selectedId:id,focusId:null,collapsed:graph.collapsed.filter(value=>value!==selected.id),camera:null},tab.id));});setNewNodeId(id);}}/>
+          <NodeMaterials node={selected} onChange={updateNode} onOpen={material => openMaterial(material, selected)}/>
           <section className="node-detail-section"><div className="detail-section-heading"><h3>关联会话（{nodeSessions.length}）</h3></div><BackendPicker text="新建会话" label={`在${selected.title}中新建会话`} onChoose={agent => startSession(agent, selected.id)} onOpen={() => {setInbox(false); updateSpace(w => ({...w, sessionPanelOpen: false}));}} onLink={() => setDialog('link')}/>{nodeSessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!nodeSessions.length && <p className="quiet-note">还没有关联会话</p>}</section>
           <section className="node-detail-section"><div className="detail-section-heading"><h3>更新记录</h3></div><div className="node-timeline">{[...(selected.updates || [])].filter(update=>update.id!=='migration-task-state').reverse().map(update => {const source = sessions.find(s => s.id === update.sessionId); return <div key={update.id}><strong>{update.text}</strong><small>{update.at === 0 && update.id.startsWith('migration-') ? '旧数据迁移' : new Date(update.at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})} · {source ? `${agentNames[source.agentId || 'codex']}${source.integrationId === 'demo-agent' ? '（模拟）' : ''}` : '我'}</small>{source && <button className="text-button" onClick={() => openAgent(source.id)}>查看来源会话<ChevronRight size={12}/></button>}</div>;})}{!selected.updates?.length && <p className="quiet-note">执行结果与手动记录会留在这里</p>}</div><ProgressForm onSubmit={text => {const id = crypto.randomUUID(); const at = Date.now(); edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,updates:[...(n.updates||[]),{id,text,at}]}:n)})));}}/></section>
         </div>
@@ -219,16 +287,39 @@ export default function Workbench() {
     </div>;
   }
   if (!persistence.ready) return <div className="workbench-loading">正在恢复工作区…</div>;
-  return <AgentRuntimeContext.Provider value={agentRuntime}><div className="workbench-shell map-first-shell">
+  const managementActions: ManagementAction[] = !managementMenu ? [] : managementMenu.kind === 'workspace' ? [
+    {label: '打开工作区', icon: FolderOpen, run: () => switchSpace(managementMenu.id)},
+    {label: '重命名工作区', icon: Pencil, shortcut: 'F2', disabled: !persistence.ready || persistence.readOnly, run: () => setRenamingWorkspace(state.spaces.find(w => w.id === managementMenu.id) || null)},
+    {label: '自定工作区', icon: Settings2, run: () => {switchSpace(managementMenu.id); setDialog('customize');}},
+    {label: '删除工作区', icon: Trash2, separatorBefore: true, danger: true, disabled: !persistence.ready || persistence.readOnly, run: () => setDeletion(managementMenu)},
+  ] : [
+    {label: '打开会话', icon: MessageSquare, run: () => openAgent(managementMenu.id)},
+    {label: '重命名会话', icon: Pencil, disabled: !persistence.ready || persistence.readOnly, run: () => setRenamingSession(state.sessions.find(s => s.id === managementMenu.id) || null)},
+    {label: '关闭页签', icon: X, disabled: !state.spaces.some(w => w.dock.tabs.some(t => t.kind === 'session' && t.sessionId === managementMenu.id)), run: () => {const session = state.sessions.find(s => s.id === managementMenu.id); if (session) change(s => closeSessionTab(s, session.workspaceId, session.id));}},
+    {label: '删除会话', icon: Trash2, separatorBefore: true, danger: true, disabled: !persistence.ready || persistence.readOnly, run: () => setDeletion(managementMenu)},
+  ];
+  return <AgentRuntimeContext.Provider value={agentRuntime}><div className="workbench-shell map-first-shell" onContextMenu={event => {
+    if ((event.target as Element).closest('input, textarea, [contenteditable=true]')) return;
+    const element = (event.target as Element).closest<HTMLElement>('[data-workspace-id], [data-session-id], [data-dock-tab-id]');
+    if (!element) return;
+    const workspace = state.spaces.find(w => w.id === element.dataset.workspaceId);
+    const tab = space.dock.tabs.find(t => t.id === element.dataset.dockTabId);
+    const session = state.sessions.find(s => s.id === (element.dataset.sessionId || (tab?.kind === 'session' ? tab.sessionId : undefined)));
+    const target = workspace || session;
+    if (!target) return;
+    event.preventDefault();
+    const box = element.getBoundingClientRect();
+    setManagementMenu({kind: workspace ? 'workspace' : 'session', id: target.id, name: workspace ? workspace.name : session!.title, x: event.clientX || box.left, y: event.clientY || box.bottom, keyboard: !event.clientX && !event.clientY});
+  }}>
     <aside className="shell-sidebar" aria-label="主导航"><div className="sidebar-brand"><Star/><span>Draftway</span></div>
       <nav className="global-navigation"><button onClick={() => {setKnowledgeOpen(false);setDialog('workspace');}} disabled={state.spaces.length >= 20}><Plus size={17}/>新建工作区</button><button onClick={() => setDialog('search')}><Search size={17}/>搜索<kbd>Ctrl K</kbd></button><button className={knowledgeOpen?'active':''} aria-current={knowledgeOpen?'page':undefined} onClick={()=>{setKnowledgeVisited(true);setKnowledgeOpen(true);setDialog(null);setInbox(false);}}><BookOpen size={17}/>个人知识库</button></nav>
       <div className="sidebar-label">工作区</div><nav className="workspace-list" aria-label="工作区">{state.spaces.map((item, index) => {
         const count = state.notices.filter(n => n.workspaceId === item.id && !n.read).length;
         const running = state.runs.some(r => r.state === 'running' && state.sessions.some(s => s.id === r.sessionId && s.workspaceId === item.id)) || !!(item.review && background.reviews[item.id]?.runningCount);
-        return <button key={item.id} className={!knowledgeOpen&&item.id === space.id ? 'active' : ''} aria-current={!knowledgeOpen&&item.id === space.id ? 'page' : undefined} title={`${item.name}${index < 9 ? ` · Alt+${index + 1}` : ''}`} onClick={() => switchSpace(item.id)}><SpaceSymbol space={item}/><span>{item.name}</span>{count ? <span className="count-badge dark">{count}</span> : running ? <span className="running-dot" aria-label="有任务运行中"/> : null}</button>;
+        return <WorkspaceEntry key={item.id} space={item} active={!knowledgeOpen && item.id === space.id} editing={renamingWorkspace?.id === item.id} disabled={!persistence.ready || persistence.readOnly} title={`${item.name}${index < 9 ? ` · Alt+${index + 1}` : ''}`} onOpen={() => switchSpace(item.id)} onRename={() => setRenamingWorkspace(item)} onSave={name => change(s => updateWorkspace(s, item.id, w => ({...w, name})))} onFinish={() => setRenamingWorkspace(null)}>{count ? <span className="count-badge dark">{count}</span> : running ? <span className="running-dot" aria-label="有任务运行中"/> : null}</WorkspaceEntry>;
       })}</nav><div className="sidebar-bottom"><span><span className="profile-avatar">我</span>个人空间</span><button onClick={() => setDialog('settings')}><Settings2 size={16}/>接入与设置</button><button onClick={()=>setDialog('plugins')}><Puzzle size={16}/>插件</button><button onClick={()=>openBusiness('overview')}><ExternalLink size={14}/>个人工作台</button></div>
     </aside>
-    <div className="shell-body"><header className="workspace-heading dock-workspace-heading"><div className="workspace-title-row"><h1>{knowledgeOpen?'个人知识库':space.name}</h1><div className="workspace-actions">{!knowledgeOpen&&<><button className={`session-panel-toggle ${space.sessionPanelOpen ? 'active' : ''}`} aria-expanded={space.sessionPanelOpen} aria-controls="workspace-session-panel" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: !w.sessionPanelOpen}))}>会话记录（{sessions.length}）<ChevronDown size={14}/>{sessions.some(s => s.unread) && <i className="unread-dot"/>}</button><span className="vertical-divider"/></>}<button className="icon-button bell-button" aria-label={`通知${unread ? `，${unread}条未读` : ''}`} aria-expanded={inbox} onClick={() => setInbox(v => !v)}><Bell size={18}/>{!!unread && <span>{unread}</span>}</button>{!knowledgeOpen&&<button className="text-button" onClick={() => setDialog('customize')}><Settings2 size={16}/><span>自定工作区</span></button>}</div></div></header>
+    <div className="shell-body"><header className="workspace-heading dock-workspace-heading"><div className="workspace-title-row"><h1 onDoubleClick={() => {if (!knowledgeOpen && persistence.ready && !persistence.readOnly) setRenamingWorkspace(space);}}>{knowledgeOpen?'个人知识库':space.name}</h1><div className="workspace-actions">{!knowledgeOpen&&<><button className={`session-panel-toggle ${space.sessionPanelOpen ? 'active' : ''}`} aria-expanded={space.sessionPanelOpen} aria-controls="workspace-session-panel" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: !w.sessionPanelOpen}))}>会话记录（{sessions.length}）<ChevronDown size={14}/>{sessions.some(s => s.unread) && <i className="unread-dot"/>}</button><span className="vertical-divider"/></>}{!knowledgeOpen && agents && <button className="text-button" aria-label="本地服务" title="本地服务" onClick={() => setDialog('localServices')}><Globe size={16}/><span>本地服务</span></button>}<button className="icon-button bell-button" aria-label={`通知${unread ? `，${unread}条未读` : ''}`} aria-expanded={inbox} onClick={() => setInbox(v => !v)}><Bell size={18}/>{!!unread && <span>{unread}</span>}</button>{!knowledgeOpen&&<button className="text-button" onClick={() => setDialog('customize')}><Settings2 size={16}/><span>自定工作区</span></button>}</div></div></header>
     <div className="workspace-body workspace-map-body dock-workspace-body">
       <div className="workspace-content-host" hidden={knowledgeOpen}><DockLayout key={space.id} state={state} space={space} onChange={update => updateSpace(w => ({...w, dock: update(w.dock)}))} onSelect={selectTab} onClose={closeTab} onCreate={createTab} render={(tab, active, visible) => {
         if (tab.kind === 'map') return mapView(tab);
@@ -242,16 +333,32 @@ export default function Workbench() {
         return <SessionView state={state} session={session} active={active&&!knowledgeOpen} visible={visible&&!knowledgeOpen} change={change} onNode={id => {const nodeId = id || session.nodeId; if (nodeId) openNode(nodeId);}}/>;
       }}/></div>
       {knowledgeVisited&&<div className="personal-knowledge-host" hidden={!knowledgeOpen}>{knowledge.error&&<p className="knowledge-collection-error" role="alert">{knowledge.error}<button className="text-button" onClick={knowledge.retry}>重试入库</button></p>}<BusinessView workspaceId="personal" tab={personalKnowledgeTab} active={knowledgeOpen} onChange={tab=>{if(tab.kind==='business'&&tab.page!=='knowledge'){setKnowledgeVisited(false);openBusiness(tab.page);}}} flush={persistence.flush} onWorkspace={()=>setKnowledgeOpen(false)}/></div>}
-      {!knowledgeOpen&&space.sessionPanelOpen && <aside className="workspace-session-panel" id="workspace-session-panel" aria-label="当前工作区会话"><header><h2>会话记录（{sessions.length}）</h2><button className="icon-button" aria-label="收起会话面板" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: false}))}><X size={16}/></button></header><p className="quiet-note">{space.name} · 关闭页签后仍可在这里重新打开</p><div className="workspace-session-list">{sessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!sessions.length && <Empty title="还没有会话"><p>点“＋”选择后端开始。</p></Empty>}</div></aside>}
+      {!knowledgeOpen&&space.sessionPanelOpen && <aside className="workspace-session-panel" id="workspace-session-panel" aria-label="当前工作区会话"><header><h2>会话记录（{sessions.length}）</h2><button className="icon-button" aria-label="收起会话面板" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: false}))}><X size={16}/></button></header><p className="quiet-note">{space.name} · 关闭页签后仍可在这里重新打开</p><SessionManagement key={space.id} state={state} workspaceId={space.id} disabled={!persistence.ready || persistence.readOnly} onOpen={openAgent} onRename={renameManagedSession} onDelete={session => setDeletion({kind: 'session', id: session.id, name: session.title})}/></aside>}
 
     </div>
     <footer className="shell-status"><span>{(persistence.error || mapError) ? <><CircleAlert size={12}/>{persistence.error || mapError}<button onClick={persistence.retry}>{persistence.readOnly ? '重试读取' : '重试保存'}</button></> : <><span className="saved-dot"/>{persistence.saved ? '已保存到本机' : '正在保存'}</>}</span><span>Alt + 1…9 切换工作区 · Ctrl + Tab 切换最近页签</span></footer></div>
     {inbox && <aside className="notification-panel" aria-label="通知中心"><header><h2>通知</h2><button className="text-button" onClick={() => change(s => ({...s, notices: s.notices.map(n => ({...n, read: true})), sessions: s.sessions.map(session => ({...session, unread: false}))}))}>全部已读</button><button className="icon-button" aria-label="关闭通知中心" onClick={() => setInbox(false)}><X size={16}/></button></header>{background.error && <p className="tool-error" role="alert">{background.error}</p>}{state.spaces.filter(w => w.review).map(w => {const status = background.reviews[w.id]; return <div className="review-status" key={w.id}><strong>{w.name}</strong><small>{!status ? agents ? '正在连接检视服务' : '请在 Windows 版跟踪状态' : !status.connected ? `连接中断 · ${status.error}` : status.error || `${status.runningCount} 个 PR 处理中${status.paused ? ' · 已暂停调度' : ''}`}</small>{status?.historyGap && <small>离线期间可能有遗漏，请查看原看板。</small>}{status?.reports.slice(0, 5).map(report => <button className="text-button" key={report.file} onClick={() => openReport(w.id, status.url, report.file)}>{report.prs.map(n => `#${n}`).join('、') || '检视报告'} · {report.state === 'running' ? '进行中' : report.state === 'succeeded' ? '已完成' : report.state === 'failed' ? '失败' : '状态待确认'}<ChevronRight size={12}/></button>)}</div>;})}{[...state.notices].reverse().map(n => <button key={n.id} className={`notice-row ${n.read ? '' : 'unread'}`} onClick={() => openNotice(n)}><Bell size={15}/><span><strong>{n.title}</strong><small>{n.body || state.sessions.find(s => s.id === n.sessionId)?.title || state.spaces.find(w => w.id === n.workspaceId)?.name}</small></span><ChevronRight size={14}/></button>)}{!state.notices.length && <Empty title="这里暂时很安静"/>}</aside>}
-    {dialog === 'workspace' && <WorkspaceDialog templates={state.templates} onClose={() => setDialog(null)} onCreate={(name,templateId) => {const template=state.templates?.find(t=>t.id===templateId);const next = template?fromTemplate(name,template):createWorkspace(name, 'blank'); change(s => ({...s, activeId: next.id, spaces: [...s.spaces, next]})); setDialog(null);}}/>}
+    {managementMenu && <ManagementMenu x={managementMenu.x} y={managementMenu.y} keyboard={managementMenu.keyboard} actions={managementActions} onClose={() => setManagementMenu(null)}/>}
+
+    {renamingSession && <RenameSessionDialog session={renamingSession} onClose={() => setRenamingSession(null)} onSave={renameManagedSession}/>}
+    {deletion && <DeleteDialog title={deletion.kind === 'workspace' ? '删除工作区' : '删除会话'} description={deletion.kind === 'workspace' ? `删除「${deletion.name}」的地图、布局，以及其中全部 ${state.sessions.filter(session => session.workspaceId === deletion.id).length} 个会话与执行记录。` : `删除「${deletion.name}」的消息、草稿、执行记录和会话产物。已保留到地图的内容继续保留。`} onClose={() => setDeletion(null)} onDelete={removeContent}/>}
+    {dialog === 'workspace' && <WorkspaceDialog templates={state.templates} onClose={() => setDialog(null)} onCreate={(name, templateId, cwd) => {
+      const template = state.templates?.find(item => item.id === templateId);
+      const next = template ? fromTemplate(name, template) : createWorkspace(name, 'blank');
+      change(s => ({...s, activeId: next.id, spaces: [...s.spaces, {...next, cwd}]}));
+      setDialog(null);
+    }}/>}
 
     {dialog === 'plugins' && <PluginManagerDialog onClose={()=>setDialog(null)}/>}
-    {dialog === 'settings' && <Dialog title="接入与设置" onClose={() => setDialog(null)}><p className="muted">{agents ? '使用本机已安装的执行器。会话、来源标识和执行记录由 Draftway 保存。' : '浏览器模式使用模拟器；真实 Agent 请在 Windows 版中操作。'}</p><div className="integration-list">{integrations.filter(i => ['codex', 'claude', 'pi'].includes(i.id)).map(i => <div key={i.id}><Terminal size={16}/><span><strong>{i.name}</strong><small>{i.description}</small></span><span className="small-tag">{agents?.backends.find(backend => backend.id === i.id)?.available ? '已发现' : '未发现'}</span></div>)}</div><p className="quiet-note">地图、会话和更新记录保存在本机。Windows 版收起或切换工作区后继续执行；退出 Draftway 会停止本机执行器。</p></Dialog>}
+    {dialog === 'localServices' && <LocalServices onOpen={openLocalService} onClose={() => setDialog(null)}/>}
+    {dialog === 'settings' && <Dialog title="接入与设置" onClose={() => setDialog(null)}>
+      <AppearancePicker value={appearance.choice} onChange={appearance.setChoice}/>
+      <p className="muted">{agents ? '使用本机已安装的执行器。会话、来源标识和执行记录由 Draftway 保存。' : '浏览器模式使用模拟器；真实 Agent 请在 Windows 版中操作。'}</p>
+      <div className="integration-list">{integrations.filter(i => ['codex', 'claude', 'pi'].includes(i.id)).map(i => <div key={i.id}><Terminal size={16}/><span><strong>{i.name}</strong><small>{i.description}</small></span><span className="small-tag">{agents?.backends.find(backend => backend.id === i.id)?.available ? '已发现' : '未发现'}</span></div>)}</div>
+      <p className="quiet-note">地图、会话和更新记录保存在本机。Windows 版收起或切换工作区后继续执行；退出 Draftway 会停止本机执行器。</p>
+    </Dialog>}
     {dialog === 'customize' && <CustomizeDialog space={space} onClose={() => setDialog(null)} onSave={(name, cwd, review, materialRoots) => {updateSpace(w => ({...w, name, cwd, review, materialRoots})); setDialog(null);}} onPlace={(title, body, kind) => {const node: MindNode = {id: crypto.randomUUID(), parentId: space.nodes.find(n => !n.parentId)!.id, side: 1, kind, title:boundedText(title,120), body, progress: 0, due: '', }; updateSpace(w => ({...w, nodes: [...w.nodes, node], graph: {...w.graph, selectedId: node.id, camera: null}})); change(s => selectWorkspaceTab(s, space.id)); setDialog(null);}}>
+      <section className="workspace-delete-section"><button type="button" className="outline-button danger-text" disabled={!persistence.ready || persistence.readOnly} onClick={() => {setDialog(null); setDeletion({kind: 'workspace', id: space.id, name: space.name});}}><Trash2 size={15}/>删除工作区</button><p className="quiet-note">删除此工作区的地图、布局和全部会话。删除最后一个工作区后会创建空白工作区。</p></section>
       <CompositionSettings workspaceName={space.name} templates={state.templates||[]} integrations={state.externalIntegrations||[]} onTemplate={name=>change(s=>{const old=s.templates?.find(t=>t.name===name);const template=layoutTemplate(space,old?.id||crypto.randomUUID(),name);return{...s,templates:[...(s.templates||[]).filter(t=>t.id!==template.id),template]};})} onRemoveTemplate={id=>change(s=>({...s,templates:s.templates?.filter(t=>t.id!==id)}))} onIntegration={integration=>change(s=>({...s,externalIntegrations:[...(s.externalIntegrations||[]).filter(i=>i.id!==integration.id),integration]}))} onRemoveIntegration={id=>change(s=>({...s,externalIntegrations:s.externalIntegrations?.filter(i=>i.id!==id)}))}/>
     </CustomizeDialog>}
     {dialog === 'search' && <SearchDialog space={space} onClose={() => setDialog(null)} onOpen={openNode}/>}
@@ -259,10 +366,56 @@ export default function Workbench() {
 
   </div></AgentRuntimeContext.Provider>;
 }
-function WorkspaceDialog({onClose, onCreate, templates=[]}: {onClose: () => void; onCreate: (name: string, templateId: string) => void; templates?: {id:string;name:string}[]}) {
+function WorkspaceDialog({onClose, onCreate, templates = []}: {
+  onClose: () => void;
+  onCreate: (name: string, templateId: string, cwd?: string) => void;
+  templates?: {id: string; name: string}[];
+}) {
+  const agents = useAgentRuntime();
   const [name, setName] = useState('');
-  const [templateId,setTemplateId]=useState('');
-  return <Dialog title="新建工作区" onClose={onClose}><form onSubmit={event => {event.preventDefault(); if (name.trim()) onCreate(name.trim(),templateId);}}><label className="field">工作区名称<input autoFocus required maxLength={40} placeholder="给一件重要的事，留出空间" value={name} onChange={event => setName(event.target.value)}/></label>{!!templates.length&&<label className="field">布局模板<select value={templateId} onChange={e=>setTemplateId(e.target.value)}><option value="">空白工作区</option>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}<p className="quiet-note">从一个地图中心开始，按需添加节点与会话。</p><footer><button className="primary-button" disabled={!name.trim()}>创建工作区</button></footer></form></Dialog>;
+  const [templateId, setTemplateId] = useState('');
+  const [cwd, setCwd] = useState<string>();
+  const [choosing, setChoosing] = useState(false);
+  const [directoryError, setDirectoryError] = useState('');
+
+  async function chooseDirectory() {
+    if (!agents) return;
+    setChoosing(true);
+    setDirectoryError('');
+    try {
+      const directory = await agents.chooseDirectory();
+      if (directory) setCwd(directory);
+    } catch {
+      setDirectoryError('无法打开文件夹选择器，请重试。');
+    } finally {
+      setChoosing(false);
+    }
+  }
+
+  return <Dialog title="新建工作区" onClose={onClose}>
+    <form onSubmit={event => {
+      event.preventDefault();
+      if (!choosing && name.trim()) onCreate(name.trim(), templateId, cwd);
+    }}>
+      <label className="field">工作区名称
+        <input autoFocus required maxLength={40} placeholder="填写工作区主题" value={name} onChange={event => setName(event.target.value)}/>
+      </label>
+      {agents && <section className="workspace-directory" aria-label="工作目录（可选）">
+        <span>工作目录（可选）</span>
+        <p>{cwd || '新会话使用默认工作区目录'}</p>
+        <button type="button" className="outline-button" disabled={choosing} onClick={() => {void chooseDirectory();}}>选择文件夹</button>
+        {cwd && <button type="button" className="text-button" disabled={choosing} onClick={() => setCwd(undefined)}>清除目录</button>}
+        {directoryError && <p className="tool-error" role="alert">{directoryError}</p>}
+      </section>}
+      {!!templates.length && <label className="field">布局模板
+        <select value={templateId} onChange={event => setTemplateId(event.target.value)}>
+          <option value="">空白工作区</option>
+          {templates.map(template => <option key={template.id} value={template.id}>{template.name}</option>)}
+        </select>
+      </label>}
+      <footer><button className="primary-button" disabled={choosing || !name.trim()}>创建工作区</button></footer>
+    </form>
+  </Dialog>;
 }
 
 function ProgressForm({onSubmit}: {onSubmit: (text: string) => void}) {

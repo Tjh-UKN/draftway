@@ -8,10 +8,13 @@ import {modelCatalogDirectory, useAgentRuntime, type AgentModelOptions} from './
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
 import {SessionComposer} from './SessionComposer';
+import {enqueueChatMessage} from './chat-queue';
+import type {ChatFile} from './session-files';
 import {SessionTranscript} from './SessionTranscript';
 import {RunActivity} from './RunActivity';
 import {AgentComposerOptions} from './AgentComposerOptions';
 import {isHtmlReport,openLocalReport} from './local-report';
+import CopyButton from '../CopyButton';
 
 export type ChangeState = (update: (state: WorkbenchState) => WorkbenchState) => void;
 export function SessionStatus({state, session}: {state: WorkbenchState; session: AgentSession}) {
@@ -32,7 +35,9 @@ export function SessionView({state, session, change, onNode, active = true,visib
   const [optionsRetry, setOptionsRetry] = useState(0);
   const readModelOptions = runtime?.modelOptions;
   const {id, integrationId: backend, cwd} = session;
-  const activityRuns = useMemo(() => pi ? state.runs.filter(run => run.sessionId === id) : undefined, [pi, state.runs, id]);
+  const sessionRuns = useMemo(() => state.runs.filter(run => run.sessionId === id), [state.runs, id]);
+  const activityRuns = pi ? sessionRuns : undefined;
+  const unsentRuns = sessionRuns.filter(run => run.state === 'failed' && run.pendingText !== undefined);
   const directory = cwd && modelCatalogDirectory(cwd);
   const modelOptionsScope = JSON.stringify([id, backend, directory]);
   const fetchOptions = hasModelOptions && !!session.nativeRevision && visible && !runtime?.readOnly;
@@ -66,9 +71,17 @@ export function SessionView({state, session, change, onNode, active = true,visib
   const space = state.spaces.find(s => s.id === session.workspaceId)!;
   const node = space.nodes.find(n => n.id === session.nodeId);
   const provider = agentNames[session.agentId || 'codex'];
-  const send=useCallback((text:string) => {
-    if (busy||!canSend) return;
-    if (!demo) {runtime?.send({...session,draft:text}); return;}
+  const send=useCallback((text:string,files:ChatFile[]) => {
+    if (!canSend) return false;
+    if (!demo) {
+      if (busy || session.queuedMessages?.length) {
+        const message = {id:crypto.randomUUID(), text, files, model:session.selectedModel, effort:session.selectedEffort};
+        change(current => enqueueChatMessage(current, session.id, message));
+        return;
+      }
+      return runtime?.send({...session,draft:text,draftFiles:files});
+    }
+    if (busy) return false;
     const id = crypto.randomUUID(); const at = Date.now();
     if (adapter) change(current => adapter.start(current, session.id, text, 'succeeded', id, at));
   },[busy,canSend,demo,runtime,session,adapter,change]);
@@ -77,19 +90,33 @@ export function SessionView({state, session, change, onNode, active = true,visib
     {!demo && session.cwd && <div className="session-directory" title={session.cwd}>{session.cwd}</div>}
     {node && <div className="session-node-context"><button className="text-button" onClick={() => onNode(node.id)}>{node.title}<ChevronRight size={12}/></button></div>}
     {linkError&&<p className="agent-error session-file-error" role="alert">{linkError}</p>}
-    <SessionTranscript session={session} store={runtime?.transcripts} provider={provider} demo={demo} visible={visible} onOpenLink={runtime?openLink:undefined} onOpenLocalPath={!demo&&runtime?openLocalPath:undefined} activityRuns={activityRuns}>
-      {!session.messages.length && <Empty title="开始对话"/>}
+    <SessionTranscript session={session} store={runtime?.transcripts} provider={provider} demo={demo} active={active} visible={visible} onOpenLink={runtime?openLink:undefined} onOpenLocalPath={!demo&&runtime?openLocalPath:undefined} activityRuns={activityRuns}>
+      {!session.messages.length && !unsentRuns.length && <Empty title="开始对话"/>}
       {run && hasNativeProgress && <RunActivity key={run.id} run={run} placedInTranscript={pi}/>}
       {!hasNativeProgress && run?.state === 'running' && <div className="run-progress"><LoaderCircle size={15} className="spinning"/><span>{run.stopping ? '正在停止…' : '正在回复…'}</span></div>}
       {run?.state === 'needs_input' && demo && <div className="run-attention"><CircleAlert size={16}/><span>需要你的输入</span><button className="primary-button" disabled={!adapter} onClick={() => {const at = Date.now(); change(current => adapter!.resume(current, run.id, at));}}>继续模拟</button></div>}
       {!demo && session.requests?.map(request => <AgentRequestForm key={request.id} request={request} onRespond={answer => runtime?.respond(session.id, request.id, answer)}/>)}
-      {(session.connectionError || run?.error) && <p className="agent-error" role="alert">{session.connectionError || run?.error}</p>}
+      {(session.connectionError || (run?.pendingText === undefined && run?.error)) && <p className="agent-error" role="alert">{session.connectionError || run?.error}</p>}
+      {unsentRuns.map(failed => {
+        const text = failed.pendingText;
+        if (failed.state !== 'failed' || text === undefined) return null;
+        return <section className="agent-request unsent-agent-message" aria-label="未发送消息" key={failed.id}>
+          <strong>未发送</strong>
+          {failed.error && <p role="alert">{failed.error}</p>}
+          {text && <pre>{text}</pre>}
+          {!!failed.pendingFiles?.length && <p>{failed.pendingFiles.map(file=>file.name).join('、')}</p>}
+          <div className="agent-request-actions">
+            <button type="button" className="outline-button" disabled={!canSend || busy} onClick={() => runtime?.send(session,{id:failed.id,text,files:failed.pendingFiles})}>重试</button>
+            {!!text.trim() && <CopyButton text={text} label="复制未发送消息"/>}
+          </div>
+        </section>;
+      })}
       {run?.state === 'interrupted' && <p className="quiet-note" role="status">Draftway 退出时本轮尚未结束，消息的处理结果可能尚未确认。查看记录后，可输入新消息继续此会话。</p>}
       {run?.state === 'cancelled' && <p className="quiet-note">本轮已停止。会话记录保留。</p>}
       {state.artifacts.filter(a => a.sessionId === session.id).map(artifact => {const placed = space.nodes.find(n => n.sourceArtifactId === artifact.id); return <details className="artifact" key={artifact.id}><summary><Check size={14}/>{artifact.title}</summary><p>{artifact.text}</p><button className="text-button" disabled={!placed && space.nodes.length >= 250} onClick={() => {const at = Date.now(); change(current => placeArtifact(current, artifact.id, at)); onNode(placed?.id || `artifact-${artifact.id}`);}}>{placed ? '查看地图节点' : '保留到地图'}<ChevronRight size={13}/></button></details>;})}
       {run?.context && <details className="artifact"><summary>本轮引用的节点与材料</summary><pre className="material-text">{run.context}</pre></details>}
     </SessionTranscript>
-    <SessionComposer key={session.id} session={session} change={change} active={active} busy={busy} stopping={!!run?.stopping} disabled={demo?!adapter:!runtime} canSend={canSend} onSend={send} onStop={stop}
+    <SessionComposer key={session.id} session={session} change={change} active={active} busy={busy} stopping={!!run?.stopping} disabled={demo?!adapter:!runtime} canSend={canSend} onSend={send} onStop={stop} queueEnabled={!demo}
       options={runtime && hasModelOptions && <AgentComposerOptions provider={provider} options={currentOptions?.options}
         error={currentOptions?.error ?? (runtime.readOnly ? '会话为只读' : !session.nativeRevision ? session.connectionError : undefined)}
         model={session.selectedModel} effort={session.selectedEffort} effectiveModel={session.effectiveModel} effectiveEffort={session.effectiveEffort}

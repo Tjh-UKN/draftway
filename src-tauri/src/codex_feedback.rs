@@ -104,7 +104,7 @@ pub fn plan(value: &Value) -> Option<Activity> {
     Some(Activity {id: "$turn-plan".into(), kind: ActivityKind::Plan, title: "计划".into(), status, detail: (!detail.is_empty()).then_some(detail), after_message_id: None})
 }
 
-pub fn pi_activity(event: &Value) -> Option<Activity> {
+pub fn pi_activity(event: &Value, assistant: Option<u32>) -> Option<Activity> {
     let event_type = event["type"].as_str()?;
     let (id, kind, title, status) = match event_type {
         "message_update" => {
@@ -114,9 +114,8 @@ pub fn pi_activity(event: &Value) -> Option<Activity> {
                 "thinking_end" => ActivityStatus::Completed,
                 _ => return None,
             };
-            let at = event["message"]["timestamp"].as_u64().or_else(|| update["partial"]["timestamp"].as_u64()).unwrap_or(0);
             let index = update["contentIndex"].as_u64().unwrap_or(0);
-            (format!("pi-thinking-{at}-{index}"), ActivityKind::Thinking, "思考".into(), status)
+            (format!("pi-thinking-{}-{index}", assistant?), ActivityKind::Thinking, "思考".into(), status)
         }
         "tool_execution_start" | "tool_execution_end" => {
             let id = event["toolCallId"].as_str().filter(|id| !id.is_empty() && id.len() <= 128)?;

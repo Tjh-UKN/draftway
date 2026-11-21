@@ -96,8 +96,17 @@ fn restore_inner(store:&Store,source:&Path,recovering:bool)->Result<()> {
         if integrity!="ok" || ![1,2,3,4,5].contains(&version) {return Err("备份数据库无效".into());}
         store::migrate_connection(&mut check)?;
         let all=store::records(&check)?;
-        for item in &all {domain::validate(item)?;for (field,kind) in [("projectId","project"),("goalId","goal"),("taskId","task")] {if let Some(id)=domain::optional_id(item,field){if !all.iter().any(|r|domain::text(r,"id")==id&&domain::text(r,"kind")==kind){return Err("备份记录关联不完整".into());}}}
-          for (field,kind) in [("taskIds","task"),("issueIds","issue")]{if let Some(ids)=item[field].as_array(){for id in ids{if !all.iter().any(|r|r["id"]==*id&&domain::text(r,"kind")==kind){return Err("备份工作记录的关联不完整".into());}}}}
+        for item in &all {
+            domain::validate(item)?;
+            // Retired records preserve historical links to tasks that may since have been deleted.
+            if domain::is_retired_kind(domain::text(item, "kind")) {continue;}
+            for (field,kind) in [("projectId","project"),("goalId","goal"),("taskId","task")] {
+                if let Some(id)=domain::optional_id(item,field) {
+                    if !all.iter().any(|r|domain::text(r,"id")==id&&domain::text(r,"kind")==kind) {
+                        return Err("备份记录关联不完整".into());
+                    }
+                }
+            }
         }
         store::settings(&check)?;
         check.execute_batch("CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);").map_err(error)?;
@@ -117,7 +126,7 @@ fn restore_inner(store:&Store,source:&Path,recovering:bool)->Result<()> {
         if !recovering{mark_restore(store,&protection.name)?;}store.restore_epoch.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
         let mut swapped:Vec<(PathBuf,PathBuf,PathBuf,bool)>=Vec::new();
         let restore=(||->Result<()>{let paths=if agent_bundle{vec!["attachments","agents/provider-sessions","agents/workspaces"]}else{vec!["attachments"]};
-            for relative in paths{let target=store.root.join(relative);let previous=store.root.join(format!("tree-before-restore-{}",uuid::Uuid::new_v4()));let incoming=stage.join(relative);let existed=target.exists();fs::create_dir_all(target.parent().ok_or("恢复目录无效")?).map_err(error)?;if existed{fs::rename(&target,&previous).map_err(error)?;}if let Err(error)=fs::rename(&incoming,&target){if existed{let _=fs::rename(&previous,&target);}return Err(error.to_string());}swapped.push((target,previous,incoming,existed));}
+            for relative in paths{let target=store.root.join(relative);let previous=store.root.join(format!("tree-before-restore-{}",uuid::Uuid::new_v4()));let incoming=stage.join(relative);let existed=target.exists();fs::create_dir_all(target.parent().ok_or("恢复目录无效")?).map_err(error)?;if existed{fs::rename(&target,&previous).map_err(|error|format!("无法暂存 {relative}：{error}"))?;}if let Err(error)=fs::rename(&incoming,&target){if existed{let _=fs::rename(&previous,&target);}return Err(format!("无法恢复 {relative}：{error}"));}swapped.push((target,previous,incoming,existed));}
             if agent_bundle{crate::agent_backup::restore_database(&store.root,&stage.join("agents/agent-sessions.sqlite3"))?;crate::agent_backup::finish_owned_dirs(&store.root)?;}
             #[cfg(test)]if FAIL_RESTORE_AFTER_AGENTS.with(|flag|flag.replace(false)){return Err("注入恢复失败".into());}
             db.restore(DatabaseName::Main,stage.join("northstar.sqlite3"),None::<fn(rusqlite::backup::Progress)>).map_err(error)?;Ok(())})();

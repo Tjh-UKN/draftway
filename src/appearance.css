@@ -1,0 +1,194 @@
+:root[data-appearance] {
+  color-scheme: light;
+  --app-bg: #ffffff;
+  --app-sidebar: #f7f7f7;
+  --app-panel: #ffffff;
+  --app-raised: #f6f6f6;
+  --app-hover: #eeeeee;
+  --app-text: #252525;
+  --app-muted: #626262;
+  --app-faint: #6b6b6b;
+  --app-line: #e8e8e8;
+  --app-divider: #d8d8d8;
+  --app-accent: #33363a;
+  --app-accent-ink: #ffffff;
+  --app-accent-soft: #eef0f2;
+  --app-warning: #775114;
+  --app-warning-bg: #fbf3e5;
+  --app-danger: #a73139;
+  --app-danger-bg: #fbeef0;
+  --app-success: #336449;
+  --app-success-bg: #eaf4ed;
+  --app-info: #365c83;
+  --app-info-bg: #ecf2fa;
+  --app-graph-bg: #ffffff;
+  --app-graph-edge: #bfc5ca;
+  --app-graph-dot: #e0e3e6;
+  --app-overlay: #1a232a40;
+  --app-shadow: #151c2526;
+}
+
+:root[data-appearance="warm"] {
+  --app-bg: #f8f4eb;
+  --app-sidebar: #eee8dc;
+  --app-panel: #fffaf0;
+  --app-raised: #f3eddf;
+  --app-hover: #eae1d1;
+  --app-text: #342e26;
+  --app-muted: #635747;
+  --app-faint: #685c4b;
+  --app-line: #e1d8c7;
+  --app-divider: #cfc2ac;
+  --app-accent: #68452d;
+  --app-accent-soft: #ede0ca;
+  --app-warning: #75501d;
+  --app-warning-bg: #f8e9ce;
+  --app-danger: #9e3737;
+  --app-danger-bg: #f8e2df;
+  --app-success: #3b6046;
+  --app-success-bg: #e5eddd;
+  --app-info: #395d78;
+  --app-info-bg: #e9eff1;
+  --app-graph-bg: #fbf6eb;
+  --app-graph-edge: #b9ad98;
+  --app-graph-dot: #dcd1bd;
+  --app-overlay: #35281c47;
+  --app-shadow: #493b2b24;
+}
+
+:root[data-appearance="dark"] {
+  color-scheme: dark;
+  --app-bg: #181e25;
+  --app-sidebar: #11171d;
+  --app-panel: #1d252e;
+  --app-raised: #252f3a;
+  --app-hover: #303c49;
+  --app-text: #e8edf4;
+  --app-muted: #b3bfce;
+  --app-faint: #9baabc;
+  --app-line: #354250;
+  --app-divider: #465666;
+  --app-accent: #abc9e9;
+  --app-accent-ink: #172a3d;
+  --app-accent-soft: #293e54;
+  --app-warning: #ebc481;
+  --app-warning-bg: #382d20;
+  --app-danger: #ffb0b4;
+  --app-danger-bg: #40292f;
+  --app-success: #a5d5b5;
+  --app-success-bg: #253a30;
+  --app-info: #add0f1;
+  --app-info-bg: #263b51;
+  --app-graph-bg: #181f27;
+  --app-graph-edge: #728398;
+  --app-graph-dot: #364658;
+  --app-overlay: #080e16a6;
+  --app-shadow: #00000059;
+}
+
+.appearance-picker {
+  min-width: 0;
+  padding: 0 0 14px;
+  margin: 0 0 14px;
+  border: 0;
+  border-bottom: 1px solid var(--app-line);
+}
+
+.appearance-picker legend {
+  padding: 0;
+  margin-bottom: 8px;
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.appearance-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 83px), 1fr));
+  gap: 8px;
+}
+
+.appearance-option {
+  position: relative;
+  display: block;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.appearance-option input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+}
+
+.appearance-option-body {
+  display: grid;
+  gap: 7px;
+  padding: 6px 6px 5px;
+  border: 1px solid var(--app-line);
+  border-radius: 8px;
+  background: var(--app-panel);
+  color: var(--app-text);
+  text-align: center;
+  font-size: 12px;
+}
+
+.appearance-option:hover .appearance-option-body {
+  border-color: var(--app-divider);
+}
+
+.appearance-option input:checked + .appearance-option-body {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+}
+
+.appearance-option input:focus-visible + .appearance-option-body {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.appearance-preview {
+  --preview-bg: #ffffff;
+  --preview-side: #ebedf0;
+  --preview-line: #c7ccd3;
+  display: grid;
+  grid-template-columns: 23% 1fr;
+  align-items: center;
+  gap: 14%;
+  height: 34px;
+  overflow: hidden;
+  border: 1px solid var(--preview-line);
+  border-radius: 5px;
+  background: var(--preview-bg);
+}
+
+.appearance-preview[data-preview="warm"] {
+  --preview-bg: #fff8e9;
+  --preview-side: #e9dbc4;
+  --preview-line: #c4b397;
+}
+
+.appearance-preview[data-preview="dark"] {
+  --preview-bg: #242d37;
+  --preview-side: #11171d;
+  --preview-line: #66778c;
+}
+
+.appearance-preview[data-preview="system"] {
+  --preview-bg: linear-gradient(105deg, #ffffff 50%, #242d37 50%);
+  --preview-line: #7c8999;
+}
+
+.appearance-preview i {
+  height: 100%;
+  background: var(--preview-side);
+}
+
+.appearance-preview b {
+  width: 66%;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--preview-line);
+  box-shadow: 0 6px var(--preview-line);
+}

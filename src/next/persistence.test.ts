@@ -1,7 +1,7 @@
 import {describe, expect, it} from 'vitest';
 import {createSession, initialWorkbench, parseWorkbench} from './core';
 import {durableWorkbench} from './persistence';
-import {mergeNativeSession, type NativeSession} from './agent-state';
+import {beginNativeSend, mergeNativeSession, type NativeSession} from './agent-state';
 
 describe('durable workspace snapshot', () => {
   it('keeps UI and drafts while native transcripts remain authoritative in SQLite', () => {
@@ -17,6 +17,15 @@ describe('durable workspace snapshot', () => {
     const state = createSession(initialWorkbench(), 'design', null, 'demo', 1); state.sessions[0].messages.push({id:'m',role:'user',text:'Keep this',at:1});
     expect(durableWorkbench(state).sessions[0].messages).toEqual(state.sessions[0].messages);
     state.sessions[0].integrationId='unknown-provider'; expect(durableWorkbench(state).sessions[0].messages).toEqual(state.sessions[0].messages);
+  });
+  it('keeps unconfirmed text recoverable after reload with the independent composer draft', () => {
+    const source: NativeSession = {id:'real',workspaceId:'design',nodeId:null,backend:'pi',title:'Real',cwd:'C:/project',sourceId:null,createdAt:1,revision:1,messages:[],runs:[],requests:[],error:null};
+    const state = beginNativeSend(mergeNativeSession(initialWorkbench(),source),'real','pending','Previous unsent text',2);
+    state.sessions[0].draft='new draft';
+    const restored = parseWorkbench(JSON.parse(JSON.stringify(durableWorkbench(state))));
+    expect(restored.sessions[0].draft).toBe('new draft');
+    const rehydrated = mergeNativeSession(restored,source);
+    expect(rehydrated.runs.at(-1)).toMatchObject({id:'pending',state:'failed',pendingText:'Previous unsent text'});
   });
 });
 import {snapshotWriter} from './persistence';

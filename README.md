@@ -1,225 +1,88 @@
-# Draftway
+<h1 align="center">
+  <img src="src-tauri/icons/128x128.png" alt="" width="44" height="44" valign="middle"> Draftway
+</h1>
 
-一个以目标、项目、任务和重要日期为主线的 Windows 桌面应用。采用 Tauri 2、React、TypeScript、Rust 和 SQLite，默认使用深绿主题，支持浅色主题及今日专注布局。
+<p align="center">
+  <strong>A local-first project workbench for you and your AI agents.</strong><br>
+  Map a project, start an agent session from a node, and keep the notes and results with the work.
+</p>
 
-## 使用
+<p align="center">
+  <a href="#quick-start"><strong>Get started</strong></a> ·
+  <a href="#windows-desktop">Windows</a> ·
+  <a href="docs/readme/README.zh-CN.md">简体中文</a> ·
+  <a href="https://github.com/Tjh-UKN/draftway#start-of-content">★ Star</a>
+</p>
 
-从 [Draftway 源码仓库](https://github.com/Tjh-UKN/draftway) 获取项目。私有仓库需要使用已获授权的 GitHub 账号。
+<p align="center">
+  <a href="docs/readme/workbench.webp"><img src="docs/readme/workbench.webp" width="1120" alt="Draftway showing an Atlas release map next to a Codex session with a release checklist"></a>
+  <br><sub>Browser preview with a sample project and a simulated agent session. The current interface is in Simplified Chinese.</sub>
+</p>
 
-在装有 Node.js、Rust MSVC 工具链、Microsoft C++ 桌面开发工具和 WebView2 的 Windows 环境中运行：
+## What you can do
 
-```powershell
+<table>
+  <tr>
+    <td width="43%" valign="middle">
+      <h3>Plan on a project map</h3>
+      <p>Map your ideas, tasks, and documents. Track progress on each node and link files, web pages, or Obsidian notes.</p>
+      <a href="docs/mindmap-editing.md">Map controls</a> · <a href="docs/materials.md">Linked materials</a>
+    </td>
+    <td width="57%">
+      <a href="docs/readme/project-map.webp"><img src="docs/readme/project-map.webp" alt="The Atlas project map showing its planning and shipping branches"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="43%" valign="middle">
+      <h3>Work beside your agent</h3>
+      <p>Run Codex, Claude Code, or Pi beside your map in the Windows app. Resume a closed session from workspace history.</p>
+      <a href="docs/windows-delivery.md">Windows capabilities</a>
+    </td>
+    <td width="57%">
+      <a href="docs/readme/agent-session.webp"><img src="docs/readme/agent-session.webp" alt="A simulated Codex conversation linked to the QA sweep node, with a checklist ready to save"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="43%" valign="middle">
+      <h3>Keep the results</h3>
+      <p>Save agent results to the map. Retained results and workspace notes feed a searchable library alongside your HTML, drawings, and mind maps.</p>
+      <a href="docs/personal-knowledge.md">Personal knowledge library</a>
+    </td>
+    <td width="57%">
+      <a href="docs/readme/knowledge-library.webp"><img src="docs/readme/knowledge-library.webp" alt="The knowledge library showing documents and a retained release checklist grouped by source workspace"></a>
+    </td>
+  </tr>
+</table>
+
+## Quick start
+
+Clone the repository with Git and install dependencies with Node.js 20 or later.
+
+```sh
+git clone https://github.com/Tjh-UKN/draftway.git
+cd draftway
 npm ci
+npm run dev
+```
+
+Open [the local browser preview](http://127.0.0.1:1420/next.html). Create a workspace, add a map node with **+**, and start a conversation from the node details. The browser preview stores its own data and uses simulated agents.
+
+### Windows desktop
+
+Install the Rust MSVC toolchain, Visual Studio's **Desktop development with C++** workload, and WebView2. Then build and launch from the same checkout.
+
+```powershell
 npm run desktop:next:build
+.\src-tauri\target\debug\northstar.exe
 ```
 
-构建完成后运行 `src-tauri/target/debug/northstar.exe`。此处沿用内部可执行文件名，窗口中显示 Draftway。需要构建安装包时，运行 `npm run desktop:next:release`。
+Draftway uses the agent tools and credentials you have already set up locally. Run `npm run desktop:next:release` to build the Windows installer. [Windows delivery and verification](docs/windows-delivery.md)
 
-## 工作区重构预览
+## Your workspace data
 
-此分支面向 Windows 桌面。运行 `npm run desktop:next` 打开独立预览，网页预览入口为 `/next.html`。预览使用独立应用标识，原版数据目录保留。
+The desktop app stores workspace state and session history locally in SQLite. You can export and restore full backups from settings. Agent requests use the provider and credentials configured in your local agent tool. [Backup and recovery](docs/backup-recovery.md)
 
-- 工作区常驻侧栏，一次点击或 `Alt + 1…9` 切换；地图可平移、缩放、收拢和聚焦。
-- 点节点旁“＋”直接创建节点；内容、类型和进度以后再编辑。节点可以是想法、分析、事件、文档、代码或产物。
-- 会话、网页、文件审查、材料和原有业务组件共用页签与递归分屏。节点里选择后端直接进入会话；关闭页签保留历史与草稿。
-- Windows 使用真实 Codex、Claude Code、Pi 适配器，沿用本机认证与模型配置；浏览器预览明确标注模拟。当前实测状态见交付记录。
-- 节点材料支持 Obsidian、文件和网页。授权目录内的文本可直接阅读，并随节点会话发送；Git 审查比较 HEAD 与工作目录。
-- AI 通过 MCP 工具追加进展、更新正文或保留产物，保存来源并处理并发编辑；普通回复不自动创建节点，执行成功不自动验收任务。
-- 后台保留执行与检视状态，通知中心定位会话和报告；模板与网页接入声明用于扩展组合。
-- 完整备份包括工作区、会话与默认工作目录，支持旧版业务备份、跨目录恢复和保护回滚。
+## More
 
-Windows 运行版与安装包、快捷键和验收边界见 [Windows 交付](docs/windows-delivery.md)。
-
-使用与边界：[组件交付](docs/component-delivery.md)、[组合工作区](docs/composable-workspaces.md)、[材料与审查](docs/materials.md)、[工作区工具](docs/workspace-tools.md)、[后台状态](docs/background-runtime.md)、[备份恢复](docs/backup-recovery.md)。接入约定见 [协议](docs/integration-protocol.md)。
-
-## v0.6.2：网页工作区
-
-工作区可以是已有网页工具。新建工作区时选择“网页工作区（Edge）”，填写名称与完整网页地址；也可从“现有工具”选择自动 PR 检视看板（`http://127.0.0.1:8765/`）。点击工作区标签或“用 Edge 打开”会请求 Microsoft Edge 打开原页面。已有工作区可在“管理工作区”切换类型，原组件配置保留。
-
-网页工作区只保存名称与地址；PR 看板继续使用原服务和原数据。服务需要保持运行。启动 Draftway 或恢复上次工作区不会自动打开浏览器。浏览器预览通过普通网页链接打开新页面；Windows 桌面版通过 Edge 打开。
-
-## v0.6.1：组件弹窗
-
-工作区只显示组件入口，点击后弹出对应界面。拖动标题栏移动窗口，拖动右下角调整大小；支持最大化、还原、收起与 Esc 关闭。窗口位置和大小按组件保存，打开时会适应当前屏幕。整体工作区缩放仅作用于入口，弹窗保持正常阅读比例。
-
-## v0.6：可组合工作区
-
-- 启动进入工作区；从顶部切换、新建空白工作区，或使用自己保存的模板。每个工作区独立保存组件、筛选条件和缩放比例。
-- 从“添加组件”选择事项备忘、知识笔记、自由画板。同类组件可重复添加，分别按项目、任务状态或笔记标签筛选。
-- 拖动入口手柄排序，也可使用前移、后移按钮。整体缩放范围为 60%–140%；点击入口弹出组件界面，关闭后返回工作区。
-- “管理工作区”支持重命名、复制、保存模板、删除模板与工作区。移除组件和工作区仅删除组合配置，业务记录继续保留。原有功能仍可从左侧进入。
-- Windows 将布局单独保存在 SQLite `metadata.workspace_layout`，随完整备份恢复；浏览器预览使用独立的 IndexedDB。布局保存失败会保留当前窗口内的修改，并提供重试。未知组件及其配置会保留，暂时显示不可用；不兼容的布局版本不会被自动覆盖。
-
-扩展组件：在 `src/widgets/` 实现 `WidgetDefinition`，提供类型、配置版本、名称、图标、默认与最小尺寸、渲染函数，可选提供实例设置及完整页面入口；然后加入 `src/widgets/index.ts` 的注册表。工作区外壳不包含具体业务类型判断。模块自行管理业务数据，实例配置只保存筛选等简单字符串设置，模板仅复制布局与配置。PR、review、闪卡、认知报告尚未实现，可按同一约定接入。当前采用随应用构建的模块注册，不运行外部上传代码。
-
-验证工作区交互：`npm run test:workspaces`（先启动 `npm run dev`）。
-
-## v0.5：Excalidraw 自由画板
-
-1. 点击左侧 **自由画板 → 新建画板**。修改顶部名称，可选关联项目。
-2. 在画布顶部选择矩形、椭圆、箭头、文字、手绘或图片工具。空格拖动画布，Ctrl + 滚轮缩放；工具栏提示对应快捷键，支持撤销与重做。
-3. 停止操作约 1 秒后自动保存。看到“已保存到本机”即可放心；也可按 **Ctrl + S** 或点击“保存”。“返回画板”会先完成保存，保存失败时保留画布并显示原因。
-4. 顶部 **源文件** 导出可继续编辑的 `.excalidraw`；**PNG / SVG** 导出图片，用于分享和插入文档。左侧画板列表点“导入画板”可将标准 `.excalidraw` 或同格式 JSON 导入为一个新画板，不覆盖已有图纸。画布菜单中的“清空画布”会修改当前画板，可用撤销恢复。
-5. 可按项目筛选，也可搜索标题和图中文字。项目工作区也有“画板”标签；素材库随当前画板一起保存。归档后为只读，可在“归档”恢复。画板和内嵌图片进入现有 SQLite 与完整 ZIP 备份；升级前自动创建 `before-upgrade-v0.5` 保护备份，支持 v0.1–v0.4 备份恢复。
-
-绘图工具与中英文字体打包在本地，无需 Excalidraw 账号或联网。画板每份最多 20 MB / 20,000 个图形（图片占用计入）；较大的图纸可以拆为多个画板。当前是本地单人画板，不包含多人协作、云同步或精确 CAD 制图。图片导入会内嵌到画板；导出源文件可作为独立副本保存。
-
-## v0.4：睡眠与体重
-
-- 点击左侧“健康记录”，选择日期，然后记录睡眠或体重；也可在首页的“睡眠与体重”卡片快速进入。
-- 睡眠按起床当天归属。填写完整入睡、起床时间；夜间清醒分钟数可扣除，页面自动计算睡眠时长。睡眠感受是个人记录，可选良好、一般、较差或不评价。
-- 体重单位为公斤，支持两位小数和备注。每个日期各保留一条睡眠与体重，再次点击记录会打开已有内容，避免重复。
-- 可补记今天以前的日期，编辑已有记录，或归档后恢复。开始记录时默认的睡眠时间只是填写参考，保存前请调整为自己的实际时间。
-- 支持近 7 / 30 / 90 天趋势和历史列表。七天平均睡眠只按有记录的日期计算，缺失日期不会当作零；趋势线连接已有记录，不生成缺失数据。
-- 当日健康记录会进入新生成的工作记录汇总。既有工作记录保持原来的快照。
-
-升级前自动创建 `before-upgrade-v0.4` 保护备份。旧记录、设置与习惯签到保留，支持恢复 v0.1–v0.3 的备份。健康记录为手动记录，目前不连接手环或体脂秤。
-
-## v0.3：习惯养成与每天签到
-
-1. 点击左侧“习惯养成”，新建一个习惯，例如“每天阅读 20 分钟”。也可以点击“每日签到”等参考模板，编辑后保存。
-2. 完成后点击该习惯右侧“签到”。同一个习惯同一天只记一次；点击“已签到”可撤销。
-3. 页面及首页显示今日签到进度、连续天数、累计次数；选择习惯可以查看月历和最近签到。
-4. 选择过去的签到日期或点击月历，然后点击“补签”。只能选择开始日期到今天之间的日期；如果需要补记更早的日期，先编辑开始日期。
-5. 暂停后不会要求新签到，也不会清空记录。恢复进行中后可以继续；连续天数按日历日期计算，暂停期间未签到的日期仍会形成间隔。
-6. 今天还未签到时，连续天数保留到昨天；如果昨天也没有签到，连续天数从零开始。补签、撤销会重新计算。
-7. 应用运行时会自动检查日期变化，跨过午夜或重新回到窗口时更新今日签到。统计按 Windows 本机日历日期计算。
-
-每个新生成的工作记录会包含选中日期的习惯签到。保存过的工作记录仍保留原始快照，后续撤销不会自动改写它。签到历史与习惯一起进入备份，归档可保留历史，恢复后继续使用。
-
-从 v0.1/v0.2 升级到 v0.3 会自动创建 `before-upgrade-v0.3` 完整保护备份，然后升级数据库。已有内容与设置保留，也支持恢复旧备份。
-
-## v0.2.1：Markdown 笔记
-
-- 在“知识整理”点击“编辑笔记”，正文区域可切换“编辑 / 预览 / 分屏”。分屏左侧编辑 Markdown，右侧实时查看排版；较窄窗口上下排列。
-- 支持标题、加粗、斜体、删除线、有序与无序列表、任务列表、引用、行内代码、围栏代码块、表格、脚注、链接和 HTTPS 图片。
-- 格式工具可以插入常用语法。选中文字后按 `Ctrl + B` 加粗，`Ctrl + I` 添加斜体。
-- 知识整理阅读界面直接显示 Markdown 排版，点击“源码”查看原始内容。编辑时保存的是原始 Markdown，不会把内容转换为 HTML。
-- 旧笔记原文保持不变，单行换行会保留显示。已有 Markdown 语法会自动排版。进展与复盘笔记也使用相同编辑器，归档笔记可以预览。
-- 点击阅读界面的下载图标导出 `.md`，文件内容与正文源码一致。标题作为文件名，不会自动添加到正文。
-- 网页链接在外部浏览器打开。内嵌 HTML 不执行；本地文件或脚本链接不打开。数学公式与 Mermaid 暂未加入。
-
-例子：
-
-````markdown
-## 今天的进展
-
-- [x] 完成模块设计
-- [ ] 验证备份恢复
-
-**发现：** 先完成一个小步骤，再记录下一步。
-
-| 问题 | 状态 |
-| --- | --- |
-| 小窗口遮挡 | 已解决 |
-
-```javascript
-const ready = true;
-```
-````
-
-Markdown 使用开源 [react-markdown](https://github.com/remarkjs/react-markdown)、[remark-gfm](https://github.com/remarkjs/remark-gfm) 和 [remark-breaks](https://github.com/remarkjs/remark-breaks)，组件随应用离线打包。第三方 JavaScript 许可文本包含在 `public/third-party-notices.txt`，并一同进入构建产物。
-
-## v0.2：记录做事、问题与复盘
-
-1. 在“发展规划”建立项目，点击项目标题进入项目工作区。
-2. 新建具体任务。任务列表右侧的两个图标分别用于记录进展和遇到问题；任务编辑面板中也有带文字的按钮。
-3. 进展与问题会自动关联当前任务和项目，保存后可以在任务详情及项目工作区找到。嵌套记录关闭后返回原任务，未保存的任务草稿保留。
-4. 问题可按“待排查 → 处理中 → 待验证 → 已解决”推进。填写现象、预期、复现步骤、排查过程、原因与解决方法；标记已解决前需要填写解决方法。
-5. 在“工作记录”选择日期并生成记录。汇总包括当日完成、进展、当日解决的问题，以及生成时仍在推进的任务与未解决问题。补充发现、阻碍和明日计划后保存。
-6. 保存后的每日汇总是历史快照，后续任务改名或问题状态变化不会自动改写。可以显式“重新生成汇总”，它会保留你写的发现、阻碍和明日计划。
-7. 每天保留一份有效工作记录，再次生成会打开已有记录。可补记过去日期的进展，也可查看归档任务、问题、笔记及其附件。
-
-顶部“记一条”适合快速记录进展；没有关联任务时，保存前可选择任务，所属项目会自动跟随。项目工作区集中展示任务、全部问题、过程笔记、节点与关联附件。
-
-从 v0.1 升级时，会在 `backups/` 自动创建 `before-upgrade-v0.2` 备份，再升级数据结构。已有记录的 ID、内容、版本和归档状态保留；旧问题笔记继续留在知识整理中，不会被自动改写。v0.2 支持恢复 v0.1 备份，并自动补齐新增字段。升级后的数据库由 v0.2 打开。
-
-- `Ctrl + N`：新建任务；新建面板可切换目标、项目、任务、节点或笔记。
-- `Ctrl + K`：搜索标题、说明、笔记正文和标签。
-- 在“发展规划”关联目标与项目，在记录编辑面板中关联项目。
-- 在“事项备忘”使用列表或看板，按项目、今天、逾期或完成状态筛选。
-- 重复任务完成后生成下一次；重新打开原任务不会撤销下一次。每月重复会保留原始日期，并在短月份取最后一天。
-- 文件复制到应用的附件目录。移除附件不删除源文件。
-- 归档目标或项目时会一起归档其未归档子记录。恢复时恢复本次一起归档的记录，不恢复此前单独归档的内容。
-- 关闭窗口默认进入托盘，提醒服务继续运行。完全退出请使用托盘菜单“退出”；完全退出后不发送提醒。
-- 系统通知请使用安装后的版本，并在 Windows 通知设置中允许 Draftway。
-
-首次运行会创建五条可编辑的入门记录。不会生成虚构行情或财务数据。
-
-## 数据与备份
-
-数据位于当前 Windows 用户的应用数据目录，完整路径可以在“设置 → 数据与备份”查看。
-
-- `northstar.sqlite3`：实体、设置、重复任务关联和提醒送达状态。
-- `attachments/`：复制的关联文件。
-- `backups/`：自动与手动的完整 ZIP 备份。
-
-运行期间每天自动创建一份备份。手动备份、导出备份、从备份文件恢复均在设置页。恢复前会自动创建保护备份，验证数据库、路径和附件完整性后再恢复。备份包含提醒状态：从较早备份恢复可能再次触发其后曾经收到的提醒。
-
-在其他软件中编辑附件后，备份会按实际保存的文件大小更新数据库快照。如果当前附件已丢失，普通备份会报错；恢复已有备份仍可继续，恢复前的保护备份保留现有文件，并在清单中记录缺失的附件。
-
-“导出记录 JSON”只导出实体记录，供查看与迁移使用；它不是完整备份，不包含附件和设置。备份包含个人资料，请选择自己的保存位置。首版的本地数据库与备份未进行加密。
-
-## 当前功能
-
-已实现：总览、今日专注、目标项目、项目工作区、任务列表和看板、进展记录、问题跟踪、每日工作记录、每日习惯与签到、睡眠与体重及趋势、连续天数和历史补签、重复任务、日历、重要节点、Markdown 笔记与预览、笔记与任务关联、标签、附件管理、全局搜索、归档阅读与恢复、备份恢复、托盘、单实例、开机启动设置、通知、窗口位置记忆。
-
-规划助手按照本地记录的逾期和优先级整理建议，可以生成待办或复盘草稿，由用户编辑后保存。它没有调用外部 AI 模型。
-
-后续模块：外部 AI 模型、财经行情与资讯、资产记账、更多健康指标与设备接入、App 快捷入口、自定义首页布局和多设备同步。
-
-## 开发
-
-需要 Node.js 20+、Rust MSVC 工具链、Microsoft C++ 桌面开发工具和 WebView2。项目内 `.tools/` 中的 Rust 工具链由脚本自动识别；从 GitHub 克隆时请使用系统安装的 Rust MSVC 工具链，开发工具链不随仓库上传。
-
-源码仓库不包含 `artifacts/`、本地数据库、个人记录、测试数据、依赖目录或构建缓存。Windows 安装包通过上述构建命令生成。
-
-```powershell
-npm install
-npm run dev             # 浏览器预览，使用独立 IndexedDB
-npm run desktop:dev     # Windows 开发运行
-npm run desktop:build   # 构建 Windows 安装包
-npm test                # 前端领域测试
-npm run test:ui         # 已运行预览服务器后执行浏览器流程验证
-npm run test:workflow   # v0.2 做事、问题、复盘闭环与宽度验证
-npm run test:native     # 使用独立 QA 应用标识及测试数据目录验证原生功能
-npm run test:markdown   # 已运行预览服务器后验证 Markdown 编辑、预览和导出
-npm run test:habits     # 每日签到、补签、撤销、暂停、历史及跨天验证
-npm run test:health     # 睡眠时长、体重、补记、趋势及历史验证
-```
-
-原生领域、数据库和备份测试：
-
-```powershell
-$env:CARGO_HOME = Join-Path (Get-Location) '.tools\cargo'
-$env:RUSTUP_HOME = Join-Path (Get-Location) '.tools\rustup'
-$env:PATH = (Join-Path $env:CARGO_HOME 'bin') + ';' + $env:PATH
-cargo test --manifest-path src-tauri\Cargo.toml --lib
-```
-
-浏览器验证脚本使用 Playwright 和本机 Edge，可安装 `playwright` 或使用 Codex 提供的运行时包。原生集成验证使用独立的测试数据目录，不修改用户正式数据。
-
-## 代码结构
-
-```text
-src/
-  App.tsx                 窗口、导航、搜索、助手、状态管理
-  domain.ts               实体类型、日期及任务规则
-  api.ts                  Tauri 命令与浏览器预览存储适配
-  EntityEditor.tsx        各类实体编辑、嵌套草稿与附件
-  LinkedRecords.tsx       任务、问题、笔记与工作记录关联
-  components.tsx          共用控件
-  pages/                  总览、规划、项目、任务、问题、工作记录、日历、知识、文件、归档、设置
-src-tauri/src/
-  lib.rs                  命令、托盘、窗口生命周期与提醒服务
-  domain.rs               数据验证及周期计算
-  store.rs                SQLite 事务、关联、版本冲突与归档
-  backup.rs               完整备份、验证与恢复
-scripts/                  桌面构建及流程验证
-```
-
-SQLite 使用带版本号和类型索引的实体表存储结构化 JSON，附件、设置、重复关联和送达日志独立保存。关联检查及写入规则集中在 Rust 服务层，界面不能直接执行 SQL。主窗口仅加载应用内资源，所有外部模型和数据源接入留到后续模块。
-
-自由画板使用开源 [Excalidraw](https://github.com/excalidraw/excalidraw)，组件与字体均本地打包。字体版权与许可见 `public/excalidraw-font-notices.txt`。
-
-工作区骨架现支持递归分屏：每个分区的“＋”可打开网页预览、Agent 会话和文件审查；支持拖动页签、边缘分屏、调整大小和本地布局恢复。Windows 独立预览已接 WebView2，浏览器预览仍受 iframe 嵌入限制，Agent 仍为模拟执行。`npm run desktop:next:build` 构建独立桌面预览，`npm run test:native-browser` 验证原生网页承载。详见 [第一阶段说明](docs/stage-one.md)。
+- [Workspace tools for agents (MCP)](docs/workspace-tools.md) · [Plugins](docs/plugins.md) · [Classic workbench guide](docs/classic-workbench.md)
+- [Report a bug or request a feature](https://github.com/Tjh-UKN/draftway/issues)

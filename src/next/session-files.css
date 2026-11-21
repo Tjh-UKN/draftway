@@ -1,0 +1,102 @@
+.session-file-menu-anchor {
+  position: relative;
+  z-index: 4;
+}
+
+.session-file-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.session-file-chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(100%, 236px);
+  padding: 3px 4px 3px 7px;
+  border: 1px solid var(--app-line, #e5e5e5);
+  border-radius: 6px;
+  background: var(--app-raised, #f6f6f6);
+  color: var(--app-text, #252525);
+  font-size: 11px;
+}
+
+.session-file-chips span,
+.session-file-suggestions [role="option"] small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-file-chips svg,
+.session-file-suggestions svg {
+  flex-shrink: 0;
+  color: var(--app-muted, #707070);
+}
+
+.session-file-chips button {
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.session-file-chips button:not(:disabled):hover,
+.session-file-suggestions [role="option"]:hover,
+.session-file-suggestions [aria-selected="true"] {
+  background: var(--app-hover, #ededed);
+}
+
+.session-file-suggestions {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 6px;
+  max-height: min(240px, 36vh);
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid var(--app-line, #e5e5e5);
+  border-radius: 10px;
+  background: var(--app-panel, #fff);
+  box-shadow: 0 6px 24px var(--app-shadow, #0002);
+  color: var(--app-text, #252525);
+}
+
+.session-file-suggestions [role="option"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.session-file-suggestions [role="option"] span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-file-suggestions [role="option"] small {
+  display: block;
+  color: var(--app-muted, #707070);
+  font-size: 10px;
+}
+
+.session-file-status {
+  padding: 5px 8px;
+  color: var(--app-muted, #707070);
+  font-size: 11px;
+}
+
+.session-composer-file-error {
+  margin-bottom: 6px;
+  color: var(--app-danger, #a13b3b);
+  font-size: 11px;
+}

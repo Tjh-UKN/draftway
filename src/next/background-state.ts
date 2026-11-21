@@ -5,6 +5,8 @@ export function mergeBackground(state: WorkbenchState, incoming: BackgroundState
   const notices = [...state.notices];
   for (const notice of incoming.notices) {
     if (!state.spaces.some(space => space.id === notice.workspaceId)) continue;
+    const sessionId = notice.target?.kind === 'session' ? notice.target.sessionId : notice.sessionId;
+    if (sessionId && !state.sessions.some(session => session.id === sessionId)) continue;
     const index = notices.findIndex(old => old.id === notice.id);
     const value = {...notice, sessionId: notice.target?.kind === 'session' ? notice.target.sessionId : undefined, read: notice.read || !!notices[index]?.read};
     if (index < 0) notices.push(value); else notices[index] = value;

@@ -30,6 +30,7 @@ pub fn edge_workspace_url(value:&str)->Result<String,String>{
 }
 pub fn reminder_token(id:&str,at:&str)->Result<String,String>{let time=DateTime::parse_from_rfc3339(at).map_err(|_|"提醒时间无效")?;Ok(format!("{id}:{}",time.timestamp_millis()))}
 pub fn text<'a>(record: &'a Value, field: &str) -> &'a str { record.get(field).and_then(Value::as_str).unwrap_or("") }
+pub fn is_retired_kind(kind: &str) -> bool { matches!(kind, "journal" | "sleep" | "weight") }
 pub fn optional_id<'a>(record: &'a Value, field: &str) -> Option<&'a str> { record.get(field).and_then(Value::as_str).filter(|s| !s.is_empty()) }
 pub fn valid_id(id: &str) -> bool { uuid::Uuid::parse_str(id).is_ok() }
 pub fn normalize(record:&mut Value){

@@ -9,7 +9,13 @@ export function snapshotWriter(save:(value:string)=>Promise<unknown>,onError:(er
 
 export function durableWorkbench(state: WorkbenchState): WorkbenchState {
   const owned = new Set(state.sessions.filter(session => ['codex', 'claude', 'pi'].includes(session.integrationId)).map(session => session.id));
-  return {...state, runs: state.runs.map(run => owned.has(run.sessionId) ? {...run, context: undefined} : run), sessions: state.sessions.map(session => owned.has(session.id) ? {...session, messages: [], requests: [], nativeRevision: undefined} : session), artifacts: state.artifacts.filter(artifact => !owned.has(artifact.sessionId))};
+  return {...state, runs: state.runs.map(run => {
+    if (!owned.has(run.sessionId)) return run;
+    return run.pendingText !== undefined && run.state === 'running'
+      ? {...run, context: undefined, state:'failed',phase:undefined,error:'发送尚未确认，请重试。'}
+      : {...run, context: undefined};
+  }), sessions: state.sessions.map(session => owned.has(session.id) ? {...session, messages: [], requests: [], nativeRevision: undefined,
+    queuePaused: session.queuedMessages?.length ? true : undefined} : session), artifacts: state.artifacts.filter(artifact => !owned.has(artifact.sessionId))};
 }
 export function useWorkbenchPersistence(state: WorkbenchState, change: ChangeState, initialError: string) {
   const native = typeof window !== 'undefined' && isTauri();

@@ -53,6 +53,17 @@ describe('canonical node primitives', () => {
     expect(next.spaces[0].nodes[0].body).toContain('引用：old relative note.md');
     expect(next.spaces[0].dock.tabs.find(t=>t.id==='old-ref')).toMatchObject({kind:'map',graph:{selectedId:node.id}});
   });
+  it('drops a tab whose material was unlinked before reload', () => {
+    const state = initialWorkbench();
+    const space = state.spaces[0];
+    const node = space.nodes[0];
+    node.materials = [{id: 'kept', title: 'Kept', target: 'https://example.test/'}];
+    space.dock = openDockTab(space.dock, {id: 'keep-tab', kind: 'material', title: 'Kept', nodeId: node.id, materialId: 'kept'});
+    space.dock = openDockTab(space.dock, {id: 'stale-tab', kind: 'material', title: 'Stale', nodeId: node.id, materialId: 'removed'});
+    const restored = parseWorkbench(state).spaces[0].dock;
+    expect(restored.tabs.map(tab => tab.id)).toEqual(['workspace', 'keep-tab']);
+    expect(restored.root).toMatchObject({activeId: 'keep-tab'});
+  });
   it('preserves all text when a long legacy step becomes a task node', () => {
     const heading='🚀'.repeat(100);const fields=contentFields(heading+'\n  indented body\n')!;
     expect(fields.title.length).toBeLessThanOrEqual(120);

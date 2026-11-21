@@ -1,0 +1,40 @@
+.chat-queue {
+  margin-bottom: 9px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--app-line);
+  color: var(--app-muted);
+  font-size: 11px;
+}
+.chat-queue header, .chat-queue li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 27px;
+}
+.chat-queue header { justify-content: space-between; }
+.chat-queue ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 108px;
+  overflow-y: auto;
+}
+.chat-queue-preview, .chat-queue li textarea { flex: 1; min-width: 0; }
+.chat-queue-preview, .chat-queue-preview small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-queue-preview small { display: block; color: var(--app-faint); }
+.chat-queue li textarea {
+  color: var(--app-text);
+  background: var(--app-raised);
+  border: 1px solid var(--app-line);
+  border-radius: 5px;
+  font: inherit;
+  min-height: 36px;
+  resize: vertical;
+}
+.chat-queue .text-button, .chat-queue-add { white-space: nowrap; font-size: 11px; }
+.chat-queue-add { flex-shrink: 0; padding: 5px 8px; }
+.composer-toolbar.chat-composer-actions > .chat-queue-add + .stop-button { margin-left: 0; }

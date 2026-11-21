@@ -53,7 +53,7 @@ fn candidates(snapshot:&Value)->Vec<Value> {
     }
     result
 }
-fn source_key(source:&Value)->String {format!("personal-knowledge-source:{}",json!([source["workspaceId"],source["kind"],source["id"]]))}
+pub(crate) fn source_key(source:&Value)->String {format!("personal-knowledge-source:{}",json!([source["workspaceId"],source["kind"],source["id"]]))}
 pub fn collect(store:&Store)->Result<usize> {
     let mut db=store.write_db()?;let tx=db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(error)?;
     let raw:Option<String>=tx.query_row("SELECT value FROM metadata WHERE key='workbench-shell-v2'",[],|row|row.get(0)).optional().map_err(error)?;

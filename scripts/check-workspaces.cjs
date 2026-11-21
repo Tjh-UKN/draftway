@@ -14,7 +14,20 @@ let playwright;try{playwright=require('playwright');}catch{playwright=require(re
   async function close(){await page.getByRole('button',{name:'收起组件窗口',exact:true}).click();await page.locator('.widget-window-layer').waitFor({state:'hidden'});}
   async function add(type){await page.getByRole('button',{name:'添加组件',exact:true}).click();await dialog().getByRole('button',{name:new RegExp('^'+type)}).click();await saved();}
   async function settings(title,update){await launcher(title).getByRole('button',{name:`设置组件：${title}`,exact:true}).click();await update(dialog());await dialog().getByRole('button',{name:'保存组件设置',exact:true}).click();await saved();}
-  async function createRecord(title,body){const form=editor();await form.getByRole('textbox',{name:/^标题/}).fill(title);if(body)await form.getByLabel('笔记正文').fill(body);await form.getByRole('button',{name:'保存',exact:true}).click();await form.waitFor({state:'hidden'});}
+  async function createRecord(title,body){
+    if(body!==undefined){
+      const note=page.getByRole('dialog').filter({has:page.getByLabel('笔记标题',{exact:true})});
+      await note.getByLabel('笔记标题',{exact:true}).fill(title);
+      await note.getByLabel('笔记正文',{exact:true}).fill(body);
+      await note.getByRole('button',{name:'返回',exact:true}).click();
+      await note.waitFor({state:'hidden'});
+      return;
+    }
+    const form=editor();
+    await form.getByRole('textbox',{name:/^标题/}).fill(title);
+    await form.getByRole('button',{name:'保存',exact:true}).click();
+    await form.waitFor({state:'hidden'});
+  }
   async function layout(value){return page.evaluate(value=>new Promise((resolve,reject)=>{const request=indexedDB.open('northstar-preview-v1',1);request.onsuccess=()=>{const db=request.result;if(value){const tx=db.transaction('meta','readwrite');tx.objectStore('meta').put(value,'workspace-layout');tx.oncomplete=()=>{db.close();resolve(value);};tx.onerror=()=>reject(tx.error);}else{const get=db.transaction('meta').objectStore('meta').get('workspace-layout');get.onsuccess=()=>{db.close();resolve(get.result);};get.onerror=()=>reject(get.error);}};request.onerror=()=>reject(request.error);}),value);}
   const active=stored=>stored.workspaces.find(board=>board.id===stored.activeId);
   await page.addInitScript(()=>{window.__openedLinks=[];window.open=(url,target,features)=>{window.__openedLinks.push({url,target,features});return null;};});
@@ -56,8 +69,12 @@ let playwright;try{playwright=require('playwright');}catch{playwright=require(re
   let stored=await layout();assert.equal(active(stored).zoom,80);assert.equal(active(stored).widgets.length,3);assert.notEqual(active(stored).widgets[0].id,stored.workspaces.find(board=>board.name==='验证工作区').widgets[0].id);
   await page.reload();await page.getByRole('heading',{name:'模板工作区',exact:true}).waitFor();assert.equal(await page.locator('.widget-body').count(),0);await open('已完成任务');assert.deepEqual(await win.boundingBox(),resized);await close();await page.getByRole('tab',{name:/^验证工作区/}).click();await saved();
   await page.evaluate(()=>{const real=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(stores,mode,...rest){if(stores==='meta'&&mode==='readwrite'){IDBDatabase.prototype.transaction=real;throw new DOMException('模拟保存失败','QuotaExceededError');}return real.call(this,stores,mode,...rest);};});
-  await page.getByRole('button',{name:'放大工作区',exact:true}).click();await page.getByRole('alert').filter({hasText:'模拟保存失败'}).waitFor();await open('知识笔记');await widget('知识笔记').getByRole('button',{name:'写笔记',exact:true}).click();await createRecord('失败期间的记录');await widget('知识笔记').getByText('失败期间的记录',{exact:true}).waitFor();await close();assert.equal(await page.getByRole('slider',{name:'工作区缩放',exact:true}).inputValue(),'90');await page.getByRole('button',{name:'重试保存',exact:true}).click();await saved();
-  await launcher('知识笔记').getByRole('button',{name:'移除组件：知识笔记',exact:true}).click();await saved();await nav('知识整理').click();await page.locator('.note-list button').filter({hasText:'保留记录验证'}).click();await page.locator('.note-title').filter({hasText:'保留记录验证'}).waitFor();await nav('工作区').click();
+  await page.getByRole('button',{name:'放大工作区',exact:true}).click();await page.getByRole('alert').filter({hasText:'模拟保存失败'}).waitFor();await open('知识笔记');await widget('知识笔记').getByRole('button',{name:'写笔记',exact:true}).click();await createRecord('失败期间的记录','布局保存失败时仍可保存这份笔记。');await widget('知识笔记').getByText('失败期间的记录',{exact:true}).waitFor();await close();assert.equal(await page.getByRole('slider',{name:'工作区缩放',exact:true}).inputValue(),'90');await page.getByRole('button',{name:'重试保存',exact:true}).click();await saved();
+  await launcher('知识笔记').getByRole('button',{name:'移除组件：知识笔记',exact:true}).click();await saved();
+  await page.waitForFunction(async()=>{
+    const {loadWorkspace}=await import('/src/api.ts');
+    return (await loadWorkspace()).records.some(record=>record.kind==='note'&&record.title==='保留记录验证');
+  });
   await page.getByRole('button',{name:'管理工作区',exact:true}).click();await dialog().getByRole('button',{name:'删除工作区',exact:true}).click();await dialog().getByRole('button',{name:'确认删除工作区',exact:true}).click();await saved();assert.equal((await layout()).workspaces.some(board=>board.name==='验证工作区'),false);
   stored=await layout();active(stored).widgets.push({id:require('node:crypto').randomUUID(),type:'future.pr',version:2,title:'未来组件',columns:6,height:300,config:{repository:'example/project'}});await layout(stored);await page.reload();await open('未来组件');await widget('未来组件').getByText('组件暂不可用',{exact:true}).waitFor();await close();
   await layout({...stored,version:2});await page.reload();await page.getByRole('heading',{name:'暂时无法读取工作区布局',exact:true}).waitFor();assert.equal((await layout()).version,2);await nav('事项备忘').click();await page.getByRole('heading',{name:'事项备忘',exact:true}).waitFor();await layout(stored);await page.reload();await page.getByRole('heading',{name:'我的工作区',exact:true}).waitFor();

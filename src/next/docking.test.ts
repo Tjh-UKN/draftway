@@ -1,10 +1,19 @@
 import {describe, expect, it} from 'vitest';
 import {advanceDemoRuns, closeSessionTab, createMapNode, createSession, initialWorkbench, mapGraph, openMapTab, openSession, parseWorkbench, startDemoRun, updateMapGraph, updateWorkspace} from './core';
-import {browserUrl, closeDockTab, closeEmptyGroup, focusedGroup, groups, initialDock, mergeDock, moveDockTab, openDockTab, resizeDock, selectDockTab, splitDockGroup, validateDock} from './docking';
+import {browserUrl, closeDockTab, closeEmptyGroup, focusedGroup, groups, initialDock, mergeDock, moveDockTab, openDockTab, resizeDock, restoreDockWithRetiredTabs, selectDockTab, splitDockGroup, validateDock} from './docking';
 import {readReviewFile, reviewLines} from './ToolViews';
 
 describe('workspace pane tree', () => {
   const browser = {id: 'browser', kind: 'browser' as const, title: 'Browser', url: 'http://localhost:8765/'};
+  it('restores the remaining panes when an old layout contains a retired business tab', () => {
+    const original = splitDockGroup(openDockTab(initialDock(), browser), 'main', 'row', 'legacy');
+    const saved = openDockTab(original, {id: 'legacy-health', kind: 'business', page: 'overview', title: 'Legacy'}, 'legacy');
+    Object.assign(saved.tabs.find(tab => tab.id === 'legacy-health')!, {page: 'health'});
+    const restored = restoreDockWithRetiredTabs(saved, []);
+    expect(restored.tabs.map(tab => tab.id)).toEqual(['workspace', 'browser']);
+    expect(groups(restored.root).flatMap(group => group.tabs)).toEqual(['workspace', 'browser']);
+    expect(() => validateDock(restored, [])).not.toThrow();
+  });
   it('nests horizontal and vertical splits with exactly one owner for each tab', () => {
     let dock = openDockTab(initialDock(), browser);
     dock = moveDockTab(dock, 'browser', 'main', undefined, 'right', 'right');

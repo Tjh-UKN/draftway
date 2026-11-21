@@ -1,7 +1,7 @@
 .run-activity {
   margin: 0 0 20px;
   font-size: 12px;
-  color: #575757;
+  color: var(--app-muted, #575757);
 }
 
 .run-activity .run-progress {
@@ -18,7 +18,7 @@
 .transcript-activities {
   margin-top: 4px;
   font-size: 12px;
-  color: #575757;
+  color: var(--app-muted, #575757);
 }
 
 .transcript-activities .run-activity-row {
@@ -51,7 +51,7 @@
 
 .run-activity-line > small {
   flex-shrink: 0;
-  color: #686868;
+  color: var(--app-muted, #686868);
   white-space: nowrap;
 }
 
@@ -62,7 +62,7 @@
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: #f6f6f6;
+  background: var(--app-raised, #f6f6f6);
   border-radius: 6px;
   font-size: 11px;
 }
@@ -76,3 +76,5 @@
   padding: 4px 0;
   cursor: pointer;
 }
+
+.unsent-agent-message .message-copy{opacity:1}

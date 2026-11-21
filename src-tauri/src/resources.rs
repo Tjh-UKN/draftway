@@ -20,21 +20,60 @@ pub fn scoped(space: &Value, path: &Path) -> Result<PathBuf> {
     if !roots(space).iter().any(|root|file.starts_with(root)) {return Err("材料不在工作目录或材料目录内，请在「自定工作区」添加它所在的目录。".into());}
     Ok(file)
 }
-pub fn target(space: &Value, value: &str) -> Result<PathBuf> {
+fn target_path(space: &Value, value: &str) -> Result<PathBuf> {
     if value.starts_with("obsidian:") {
         let url=url::Url::parse(value).map_err(error)?;
         if url.host_str()!=Some("open") {return Err("仅支持 Obsidian 打开笔记链接".into());}
         let params: std::collections::HashMap<_,_>=url.query_pairs().into_owned().collect();
-        if let Some(path)=params.get("path") {return scoped(space,Path::new(path));}
+        if let Some(path)=params.get("path") {return Ok(PathBuf::from(path));}
         let vault=params.get("vault").ok_or("Obsidian 链接缺少库名")?;
         let matches:Vec<_>=space["materialRoots"].as_array().into_iter().flatten().filter(|root|root["name"].as_str()==Some(vault)).collect();
         if matches.len()>1 {return Err("存在多个同名材料目录，请在「自定工作区」修改名称后再打开。".into());}
         let root=matches.first().and_then(|root|root["path"].as_str()).ok_or("请在「自定工作区」添加与 Obsidian 库同名的材料目录。")?;
         let file=params.get("file").ok_or("请选择具体的 Obsidian 笔记")?.split('#').next().unwrap_or("");
         let mut path=PathBuf::from(root).join(file);if path.extension().is_none() {path.set_extension("md");}
-        scoped(space,&path)
-    } else if value.starts_with("file:") {scoped(space,&url::Url::parse(value).map_err(error)?.to_file_path().map_err(|_|"文件链接无效")?)}
-    else {scoped(space,Path::new(value))}
+        Ok(path)
+    } else {
+        file_path(value)
+    }
+}
+pub fn target(space: &Value, value: &str) -> Result<PathBuf> {
+    scoped(space, &target_path(space, value)?)
+}
+fn file_path(value: &str) -> Result<PathBuf> {
+    if value.len() > 32768 || value.chars().any(char::is_control) {
+        return Err("文件路径无效".into());
+    }
+    if value.starts_with("file:") {
+        let url = url::Url::parse(value).map_err(error)?;
+        if url.fragment().is_some() || url.query().is_some() {
+            return Err("文件链接无效".into());
+        }
+        url.to_file_path().map_err(|_| "文件链接无效".into())
+    } else {
+        Ok(PathBuf::from(value))
+    }
+}
+fn local_document(path: &Path) -> Result<PathBuf> {
+    if !path.is_absolute() || path.to_string_lossy().chars().any(char::is_control) {
+        return Err("请使用有效的完整文件路径".into());
+    }
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        let supported = matches!(path.components().next(), Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_) | Prefix::UNC(_, _) | Prefix::VerbatimUNC(_, _)));
+        if !supported || path.components().any(|part|
+            matches!(part, Component::Normal(name) if name.to_string_lossy().contains(':'))) {
+            return Err("文件路径无效".into());
+        }
+    }
+    let file = path.canonicalize().map_err(|e| format!("文件不可用：{e}"))?;
+    let kind = fs::metadata(&file).map_err(error)?.file_type();
+    if !kind.is_file() && !kind.is_dir() {
+        return Err("请选择普通文件或文件夹".into());
+    }
+    Ok(file)
 }
 fn read(path: PathBuf) -> Result<TextFile> {
     if path.is_dir(){return Ok(TextFile{path:display_path(&path),name:path.file_name().unwrap_or_default().to_string_lossy().into(),text:format!("文件夹位置：{}\n可使用原应用打开。",display_path(&path))});}
@@ -43,13 +82,54 @@ fn read(path: PathBuf) -> Result<TextFile> {
     let text=String::from_utf8(bytes).map_err(|_|"文件不是 UTF-8 文本，请用原应用打开。")?;
     Ok(TextFile{path:display_path(&path),name:path.file_name().unwrap_or_default().to_string_lossy().into(),text})
 }
-pub fn material(store: &Store, workspace: &str, node: &str, id: &str) -> Result<(Value, PathBuf)> {
-    let space=space(store,workspace)?;
+fn material_reference<'a>(space: &'a Value, node: &str, id: &str) -> Result<&'a str> {
     let node=space["nodes"].as_array().into_iter().flatten().find(|n|n["id"]==node).ok_or("节点不存在")?;
-    let value=node["materials"].as_array().into_iter().flatten().find(|m|m["id"]==id).and_then(|m|m["target"].as_str()).or_else(||if id=="legacy-reference" {node["reference"].as_str()} else {None}).ok_or("材料关联不存在")?;
-    let path=target(&space,value)?;Ok((space,path))
+    node["materials"].as_array().into_iter().flatten().find(|m|m["id"]==id).and_then(|m|m["target"].as_str())
+        .or_else(||if id=="legacy-reference" {node["reference"].as_str()} else {None}).ok_or("材料关联不存在".into())
 }
-pub fn read_material(store: &Store, workspace: &str, node: &str, id: &str) -> Result<TextFile> {let (_,path)=material(store,workspace,node,id)?;read(path)}
+pub fn read_material(store: &Store, workspace: &str, node: &str, id: &str) -> Result<TextFile> {
+    let space = space(store, workspace)?;
+    read(target(&space, material_reference(&space, node, id)?)?)
+}
+pub fn read_manual_material(store: &Store, workspace: &str, node: &str, id: &str) -> Result<TextFile> {
+    let space = space(store, workspace)?;
+    let value = material_reference(&space, node, id)?;
+    let obsidian = value.starts_with("obsidian:");
+    let explicit_path = !obsidian || url::Url::parse(value).is_ok_and(|link| link.query_pairs().any(|(key, _)| key == "path"));
+    let path = if explicit_path {target_path(&space, value)} else {target(&space, value)}.map_err(|error| {
+        if obsidian { "点击「用原应用打开」，在 Obsidian 中查看这条链接。".into() }
+        else { error }
+    })?;
+    read(local_document(&path)?)
+}
+pub enum MaterialOpen {
+    File(PathBuf),
+    Obsidian(url::Url),
+}
+pub fn manual_material_open(store: &Store, workspace: &str, node: &str, id: &str) -> Result<MaterialOpen> {
+    let space = space(store, workspace)?;
+    let value = material_reference(&space, node, id)?;
+    if !value.starts_with("obsidian:") {
+        return Ok(MaterialOpen::File(local_document(&file_path(value)?)?));
+    }
+    let url = url::Url::parse(value).map_err(error)?;
+    let mut params = std::collections::HashMap::new();
+    let valid_params = url.query_pairs().all(|(key, value)| {
+        matches!(key.as_ref(), "vault" | "file" | "path" | "paneType") && !value.chars().any(char::is_control)
+            && params.insert(key.into_owned(), value.into_owned()).is_none()
+    });
+    if url.host_str() != Some("open") || !url.username().is_empty() || url.password().is_some() ||
+        url.port().is_some() || url.fragment().is_some() || !matches!(url.path(), "" | "/") || !valid_params ||
+        params.get("paneType").is_some_and(|pane| !matches!(pane.as_str(), "tab" | "split" | "window")) {
+        return Err("仅支持 Obsidian 打开笔记链接".into());
+    }
+    if let Some(path) = params.get("path") {
+        local_document(Path::new(path))?;
+    } else if !params.get("vault").is_some_and(|name| !name.trim().is_empty()) {
+        return Err("Obsidian 链接缺少库名或文件路径".into());
+    }
+    Ok(MaterialOpen::Obsidian(url))
+}
 pub fn workspace_html(store:&Store,workspace:&str,value:&str)->Result<TextFile>{
     if value.len()>32768||value.chars().any(char::is_control){return Err("文件路径无效".into());}
     let space=space(store,workspace)?;let path=target(&space,value)?;
@@ -114,6 +194,40 @@ mod tests {
         fs::write(owned.join("run.cmd"),"echo not run").unwrap();assert!(session_target(&store,"w",&owned.to_string_lossy(),"run.cmd").is_err());
         assert!(workspace_html(&store,"w",&owned.join("run.cmd").to_string_lossy()).is_err());
         assert!(session_target(&store,"w",&owned.to_string_lossy(),"missing.html").is_err());
+    }
+    #[test]
+    fn hand_opened_materials_use_local_permissions_while_mcp_stays_scoped() {
+        let root = std::env::temp_dir().join(format!("northstar-manual-material-{}", uuid::Uuid::new_v4()));
+        let store = Store::open(root.join("data")).unwrap();
+        let cwd = root.join("project");
+        fs::create_dir_all(&cwd).unwrap();
+        let outside = root.join("设计记录.txt");
+        fs::write(&outside, "Outside workspace").unwrap();
+        let uri = url::Url::from_file_path(&outside).unwrap().to_string();
+        let mut shell = json!({"version":2,"activeId":"w","spaces":[{"id":"w","name":"Work","cwd":cwd,
+            "materialRoots":[{"name":"Notes","path":cwd}],
+            "nodes":[{"id":"n","reference":cwd.join("old.txt"),"materials":[
+                {"id":"legacy-reference","title":"Note","target":outside},
+                {"id":"uri","title":"File URL","target":uri},
+                {"id":"vault","title":"Obsidian","target":"obsidian://open?vault=Notes&file=design"},
+                {"id":"traversal","title":"Vault relative path","target":"obsidian://open?vault=Notes&file=..%2F%E8%AE%BE%E8%AE%A1%E8%AE%B0%E5%BD%95.txt"},
+                {"id":"unsafe","title":"Obsidian callback","target":"obsidian://open?vault=Notes&x-success=http://localhost"},
+                {"id":"relative","title":"Relative","target":"outside.txt"}
+            ]}],"dock":{}}],"sessions":[],"runs":[],"artifacts":[],"notices":[]});
+        workspace_state::save(&store, &shell).unwrap();
+        for id in ["legacy-reference", "uri"] {
+            assert_eq!(read_manual_material(&store, "w", "n", id).unwrap().text, "Outside workspace");
+            assert!(matches!(manual_material_open(&store, "w", "n", id).unwrap(), MaterialOpen::File(p)
+                if p == outside.canonicalize().unwrap()));
+            assert!(read_material(&store, "w", "n", id).is_err());
+        }
+        assert!(matches!(manual_material_open(&store, "w", "n", "vault").unwrap(), MaterialOpen::Obsidian(_)));
+        assert!(manual_material_open(&store, "w", "n", "unsafe").is_err());
+        assert!(read_manual_material(&store, "w", "n", "traversal").is_err());
+        assert!(read_manual_material(&store, "w", "n", "relative").is_err());
+        shell["spaces"][0]["materialRoots"] = json!([{"name":"Approved","path":root}]);
+        workspace_state::save(&store, &shell).unwrap();
+        assert_eq!(read_material(&store, "w", "n", "legacy-reference").unwrap().text, "Outside workspace");
     }
     #[test]
     fn default_workspace_materials_are_available_without_granting_neighbour_workspaces(){let root=std::env::temp_dir().join(format!("northstar-owned-material-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();let owned=root.join("agents/workspaces/w");let other=root.join("agents/workspaces/other");fs::create_dir_all(&owned).unwrap();fs::create_dir_all(&other).unwrap();fs::write(owned.join("note.md"),"Own").unwrap();fs::write(other.join("note.md"),"Other").unwrap();workspace_state::save(&store,&serde_json::json!({"version":2,"activeId":"w","spaces":[{"id":"w","name":"Work","nodes":[{"id":"n"}],"dock":{}}],"sessions":[],"runs":[],"artifacts":[],"notices":[]})).unwrap();let space=space(&store,"w").unwrap();assert_eq!(read(target(&space,&owned.join("note.md").to_string_lossy()).unwrap()).unwrap().text,"Own");assert!(target(&space,&other.join("note.md").to_string_lossy()).is_err());assert!(read(target(&space,&owned.to_string_lossy()).unwrap()).unwrap().text.contains("文件夹位置"));}

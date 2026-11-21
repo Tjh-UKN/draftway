@@ -118,7 +118,7 @@ export function browserUrl(input: string): string | null {
     return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : null;
   } catch {return null;}
 }
-export function validateDock(value: unknown, sessionIds: string[]): asserts value is DockState {
+export function validateDock(value: unknown, sessionIds: string[], restoreRetired = false): asserts value is DockState {
   const fail = () => {throw new Error('分区数据无效，原始内容已保留。');};
   const dock = value as DockState;
   if (!dock || !Array.isArray(dock.tabs) || !Array.isArray(dock.recent) || !dock.root) return fail();
@@ -143,8 +143,16 @@ export function validateDock(value: unknown, sessionIds: string[]): asserts valu
     else if (tab.kind === 'review') {if (!Array.isArray(tab.files) || tab.files.length > 2 || tab.files.some(f => !f || typeof f.name !== 'string' || typeof f.text !== 'string' || f.text.length > 262144)) return fail();}
     else if (tab.kind === 'report') {if (typeof tab.url !== 'string' || browserUrl(tab.url) === null || typeof tab.file !== 'string' || !/^round-[\w.-]+\.json$/.test(tab.file) || tab.file.includes('..')) return fail();}
     else if (tab.kind === 'material') {if (typeof tab.nodeId !== 'string' || typeof tab.materialId !== 'string') return fail();}
-    else if (tab.kind === 'business') {if (!isBusinessPage(tab.page)) return fail();}
+    else if (tab.kind === 'business') {if (!isBusinessPage(tab.page) && !(restoreRetired && retiredBusinessPage(tab.page))) return fail();}
     else return fail();
   }
   if (new Set(dock.recent).size !== dock.recent.length || dock.recent.some(id => !placed.includes(id))) return fail();
+}
+
+const retiredBusinessPage = (page: unknown) => page === 'health' || page === 'journal';
+
+export function restoreDockWithRetiredTabs(dock: DockState, sessionIds: string[]): DockState {
+  validateDock(dock, sessionIds, true);
+  return dock.tabs.reduce((restored, tab) =>
+    tab.kind === 'business' && retiredBusinessPage(tab.page) ? closeDockTab(restored, tab.id) : restored, dock);
 }

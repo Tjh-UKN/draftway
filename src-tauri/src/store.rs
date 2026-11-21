@@ -15,6 +15,10 @@ pub struct WorkbenchData { pub records:Vec<Value>, pub attachments:Vec<Attachmen
 pub type Result<T> = std::result::Result<T, String>;
 pub fn error(e:impl std::fmt::Display)->String {e.to_string()}
 
+fn retired(record: &Value) -> bool {
+    domain::is_retired_kind(domain::text(record, "kind"))
+}
+
 impl Store {
     pub fn open(root:PathBuf)->Result<Self> {
         fs::create_dir_all(root.join("attachments")).map_err(error)?;
@@ -58,7 +62,12 @@ impl Store {
     pub fn load(&self)->Result<WorkbenchData> {
         let db=self.db.lock().map_err(error)?;
         let layout:Option<String>=db.query_row("SELECT value FROM metadata WHERE key='workspace_layout'",[],|row|row.get(0)).optional().map_err(error)?;
-        Ok(WorkbenchData{records:records(&db)?,attachments:attachments(&db)?,settings:settings(&db)?,data_path:self.root.to_string_lossy().into(),workspace_layout:layout.map(|layout|serde_json::from_str(&layout).map_err(error)).transpose()?})
+        let all = records(&db)?;
+        let retired_ids: std::collections::HashSet<_> = all.iter().filter(|record| retired(record))
+            .map(|record| domain::text(record, "id")).collect();
+        let files = attachments(&db)?.into_iter().filter(|file|
+            !file.entity_id.as_deref().is_some_and(|id| retired_ids.contains(id))).collect();
+        Ok(WorkbenchData{records:all.into_iter().filter(|record| !retired(record)).collect(),attachments:files,settings:settings(&db)?,data_path:self.root.to_string_lossy().into(),workspace_layout:layout.map(|layout|serde_json::from_str(&layout).map_err(error)).transpose()?})
     }
     pub fn put_workspace_layout(&self,layout:&Value)->Result<()> {
         crate::workspaces::validate(layout)?;
@@ -67,6 +76,7 @@ impl Store {
         Ok(())
     }
     pub fn save(&self,mut record:Value)->Result<Value> {
+        if retired(&record) {return Err("这类旧记录仅随完整备份保留".into());}
         domain::normalize(&mut record);
         domain::validate(&record)?;
         let mut db=self.write_db()?;
@@ -98,15 +108,6 @@ impl Store {
                 if field=="taskId"&&record["projectId"]!=p["projectId"]{return Err("问题或笔记必须属于关联任务的同一项目".into());}
             }
         }
-        if kind=="journal"{
-            for (field,expected) in [("taskIds","task"),("issueIds","issue")]{for id in record[field].as_array().ok_or("工作记录关联无效")?{let r=get(&tx,id.as_str().ok_or("关联 ID 无效")?)?.ok_or("工作记录引用的内容不存在")?;if domain::text(&r,"kind")!=expected{return Err("工作记录引用的类型不符".into());}}}
-            let duplicate:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM entities WHERE kind='journal' AND archived=0 AND json_extract(data,'$.date')=?1 AND id<>?2)",params![domain::text(&record,"date"),id],|r|r.get(0)).map_err(error)?;
-            if duplicate{return Err("这一天已有工作记录，请编辑已有记录".into());}
-        }
-        if kind=="sleep"||kind=="weight"{
-            let duplicate:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM entities WHERE kind=?1 AND archived=0 AND json_extract(data,'$.date')=?2 AND id<>?3)",params![kind,domain::text(&record,"date"),id],|r|r.get(0)).map_err(error)?;
-            if duplicate{return Err("该日期已有同类健康记录，请编辑已有记录".into());}
-        }
         record["title"]=json!(domain::text(&record,"title").trim());
         record["updatedAt"]=json!(domain::now());
         record["version"]=json!(incoming+1);
@@ -121,7 +122,7 @@ impl Store {
         }
         write(&tx,&record,None)?;
         if kind=="task"&&previous.as_ref().is_some_and(|old|old["projectId"]!=record["projectId"]){
-            for mut child in records(&tx)?.into_iter().filter(|r|domain::text(r,"taskId")==id){child["projectId"]=record["projectId"].clone();child["updatedAt"]=json!(domain::now());child["version"]=json!(child["version"].as_u64().unwrap_or(0)+1);tx.execute("UPDATE entities SET data=?1,version=?2 WHERE id=?3",params![serde_json::to_string(&child).map_err(error)?,child["version"].as_u64(),domain::text(&child,"id")]).map_err(error)?;}
+            for mut child in records(&tx)?.into_iter().filter(|r|!retired(r)&&domain::text(r,"taskId")==id){child["projectId"]=record["projectId"].clone();child["updatedAt"]=json!(domain::now());child["version"]=json!(child["version"].as_u64().unwrap_or(0)+1);tx.execute("UPDATE entities SET data=?1,version=?2 WHERE id=?3",params![serde_json::to_string(&child).map_err(error)?,child["version"].as_u64(),domain::text(&child,"id")]).map_err(error)?;}
         }
         if kind=="task" && domain::text(&record,"status")=="done" && domain::text(&record,"repeat")!="none" && previous.as_ref().is_none_or(|r|domain::text(r,"status")!="done") {
             let exists=tx.query_row("SELECT next_id FROM repeat_links WHERE task_id=?1",[&id],|r|r.get::<_,String>(0)).optional().map_err(error)?;
@@ -166,18 +167,18 @@ impl Store {
         let tx=db.transaction().map_err(error)?;
         let all=records(&tx)?;
         let target=all.iter().find(|r|domain::text(r,"id")==id).ok_or("记录不存在")?;
+        if retired(target) {return Err("这类旧记录仅随完整备份保留".into());}
         let mut affected=vec![id.to_owned()];
         if !restore {
             let mut changed=true;
-            while changed{changed=false;for r in &all{let child=domain::text(r,"id");if !affected.iter().any(|id|id==child)&&["goalId","projectId","taskId"].iter().any(|field|domain::optional_id(r,field).is_some_and(|parent|affected.iter().any(|id|id==parent))){affected.push(child.to_owned());changed=true;}}}
+            while changed{changed=false;for r in all.iter().filter(|record| !retired(record)){let child=domain::text(r,"id");if !affected.iter().any(|id|id==child)&&["goalId","projectId","taskId"].iter().any(|field|domain::optional_id(r,field).is_some_and(|parent|affected.iter().any(|id|id==parent))){affected.push(child.to_owned());changed=true;}}}
         } else {
-            if ["sleep","weight"].contains(&domain::text(target,"kind")){let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM entities WHERE kind=?1 AND archived=0 AND json_extract(data,'$.date')=?2 AND id<>?3)",params![domain::text(target,"kind"),domain::text(target,"date"),id],|r|r.get(0)).map_err(error)?;if exists{return Err("该日期已有同类健康记录，不能重复恢复".into());}}
             for field in ["projectId","goalId","taskId"] {if let Some(parent)=domain::optional_id(target,field) {if get(&tx,parent)?.is_some_and(|r|r["archived"].as_bool()==Some(true)) {return Err("请先恢复所属的目标、项目或任务".into());}}}
             let mut stmt=tx.prepare("SELECT id FROM entities WHERE archive_root=?1").map_err(error)?;
             let ids=stmt.query_map([id],|r|r.get::<_,String>(0)).map_err(error)?.collect::<std::result::Result<Vec<_>,_>>().map_err(error)?;
             affected.extend(ids);
         }
-        for mut r in all.into_iter().filter(|r|affected.contains(&domain::text(r,"id").to_owned())) {
+        for mut r in all.into_iter().filter(|r|!retired(r)&&affected.contains(&domain::text(r,"id").to_owned())) {
             if !restore && r["archived"].as_bool()==Some(true) {continue;}
             r["archived"]=json!(!restore);r["version"]=json!(r["version"].as_u64().unwrap_or(0)+1);r["updatedAt"]=json!(domain::now());
             write(&tx,&r,if restore {None} else {Some(id)})?;
@@ -185,12 +186,59 @@ impl Store {
         tx.commit().map_err(error)
     }
     pub fn delete(&self,id:&str)->Result<()> {
+        self.delete_entry(id, None)
+    }
+    pub fn delete_knowledge(&self, id: &str, version: u64) -> Result<()> {
+        self.delete_entry(id, Some(version))
+    }
+    fn delete_entry(&self, id: &str, knowledge_version: Option<u64>) -> Result<()> {
         let mut db=self.write_db()?;
         let tx=db.transaction().map_err(error)?;
         let item=get(&tx,id)?.ok_or("记录不存在")?;
-        if item["archived"].as_bool()!=Some(true) {return Err("只有归档记录可以永久删除".into());}
-        if records(&tx)?.iter().any(|r|domain::text(r,"projectId")==id||domain::text(r,"goalId")==id||domain::text(r,"taskId")==id||["taskIds","issueIds"].iter().any(|field|r[*field].as_array().is_some_and(|ids|ids.iter().any(|value|value.as_str()==Some(id))))) {return Err("请先解除相关工作记录的引用或删除子记录，也可以保留归档".into());}
-        if attachments(&tx)?.iter().any(|a|a.entity_id.as_deref()==Some(id)) {return Err("请先移除该记录的附件".into());}
+        if retired(&item) {return Err("这类旧记录仅随完整备份保留".into());}
+        if let Some(version) = knowledge_version {
+            if !matches!(domain::text(&item, "kind"), "note" | "drawing") || item["archived"] != false {
+                return Err("只能从此处直接删除未归档的知识条目".into());
+            }
+            if item["version"].as_u64() != Some(version) {
+                return Err("知识条目已更新，请重新选择后再删除".into());
+            }
+        } else if item["archived"].as_bool()!=Some(true) {
+            return Err("只有归档记录可以永久删除".into());
+        }
+        let records = records(&tx)?;
+        if records.iter().filter(|record| !retired(record)).any(|r|
+            domain::text(r,"projectId")==id || domain::text(r,"goalId")==id || domain::text(r,"taskId")==id) {
+            return Err("请先删除子记录，也可以保留归档".into());
+        }
+        if knowledge_version.is_some() {
+            let parent = domain::optional_id(&item, "knowledgeParentId").filter(|parent| {
+                let mut seen = std::collections::HashSet::from([id]);
+                let mut ancestor = Some(*parent);
+                while let Some(parent_id) = ancestor {
+                    if parent_id.starts_with("source:") {break;}
+                    if !seen.insert(parent_id) {return false;}
+                    let Some(record) = records.iter().find(|record| domain::text(record, "id") == parent_id
+                        && matches!(domain::text(record, "kind"), "note" | "drawing") && record["archived"] == false) else {
+                        return false;
+                    };
+                    ancestor = domain::optional_id(record, "knowledgeParentId");
+                }
+                true
+            });
+            tx.execute(
+                "UPDATE entities SET version=version+1,data=json_set(data,'$.knowledgeParentId',?1,'$.version',version+1,'$.updatedAt',?2)
+                 WHERE kind IN ('note','drawing') AND json_extract(data,'$.knowledgeParentId')=?3",
+                params![parent, domain::now(), id],
+            ).map_err(error)?;
+            tx.execute("UPDATE attachments SET data=json_set(data,'$.entityId',NULL) WHERE json_extract(data,'$.entityId')=?1", [id]).map_err(error)?;
+            if item["knowledgeSource"].is_object() {
+                let key = crate::knowledge::source_key(&item["knowledgeSource"]);
+                tx.execute("INSERT OR IGNORE INTO metadata(key,value) VALUES(?1,?2)", params![key, id]).map_err(error)?;
+            }
+        } else if attachments(&tx)?.iter().any(|a|a.entity_id.as_deref()==Some(id)) {
+            return Err("请先移除该记录的附件".into());
+        }
         tx.execute("DELETE FROM entities WHERE id=?1",[id]).map_err(error)?;
         tx.execute("DELETE FROM repeat_links WHERE task_id=?1 OR next_id=?1",[id]).map_err(error)?;
         tx.commit().map_err(error)
@@ -278,6 +326,49 @@ mod tests {
         let backup=crate::backup::create(&store,"knowledge-graph").unwrap();let mut changed=html.clone();changed["body"]=json!("changed");store.save(changed).unwrap();crate::backup::restore(&store,&store.root.join("backups").join(backup.name)).unwrap();drop(store);
         let restored=Store::open(root.clone()).unwrap().load().unwrap();assert!(restored.records.contains(&html));assert!(restored.records.contains(&map));assert!(restored.records.contains(&folder));std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn deleting_knowledge_checks_the_version_and_preserves_children_and_files() {
+        let root = std::env::temp_dir().join(format!("draftway-delete-knowledge-{}", uuid::Uuid::new_v4()));
+        let store = Store::open(root.clone()).unwrap();
+        let mut folder = record("note");
+        folder["format"] = json!("folder");
+        folder["body"] = json!("");
+        folder["knowledgeSource"] = json!({"workspaceId":"workspace-a","kind":"node","id":"source-a"});
+        let folder = store.save(folder).unwrap();
+        let id = domain::text(&folder, "id");
+        let version = folder["version"].as_u64().unwrap();
+        let mut child = record("note");
+        child["body"] = json!("Child content");
+        child["knowledgeParentId"] = folder["id"].clone();
+        let child = store.save(child).unwrap();
+        let attachment = Attachment {
+            id: "test-file".into(), name: "file.txt".into(), size: 14, stored_name: "file.txt".into(),
+            entity_id: Some(id.into()), created_at: domain::now(),
+        };
+        fs::write(root.join("attachments/file.txt"), "kept file data").unwrap();
+        store.db.lock().unwrap().execute("INSERT INTO attachments(id,data) VALUES(?1,?2)",
+            params![attachment.id, serde_json::to_string(&attachment).unwrap()]).unwrap();
+        assert!(store.delete(id).is_err());
+        assert!(store.delete_knowledge(id, version - 1).is_err());
+        store.delete_knowledge(id, version).unwrap();
+        drop(store);
+        let store = Store::open(root.clone()).unwrap();
+        assert_eq!(store.load().unwrap().attachments[0].entity_id, None);
+        assert_eq!(fs::read_to_string(root.join("attachments/file.txt")).unwrap(), "kept file data");
+        {
+            let db = store.db.lock().unwrap();
+            assert!(get(&db, id).unwrap().is_none());
+            let saved = get(&db, domain::text(&child, "id")).unwrap().unwrap();
+            assert_eq!(saved["knowledgeParentId"], Value::Null);
+            assert_eq!(saved["body"], child["body"]);
+            assert_eq!(saved["version"].as_u64(), Some(child["version"].as_u64().unwrap() + 1));
+            let key = crate::knowledge::source_key(&folder["knowledgeSource"]);
+            let marker: String = db.query_row("SELECT value FROM metadata WHERE key=?1", [key], |row| row.get(0)).unwrap();
+            assert_eq!(marker, id);
+        }
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn drawings_survive_upgrade_restart_backup_and_archive() {
         let root=std::env::temp_dir().join(format!("northstar-drawings-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();
         let old=store.save(record("task")).unwrap();store.db.lock().unwrap().execute_batch("PRAGMA user_version=4;").unwrap();drop(store);
@@ -297,7 +388,7 @@ mod tests {
         assert!(store.load().unwrap().records.iter().find(|r|r["id"]==t["id"]).unwrap()["archived"].as_bool().unwrap());
         drop(store);fs::remove_dir_all(root).unwrap();
     }
-    #[test] fn issue_workflow_move_and_journal_uniqueness_preserve_relationships(){
+    #[test] fn issue_and_progress_follow_task_move_and_archive(){
         let root=std::env::temp_dir().join(format!("northstar-workflow-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();
         let mut p=record("project");p["status"]=json!("active");let p=store.save(p).unwrap();let p2=store.save({let mut p=record("project");p["status"]=json!("active");p}).unwrap();
         let mut t=record("task");t["projectId"]=p["id"].clone();let t=store.save(t).unwrap();
@@ -305,9 +396,13 @@ mod tests {
         let issue=store.save(issue).unwrap();let mut resolved=issue.clone();resolved["status"]=json!("resolved");assert!(store.save(resolved.clone()).is_err());resolved["solution"]=json!("调整最小宽度，并验证布局");let resolved=store.save(resolved).unwrap();assert!(resolved["resolvedAt"].is_string());
         let mut note=record("note");note["body"]=json!("完成了布局测试");note["taskId"]=t["id"].clone();note["projectId"]=p["id"].clone();note["noteType"]=json!("progress");let note=store.save(note).unwrap();
         let mut moved=t.clone();moved["projectId"]=p2["id"].clone();let moved=store.save(moved).unwrap();let loaded=store.load().unwrap();for child in [&issue,&note]{assert_eq!(loaded.records.iter().find(|r|r["id"]==child["id"]).unwrap()["projectId"],p2["id"]);}
-        let mut journal=record("journal");journal["date"]=json!("2026-10-03");journal["body"]=json!("当时保存的汇总");for field in ["discoveries","blockers","nextSteps"]{journal[field]=json!("");}journal["taskIds"]=json!([t["id"]]);journal["issueIds"]=json!([issue["id"]]);let journal=store.save(journal).unwrap();let mut duplicate=journal.clone();duplicate["id"]=json!(uuid::Uuid::new_v4().to_string());duplicate["version"]=json!(0);assert!(store.save(duplicate).is_err());
-        store.archive(domain::text(&moved,"id"),false).unwrap();let loaded=store.load().unwrap();assert!(loaded.records.iter().find(|r|r["id"]==issue["id"]).unwrap()["archived"]==true);assert!(loaded.records.iter().find(|r|r["id"]==journal["id"]).unwrap()["archived"]==false);
-        store.archive(domain::text(&moved,"id"),true).unwrap();assert_eq!(store.load().unwrap().records.iter().find(|r|r["id"]==journal["id"]).unwrap()["body"],"当时保存的汇总");
+        for restore in [false, true] {
+            store.archive(domain::text(&moved,"id"),restore).unwrap();
+            let loaded=store.load().unwrap();
+            for child in [&issue,&note] {
+                assert_eq!(loaded.records.iter().find(|r|r["id"]==child["id"]).unwrap()["archived"],!restore);
+            }
+        }
         drop(store);fs::remove_dir_all(root).unwrap();
     }
     #[test] fn legacy_upgrade_and_legacy_backup_restore_keep_user_notes(){
@@ -335,14 +430,72 @@ mod tests {
         let root=std::env::temp_dir().join(format!("northstar-schema-two-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();let old=store.save(record("task")).unwrap();store.db.lock().unwrap().execute_batch("PRAGMA user_version=2;").unwrap();drop(store);
         let store=Store::open(root.clone()).unwrap();assert_eq!(store.load().unwrap().records[0],old);let backup=crate::backup::list(&store).unwrap().into_iter().find(|b|b.name.contains("before-upgrade-v0.5")).unwrap();crate::backup::restore(&store,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();assert_eq!(store.load().unwrap().records[0],old);assert_eq!(store.db.lock().unwrap().query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),5);drop(store);fs::remove_dir_all(root).unwrap();
     }
-    #[test] fn health_records_validate_dates_values_duplicates_and_restore(){
+    #[test] fn retired_records_and_attachments_roundtrip_outside_the_active_workbench(){
         use chrono::TimeZone;
-        let root=std::env::temp_dir().join(format!("northstar-health-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();let date=Local::now().date_naive();let day=date.to_string();let wake=Local.from_local_datetime(&date.and_hms_opt(8,0,0).unwrap()).single().unwrap();let bed=wake-chrono::Duration::hours(8);
-        let mut sleep=record("sleep");sleep["date"]=json!(day);sleep["bedtime"]=json!(bed.to_rfc3339());sleep["wakeTime"]=json!(wake.to_rfc3339());sleep["awakeMinutes"]=json!(30);sleep["quality"]=json!("normal");sleep["note"]=json!("跨日睡眠测试");let saved=store.save(sleep.clone()).unwrap();
-        let mut duplicate=sleep.clone();duplicate["id"]=json!(uuid::Uuid::new_v4().to_string());assert!(store.save(duplicate.clone()).is_err());let mut invalid=saved.clone();invalid["wakeTime"]=saved["bedtime"].clone();assert!(store.save(invalid).is_err());let mut invalid=saved.clone();invalid["awakeMinutes"]=json!(480);assert!(store.save(invalid).is_err());
-        let mut weight=record("weight");weight["date"]=json!(day);weight["kilograms"]=json!(68.55);weight["note"]=json!("晨起称重");let weight=store.save(weight).unwrap();let mut invalid=weight.clone();invalid["kilograms"]=json!(-1);assert!(store.save(invalid).is_err());let mut invalid=weight.clone();invalid["date"]=json!((date+chrono::Days::new(1)).to_string());assert!(store.save(invalid).is_err());
-        let backup=crate::backup::create(&store,"test").unwrap();let mut changed=weight.clone();changed["kilograms"]=json!(69);store.save(changed).unwrap();crate::backup::restore(&store,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();assert_eq!(store.load().unwrap().records.iter().find(|r|r["id"]==weight["id"]).unwrap()["kilograms"],68.55);
-        store.archive(domain::text(&saved,"id"),false).unwrap();let new=store.save(duplicate).unwrap();assert!(store.archive(domain::text(&saved,"id"),true).is_err());store.archive(domain::text(&new,"id"),false).unwrap();store.archive(domain::text(&saved,"id"),true).unwrap();assert_eq!(store.load().unwrap().records.iter().find(|r|r["id"]==saved["id"]).unwrap()["note"],"跨日睡眠测试");drop(store);fs::remove_dir_all(root).unwrap();
+        let root=std::env::temp_dir().join(format!("northstar-retired-{}",uuid::Uuid::new_v4()));
+        let store=Store::open(root.join("source")).unwrap();
+        let task=store.save(record("task")).unwrap();
+        let task_id=domain::text(&task,"id");
+        let date=Local::now().date_naive();
+        let day=date.to_string();
+        let wake=Local.from_local_datetime(&date.and_hms_opt(8,0,0).unwrap()).single().unwrap();
+        let mut sleep=record("sleep");
+        sleep["date"]=json!(day);
+        sleep["wakeTime"]=json!(wake.to_rfc3339());
+        sleep["bedtime"]=json!((wake-chrono::Duration::hours(8)).to_rfc3339());
+        sleep["awakeMinutes"]=json!(30);
+        sleep["quality"]=json!("normal");
+        sleep["note"]=json!("old sleep");
+        let mut weight=record("weight");
+        weight["date"]=json!(day);
+        weight["kilograms"]=json!(68.55);
+        weight["note"]=json!("old weight");
+        let mut journal=record("journal");
+        journal["date"]=json!(day);
+        journal["body"]=json!("old snapshot");
+        for field in ["discoveries","blockers","nextSteps"] {journal[field]=json!("");}
+        journal["taskId"]=json!(task_id);
+        journal["taskIds"]=json!([task_id]);
+        journal["issueIds"]=json!([uuid::Uuid::new_v4().to_string()]);
+        let legacy=[sleep,weight,journal];
+        for item in &legacy {
+            domain::validate(item).unwrap();
+            assert!(store.save(item.clone()).is_err());
+            write(&store.db.lock().unwrap(),item,None).unwrap();
+        }
+        for item in &legacy {
+            let id=domain::text(item,"id");
+            assert_eq!(store.save(item.clone()).unwrap_err(),"这类旧记录仅随完整备份保留");
+            assert_eq!(store.archive(id,false).unwrap_err(),"这类旧记录仅随完整备份保留");
+            assert_eq!(store.archive(id,true).unwrap_err(),"这类旧记录仅随完整备份保留");
+            assert_eq!(store.delete(id).unwrap_err(),"这类旧记录仅随完整备份保留");
+        }
+        let stored_id=uuid::Uuid::new_v4().to_string();
+        let attachment=Attachment{id:stored_id.clone(),name:"legacy.txt".into(),size:6,
+            stored_name:format!("{stored_id}.txt"),entity_id:Some(domain::text(&legacy[2],"id").into()),created_at:domain::now()};
+        fs::write(crate::backup::attachment_path(&store,&attachment.stored_name).unwrap(),b"legacy").unwrap();
+        store.db.lock().unwrap().execute("INSERT INTO attachments(id,data) VALUES(?1,?2)",
+            params![stored_id,serde_json::to_string(&attachment).unwrap()]).unwrap();
+        let visible=store.load().unwrap();
+        assert_eq!(visible.records,vec![task.clone()]);
+        assert!(visible.attachments.is_empty());
+        store.archive(task_id,false).unwrap();
+        store.delete(task_id).unwrap();
+        let backup=crate::backup::create(&store,"retired-compat").unwrap();
+        let restored=Store::open(root.join("restored")).unwrap();
+        crate::backup::restore(&restored,&crate::backup::resolve_backup(&store,&backup.name).unwrap()).unwrap();
+        let data=restored.load().unwrap();
+        assert!(data.records.is_empty());
+        assert!(data.attachments.is_empty());
+        {
+            let db=restored.db.lock().unwrap();
+            assert_eq!(records(&db).unwrap(),legacy);
+            assert_eq!(attachments(&db).unwrap()[0].id,attachment.id);
+        }
+        assert_eq!(fs::read(crate::backup::attachment_path(&restored,&attachment.stored_name).unwrap()).unwrap(),b"legacy");
+        drop(restored);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
     }
     #[test] fn schema_three_upgrade_preserves_old_records_and_old_backups(){
         let root=std::env::temp_dir().join(format!("northstar-schema-three-{}",uuid::Uuid::new_v4()));let store=Store::open(root.clone()).unwrap();let old=store.save(record("task")).unwrap();store.db.lock().unwrap().execute_batch("DROP INDEX health_date; PRAGMA user_version=3;").unwrap();drop(store);

@@ -163,7 +163,7 @@ function PaneMenu({onCreate, onSplit, onMerge, canSplit, canMerge, integrations}
     const close = () => setPosition(null);
     document.addEventListener('pointerdown', dismiss); document.addEventListener('focusin', dismiss); window.addEventListener('resize', close);
     return () => {document.removeEventListener('pointerdown', dismiss); document.removeEventListener('focusin', dismiss); window.removeEventListener('resize', close);};
-  }, [position]);
+  }, [position, businessMenu]);
   const choose = (action: () => void) => {setPosition(null); action();};
   return <><button className="icon-button pane-create" ref={trigger} title="新标签页与分屏" aria-label="新标签页与分屏" aria-expanded={!!position} aria-haspopup="menu" onClick={() => {if(!position)setBusinessMenu(false);const r = trigger.current!.getBoundingClientRect(); setPosition(position ? null : {left: Math.max(8, Math.min(innerWidth - 216, r.left)), top: Math.max(8, Math.min(innerHeight - 345, r.bottom + 5))});}}><Plus size={16}/></button>{position && createPortal(<div className="backend-menu pane-menu" role="menu" aria-label="新建内容" ref={menu} style={{position: 'fixed', ...position, maxHeight: innerHeight-position.top-12, overflowY:'auto', zIndex: 1000}} onKeyDown={event => {
     if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); setPosition(null); trigger.current?.focus(); return;}

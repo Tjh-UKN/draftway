@@ -1,12 +1,14 @@
+import {isChatFiles, type ChatFile} from './session-files';
 import {isTask, newSpace, parseState, seedState, syncTaskProgress, taskChildren, type DesignState, type MindNode, type Space} from './model';
 import type {WidgetWindowRect} from '../workspace-layout';
 import type {LayoutTemplate} from './composition';
 import {parseIntegration,type ExternalIntegration} from './integration-manifest';
 import {boundedText} from './text';
+import {isChatQueue, type QueuedMessage} from './chat-queue';
 import {parseMaterialTarget} from './material-target';
 import {emptyGraph, validGraph, type GraphState} from './graph-state';
 export type {GraphState} from './graph-state';
-import {closeDockTab, groups, initialDock, moveDockTab, openDockTab, repairBrowserIds, selectDockTab, validateDock, type DockState, type DockTab} from './docking';
+import {closeDockTab, groups, initialDock, moveDockTab, openDockTab, repairBrowserIds, selectDockTab, restoreDockWithRetiredTabs, type DockState, type DockTab} from './docking';
 
 export type RunState = 'running' | 'needs_input' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
 export type DemoOutcome = 'succeeded' | 'needs_input' | 'failed';
@@ -24,14 +26,16 @@ export interface Workspace extends Space {
   review?: {url: string} | null;
   materialRoots?: {name: string; path: string}[];
 }
-export interface Message {id: string; role: 'user' | 'assistant'; text: string; at: number}
+export interface Message {id: string; role: 'user' | 'assistant'; text: string; at: number; files?: ChatFile[]}
 export interface AgentSession {
   id: string; workspaceId: string; nodeId: string | null; integrationId: string;
   title: string; messages: Message[]; draft: string; unread: boolean; createdAt: number;
+  draftFiles?: ChatFile[];
   agentId?: 'codex' | 'claude' | 'pi'; linkedNodeIds?: string[];
   cwd?: string; sourceId?: string | null; nativeRevision?: number; requests?: AgentRequest[]; connectionError?: string;
   selectedModel?: string; selectedEffort?: string;
   effectiveModel?: string; effectiveEffort?: string;
+  queuedMessages?: QueuedMessage[]; queuePaused?: boolean;
 }
 export interface AgentRequest {id: string; kind: string; title: string; payload: Record<string, unknown>; sourceId: unknown}
 export type MapAction = 'reply' | 'progress' | 'update' | 'artifact';
@@ -49,6 +53,8 @@ export interface Run {
   startedAt: number; dueAt: number;
   mapAction?: MapAction; targetNodeId?: string;
   error?: string | null;
+  pendingText?: string;
+  pendingFiles?: ChatFile[];
   stopping?: boolean;
   context?: string;
   phase?: RunPhase;
@@ -122,14 +128,25 @@ export function openMapTab(space: Workspace, groupId: string, id: string): Works
   return {...space, dock: openDockTab(space.dock, {id, kind: 'map', title: '思维导图', graph: emptyGraph()}, groupId)};
 }
 function migrateMaterialTabs(dock: DockState, oldSpace: Workspace, space: Workspace): DockState {
-  return {...dock, tabs: dock.tabs.map((tab): DockTab => {
-    if (tab.kind !== 'material') return tab;
+  let repaired = dock;
+  const replacements = new Map<string, DockTab>();
+  for (const tab of dock.tabs) {
+    if (tab.kind !== 'material') continue;
     const old = oldSpace.nodes.find(n => n.id === tab.nodeId) as (MindNode & {reference?: string}) | undefined;
     const target = (tab.materialId === 'legacy-reference' ? old?.reference : undefined) || old?.materials?.find(m => m.id === tab.materialId)?.target;
-    if (!target) return tab;
-    try {const canonical = parseMaterialTarget(target).target;const material = space.nodes.find(n => n.id === tab.nodeId)?.materials?.find(m => m.target === canonical);return material ? {...tab, materialId: material.id} : tab;}
-    catch {return {id:tab.id,title:tab.title,kind:'map',graph:{...emptyGraph(),selectedId:tab.nodeId}};}
-  })};
+    if (!target) {
+      repaired = closeDockTab(repaired, tab.id);
+      continue;
+    }
+    try {
+      const canonical = parseMaterialTarget(target).target;
+      const material = space.nodes.find(n => n.id === tab.nodeId)?.materials?.find(m => m.target === canonical);
+      if (material) replacements.set(tab.id, {...tab, materialId: material.id});
+    } catch {
+      replacements.set(tab.id, {id: tab.id, title: tab.title, kind: 'map', graph: {...emptyGraph(), selectedId: tab.nodeId}});
+    }
+  }
+  return replacements.size ? {...repaired, tabs: repaired.tabs.map(tab => replacements.get(tab.id) ?? tab)} : repaired;
 }
 export function createMapNode(state: WorkbenchState, workspaceId: string, parentId: string, id: string, tabId = 'workspace'): WorkbenchState {
   const space = state.spaces.find(w => w.id === workspaceId);
@@ -298,7 +315,7 @@ export function parseWorkbench(value: unknown): WorkbenchState {
   const fail = () => {throw new Error('工作台数据无效，原始内容已保留。');};
   if (!raw || ![1, 2].includes(raw.version) || !Array.isArray(raw.sessions) || !Array.isArray(raw.runs) || !Array.isArray(raw.artifacts) || !Array.isArray(raw.notices)) return fail();
   if (raw.graphCursor !== undefined && (!Number.isSafeInteger(raw.graphCursor) || raw.graphCursor < 0)) return fail();
-  if(raw.templates!==undefined){if(!Array.isArray(raw.templates)||raw.templates.length>30||new Set(raw.templates.map(t=>t.id)).size!==raw.templates.length)return fail();for(const template of raw.templates){if(!template || typeof template.id!=='string' || typeof template.name!=='string' || !template.name.trim() || template.dock.tabs.some(t=>!['map','events','business','review','browser'].includes(t.kind)))return fail();validateDock(template.dock,[]);}}
+  if(raw.templates!==undefined){if(!Array.isArray(raw.templates)||raw.templates.length>30||new Set(raw.templates.map(t=>t.id)).size!==raw.templates.length)return fail();for(const template of raw.templates){if(!template || typeof template.id!=='string' || typeof template.name!=='string' || !template.name.trim() || template.dock.tabs.some(t=>!['map','events','business','review','browser'].includes(t.kind)))return fail();template.dock=restoreDockWithRetiredTabs(template.dock,[]);}}
   if(raw.externalIntegrations!==undefined){if(!Array.isArray(raw.externalIntegrations)||raw.externalIntegrations.length>30||new Set(raw.externalIntegrations.map(i=>i.id)).size!==raw.externalIntegrations.length)return fail();raw.externalIntegrations.forEach(parseIntegration);}
   const oldSpaces = raw.spaces;
   raw.spaces = parseState({version: 2, activeId: raw.activeId, spaces: raw.spaces}).spaces as Workspace[];
@@ -314,7 +331,7 @@ export function parseWorkbench(value: unknown): WorkbenchState {
   const unique = (items: {id: string}[]) => items.every(i => i && typeof i.id === 'string' && i.id.length > 0) && new Set(items.map(i => i.id)).size === items.length;
   if (![state.sessions, state.runs, state.artifacts, state.notices].every(unique)) return fail();
   for (const space of state.spaces) {
-    validateDock(space.dock, state.sessions.filter(s => s.workspaceId === space.id).map(s => s.id));
+    space.dock = restoreDockWithRetiredTabs(space.dock, state.sessions.filter(s => s.workspaceId === space.id).map(s => s.id));
     if (!Array.isArray(space.surfaces) || !unique(space.surfaces) || !space.layout || !Array.isArray(space.layout.panes) || space.layout.panes.length < 1 || space.layout.panes.length > 2 || !unique(space.layout.panes) || !space.layout.panes.some(p => p.id === space.layout.activePaneId) || !Number.isFinite(space.layout.ratio) || space.layout.ratio < .25 || space.layout.ratio > .75) return fail();
     const allTabs = space.layout.panes.flatMap(p => Array.isArray(p.tabs) ? p.tabs : []);
     if (new Set(allTabs).size !== allTabs.length || allTabs.some(t => !space.surfaces.some(s => s.id === t))) return fail();
@@ -332,6 +349,9 @@ export function parseWorkbench(value: unknown): WorkbenchState {
   }
   for (const session of state.sessions) {
     const space = state.spaces.find(s => s.id === session.workspaceId);
+    if ((session.draftFiles !== undefined && !isChatFiles(session.draftFiles)) ||
+        (session.queuedMessages !== undefined && !isChatQueue(session.queuedMessages)) ||
+        (session.queuePaused !== undefined && typeof session.queuePaused !== 'boolean')) return fail();
     const legacy = session as AgentSession & {codexModel?: string; codexEffort?: string};
     const modelOptions = [session.selectedModel, session.selectedEffort, session.effectiveModel, session.effectiveEffort, legacy.codexModel, legacy.codexEffort];
     if (modelOptions.some(option => option !== undefined && (typeof option !== 'string' || !option.trim() || option.length > 256))) return fail();
@@ -344,11 +364,13 @@ export function parseWorkbench(value: unknown): WorkbenchState {
       delete legacy.codexEffort;
     }
     if ((session.cwd !== undefined && typeof session.cwd !== 'string') || (session.sourceId != null && typeof session.sourceId !== 'string') || (session.nativeRevision !== undefined && (!Number.isInteger(session.nativeRevision) || session.nativeRevision < 1)) || (session.connectionError !== undefined && typeof session.connectionError !== 'string') || (session.requests !== undefined && (!Array.isArray(session.requests) || session.requests.some(request => !request || typeof request.id !== 'string' || typeof request.kind !== 'string' || typeof request.title !== 'string' || !request.payload || typeof request.payload !== 'object')))) return fail();
-    if (!space || (session.nodeId !== null && !space.nodes.some(n => n.id === session.nodeId)) || typeof session.integrationId !== 'string' || typeof session.title !== 'string' || typeof session.draft !== 'string' || typeof session.unread !== 'boolean' || !Number.isFinite(session.createdAt) || !Array.isArray(session.messages) || !unique(session.messages) || session.messages.some(m => !['user', 'assistant'].includes(m.role) || typeof m.text !== 'string' || !Number.isFinite(m.at))) return fail();
+    if (!space || (session.nodeId !== null && !space.nodes.some(n => n.id === session.nodeId)) || typeof session.integrationId !== 'string' || typeof session.title !== 'string' || typeof session.draft !== 'string' || typeof session.unread !== 'boolean' || !Number.isFinite(session.createdAt) || !Array.isArray(session.messages) || !unique(session.messages) || session.messages.some(m => !['user', 'assistant'].includes(m.role) || typeof m.text !== 'string' || !Number.isFinite(m.at) || (m.files !== undefined && !isChatFiles(m.files)))) return fail();
     if ((session.agentId !== undefined && !['codex', 'claude', 'pi'].includes(session.agentId)) || (session.linkedNodeIds !== undefined && (!Array.isArray(session.linkedNodeIds) || session.linkedNodeIds.some(id => !space.nodes.some(n => n.id === id))))) return fail();
   }
   for (const run of state.runs) {
     if (run.context !== undefined && typeof run.context !== 'string') return fail();
+    if (run.pendingFiles !== undefined && (run.pendingText === undefined || !isChatFiles(run.pendingFiles))) return fail();
+    if (run.pendingText !== undefined && (typeof run.pendingText !== 'string' || (!run.pendingText.trim() && !run.pendingFiles?.length) || run.pendingText.length > 20000 || !['running', 'failed'].includes(run.state))) return fail();
     const session = state.sessions.find(s => s.id === run.sessionId);
     if ((run.error != null && typeof run.error !== 'string') || !session || !Object.hasOwn(statusNames, run.state) || run.state === ('idle' as string) || (run.outcome !== undefined ? !['succeeded', 'needs_input', 'failed'].includes(run.outcome) : session.integrationId === 'demo-agent') || !Number.isFinite(run.startedAt) || !Number.isFinite(run.dueAt) || (run.mapAction !== undefined && !['reply', 'progress', 'update', 'artifact'].includes(run.mapAction)) || (run.targetNodeId !== undefined && !state.spaces.find(w => w.id === session.workspaceId)?.nodes.some(n => n.id === run.targetNodeId))) return fail();
   }

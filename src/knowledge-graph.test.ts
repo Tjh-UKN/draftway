@@ -9,7 +9,7 @@ describe('hierarchical knowledge',()=>{
     note.knowledgeParentId=null;expect(knowledgeHierarchy([note]).find(n=>n.id===note.id)?.parentId).toBe(knowledgeRoot);
   });
   it('search retains ancestors and invalid restored links remain reachable',()=>{
-    const parent=newKnowledge('folder'),child=newKnowledge('markdown',parent.id) as Note;child.body='needle';const nodes=knowledgeHierarchy([parent,child],'needle');expect(nodes.map(n=>n.id)).toEqual([knowledgeRoot,parent.id,child.id]);parent.knowledgeParentId=child.id;expect(()=>knowledgeHierarchy([parent,child])).not.toThrow();expect(()=>validateKnowledge(parent,[parent,child])).toThrow('下级');
+    const parent=newKnowledge('folder'),child=newKnowledge('markdown',parent.id) as Note;child.body='needle';const nodes=knowledgeHierarchy([parent,child],'  NEEDLE  ');expect(nodes.map(n=>n.id)).toEqual([knowledgeRoot,parent.id,child.id]);parent.knowledgeParentId=child.id;expect(()=>knowledgeHierarchy([parent,child])).not.toThrow();expect(()=>validateKnowledge(parent,[parent,child])).toThrow('下级');
     parent.archived=true;expect(knowledgeHierarchy([parent,child]).find(n=>n.id===child.id)?.parentId).toBe(knowledgeRoot);
   });
   it('imports HTML, Markdown, Excalidraw and mind maps without converting their payload',async()=>{

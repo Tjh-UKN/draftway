@@ -1,0 +1,30 @@
+.management-context-menu{position:fixed;z-index:2000;min-width:176px;max-height:calc(100vh - 16px);overflow-x:hidden;overflow-y:auto;padding:6px;border:1px solid var(--app-line,#00000012);border-radius:12px;background:var(--app-panel,#fff);color:var(--app-text,#0a0a0a);box-shadow:0 1px 2px var(--app-shadow,#0000000a),0 8px 24px var(--app-shadow,#00000014);outline:none;user-select:none;animation:management-menu-in 150ms ease-out}
+.management-context-menu [role=menuitem]{position:relative;display:flex;align-items:center;gap:8px;width:100%;padding:5px 10px;border-radius:6px;text-align:left;font:400 13px/16px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","Noto Sans",Arial,sans-serif;white-space:nowrap;cursor:default;outline:none}
+.management-context-menu [role=menuitem]:focus{background:var(--app-hover,#00000014)}
+.management-context-menu [role=menuitem]>svg{flex-shrink:0;pointer-events:none;color:var(--app-muted,#696969)}
+.management-context-menu [role=menuitem].danger-text{color:var(--app-danger,#b20010)}
+.management-context-menu [role=menuitem].danger-text>svg{color:currentColor}
+.management-context-menu [role=menuitem].danger-text:focus{background:var(--app-danger-bg,#e400141a)}
+.management-context-menu [role=menuitem]:disabled{opacity:.4;pointer-events:none}
+.management-menu-separator{height:1px;margin:6px -6px;background:var(--app-line,#00000012)}
+.management-menu-shortcut{margin-left:auto;padding-left:16px;flex-shrink:0;color:var(--app-muted,#696969)}
+@keyframes management-menu-in{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){.management-context-menu{animation:none}}
+
+.workspace-sidebar-row{height:40px;flex-shrink:0;min-width:0;border-radius:8px;font-size:12px;white-space:nowrap}
+.workspace-sidebar-row:hover{background:var(--app-hover,#ededed)}
+.workspace-sidebar-row.active{background:var(--app-accent-soft,#eaeaea);color:var(--app-text,#111)}
+.workspace-sidebar-row>button{display:flex;align-items:center;gap:13px;width:100%;height:100%;padding:0 13px;text-align:left;border-radius:inherit;font:inherit}
+.workspace-sidebar-row>button>span:first-of-type{overflow:hidden;text-overflow:ellipsis}
+.workspace-sidebar-row.editing{display:flex;align-items:center;gap:13px;padding:0 13px}
+.workspace-sidebar-row .count-badge{margin-left:auto}
+.workspace-name-input{width:100%;min-width:0;border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent!important;padding:0!important;font:inherit;color:inherit;outline:none!important;user-select:text}
+.managed-session-row{display:flex;align-items:center;border-bottom:1px solid var(--app-line,#eee)}
+.managed-session-row>.session-row{flex:1;min-width:0;border-bottom:0}
+.managed-session-row .session-row>span{min-width:0}
+.managed-session-row .session-row strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-row-actions{display:flex;flex-shrink:0;gap:2px}
+.session-row-actions .icon-button{width:28px;height:30px}
+.icon-button.danger-text,.outline-button.danger-text{color:var(--app-danger,#aa3d3d)}
+.primary-button.danger-button{background:var(--app-danger,#aa3d3d);color:var(--app-accent-ink,#fff)}
+.workspace-delete-section{margin:20px 0;padding-top:16px;border-top:1px solid var(--app-line,#eee)}

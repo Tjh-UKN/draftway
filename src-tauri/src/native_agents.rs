@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 use std::{collections::HashMap, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, ChildStdin, Command}, sync::{Arc, Mutex, Weak, atomic::{AtomicBool, AtomicU64, Ordering}, mpsc}, time::{Duration, Instant}};
 #[path = "agent_providers.rs"]
 mod providers;
@@ -15,6 +15,11 @@ mod options;
 mod claude_options;
 #[path = "pi_model_options.rs"]
 mod pi_options;
+#[path = "pi_transcript_repair.rs"]
+mod pi_transcript_repair;
+#[path = "chat_files.rs"]
+mod chat_files;
+pub use chat_files::{ChatFile, FileSuggestion};
 pub use feedback::{Activity, RunPhase};
 pub use options::ModelOptions;
 
@@ -30,7 +35,9 @@ fn now() -> u64 {chrono::Utc::now().timestamp_millis() as u64}
 fn valid_id(id: &str) -> bool {!id.is_empty() && id.len() <= 100 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Message {pub id: String, pub role: String, pub text: String, pub at: u64}
+pub struct Message {pub id: String, pub role: String, pub text: String, pub at: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub files: Vec<ChatFile>,
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Run {
@@ -39,6 +46,30 @@ pub struct Run {
     #[serde(default)] pub context: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub phase: Option<RunPhase>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")] pub activity: Vec<Activity>,
+    #[serde(skip)] pi_messages: PiMessageSequence,
+}
+
+#[derive(Clone, Default)]
+struct PiMessageSequence {
+    last: u32,
+    active: Option<u32>,
+}
+
+impl PiMessageSequence {
+    fn start(&mut self) -> u32 {
+        self.last = self.last.saturating_add(1);
+        self.active = Some(self.last);
+        self.last
+    }
+
+    fn current(&mut self) -> u32 {
+        match self.active {
+            Some(ordinal) => ordinal,
+            None => self.start(),
+        }
+    }
+
+    fn finish(&mut self) {self.active = None;}
 }
 impl Run {
     fn advance_phase(&mut self, phase: RunPhase) {self.phase = self.phase.max(Some(phase));}
@@ -78,14 +109,27 @@ pub struct Backend {pub id: String, pub available: bool, pub detail: String}
 #[derive(Clone)]
 pub struct WorkspaceTools {pub executable: PathBuf, pub root: PathBuf, pub definitions: Value}
 pub struct ToolConfig {pub command: String, pub args: Vec<String>, pub definitions: Value}
+#[derive(Default)]
+struct ReaderOwner {
+    startup_run: String,
+    attached: AtomicBool,
+    retired: AtomicBool,
+}
+impl ReaderOwner {
+    fn applies_to(&self, session: &AgentSession) -> bool {
+        !self.retired.load(Ordering::SeqCst) && (self.attached.load(Ordering::SeqCst)
+            || session.runs.last().is_some_and(|run| run.id == self.startup_run))
+    }
+}
 struct Rpc {
     writer: Mutex<ChildStdin>, child: Mutex<Child>, pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>>, serial: AtomicU64,
     backend: String,
     ownership: process::Ownership,
+    reader: Arc<ReaderOwner>,
 }
 impl Drop for Rpc {fn drop(&mut self) {self.ownership.group.stop(); if let Ok(child) = self.child.get_mut() {let _ = child.kill(); let _ = child.wait();}}}
 impl Rpc {
-    fn start(mut command: Command, backend: String, token: Option<String>, events: Option<(Weak<AgentHost>, String)>) -> Result<Arc<Self>> {
+    fn start(mut command: Command, backend: String, token: Option<String>, events: Option<(Weak<AgentHost>, String, String)>) -> Result<Arc<Self>> {
         let mut child = command.spawn().map_err(|e| format!("无法启动执行器：{e}"))?;
         let ownership = match process::Ownership::attach(&child, token) {
             Ok(owner) => owner,
@@ -98,9 +142,14 @@ impl Rpc {
         let group = ownership.group.clone();
         std::thread::spawn(move || {for line in BufReader::new(stderr).lines() {match line {Ok(line) => group.observe(&line), Err(_) => break,}}});
         let pending = Arc::new(Mutex::new(HashMap::new()));
-        let rpc = Arc::new(Self {writer: Mutex::new(writer), child: Mutex::new(child), pending: pending.clone(), serial: AtomicU64::new(1), backend: backend.clone(), ownership});
-        std::thread::spawn(move || read_protocol(stdout, pending, events, backend));
+        let reader = Arc::new(ReaderOwner {startup_run: events.as_ref().map(|(_, _, run)| run.clone()).unwrap_or_default(), ..Default::default()});
+        let rpc = Arc::new(Self {writer: Mutex::new(writer), child: Mutex::new(child), pending: pending.clone(), serial: AtomicU64::new(1), backend: backend.clone(), ownership,reader:reader.clone()});
+        std::thread::spawn(move || read_protocol(stdout, pending, events, backend, reader));
         Ok(rpc)
+    }
+    fn terminate(&self) {
+        self.ownership.group.stop();
+        if let Ok(mut child) = self.child.lock() {let _ = child.kill();}
     }
     fn write(&self, value: Value) -> Result<()> {
         let mut writer = self.writer.lock().map_err(|e| e.to_string())?;
@@ -151,6 +200,7 @@ pub struct AgentHost {
     transcript_sink:Mutex<Option<TranscriptSink>>,
     tools: Mutex<Option<WorkspaceTools>>,
     model_catalogs: Mutex<HashMap<ModelCatalogKey, ModelCatalogEntry>>,
+    workspace_probe_gate: RwLock<()>,
     model_catalog_sink: Mutex<Option<ModelCatalogSink>>,
     maintenance: AtomicBool,
 }
@@ -165,6 +215,7 @@ impl AgentHost {
         for row in query.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())? {
             let mut session: AgentSession = serde_json::from_str(&row.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
             mark_host_exit(&mut session);
+            if pi_transcript_repair::repair(&mut session, &root.join("provider-sessions")) {session.revision += 1;}
             sessions.insert(session.id.clone(), session);
         }}
         let mut catalogs = HashMap::new();
@@ -182,7 +233,7 @@ impl AgentHost {
                 }
             }
         }
-        let host = Arc::new(Self {root, db: Mutex::new(db), sessions: Mutex::new(sessions), runtimes: Mutex::new(HashMap::new()), sink, checkpoints: Mutex::new(HashMap::new()), transcript_sink:Mutex::new(None),tools: Mutex::new(None),model_catalogs:Mutex::new(catalogs),model_catalog_sink:Mutex::new(None),maintenance:AtomicBool::new(false)});
+        let host = Arc::new(Self {root, db: Mutex::new(db), sessions: Mutex::new(sessions), runtimes: Mutex::new(HashMap::new()), sink, checkpoints: Mutex::new(HashMap::new()), transcript_sink:Mutex::new(None),tools: Mutex::new(None),model_catalogs:Mutex::new(catalogs),workspace_probe_gate:RwLock::new(()),model_catalog_sink:Mutex::new(None),maintenance:AtomicBool::new(false)});
         for session in host.list()? {host.persist(&session)?;}
         let owner=Arc::downgrade(&host);
         std::thread::spawn(move || loop {std::thread::sleep(Duration::from_millis(33));let Some(host)=owner.upgrade() else {break;};host.flush_streams();});
@@ -193,6 +244,27 @@ impl AgentHost {
     }
     pub fn list(&self) -> Result<Vec<AgentSession>> {let mut all: Vec<_> = self.sessions.lock().map_err(|e| e.to_string())?.values().cloned().collect(); all.sort_by_key(|s| s.created_at); Ok(all)}
     pub fn session(&self, id: &str) -> Result<AgentSession> {self.sessions.lock().map_err(|e| e.to_string())?.get(id).cloned().ok_or_else(|| "会话不存在".into())}
+    pub fn rename(&self, id: &str, title: &str) -> Result<AgentSession> {
+        let title=title.trim();if title.is_empty() || title.chars().count()>100 || title.contains(['\r','\n']) {return Err("会话名称须为 1–100 个字符，且不能换行。".into());}
+        let snapshot={let mut sessions=self.sessions.lock().map_err(|e|e.to_string())?;
+            if self.maintenance.load(Ordering::SeqCst){return Err("正在恢复会话，请稍后重试".into());}
+            let mut session=sessions.get(id).cloned().ok_or("会话不存在")?;session.title=title.into();session.revision+=1;
+            self.persist(&session)?;sessions.insert(id.into(),session.clone());session};
+        (self.sink)(&snapshot);Ok(snapshot)
+    }
+    pub fn delete(&self, ids: &[String], workspace_id: Option<&str>) -> Result<Vec<String>> {
+        let mut sessions=self.sessions.lock().map_err(|e|e.to_string())?;
+        if self.maintenance.load(Ordering::SeqCst){return Err("正在恢复会话，请稍后重试".into());}
+        let targets:Vec<String>=sessions.values().filter(|s|ids.contains(&s.id)||workspace_id==Some(s.workspace_id.as_str())).map(|s|s.id.clone()).collect();
+        if targets.iter().any(|id|sessions[id].runs.iter().any(|r|["running","needs_input"].contains(&r.state.as_str()))) {return Err("请先停止正在执行或等待输入的会话，再删除。".into());}
+        let mut db=self.db.lock().map_err(|e|e.to_string())?;let tx=db.transaction().map_err(|e|e.to_string())?;
+        for id in &targets {tx.execute("DELETE FROM agent_sessions WHERE id=?1",[id]).map_err(|e|e.to_string())?;}
+        tx.commit().map_err(|e|e.to_string())?;
+        let mut clocks=self.checkpoints.lock().map_err(|e|e.to_string())?;
+        let mut runtimes=self.runtimes.lock().map_err(|e|e.to_string())?;
+        for id in &targets {sessions.remove(id);clocks.remove(id);if let Some(runtime)=runtimes.remove(id){runtime.ownership.group.stop();}}
+        Ok(targets)
+    }
     pub fn reconcile_nodes(&self,snapshot:&Value)->Result<()> {
         let changes={let sessions=self.sessions.lock().map_err(|e|e.to_string())?;sessions.values().filter_map(|session|{
             let front=snapshot["sessions"].as_array()?.iter().find(|s|s["id"]==session.id&&s["workspaceId"]==session.workspace_id)?;
@@ -224,13 +296,14 @@ impl AgentHost {
             if let Err(error) = &saved {session.error = Some(format!("执行记录保存失败：{error}")); session.requests.clear(); if let Some(run) = session.runs.last_mut() {run.state = "failed".into(); run.finished_at = Some(now()); run.error = session.error.clone(); run.settle_activity();}}
             (Some(session.clone()), saved)
         };
-        if saved.is_err() {self.runtimes.lock().unwrap().remove(id);}
+        if saved.is_err() {self.retire_runtime(id, None);}
         if let Some(snapshot)=&snapshot{(self.sink)(snapshot);} saved?; Ok(snapshot)
     }
     fn flush_streams(&self){
-        let sink=self.transcript_sink.lock().unwrap().clone();let mut frames=Vec::new();let mut snapshots=Vec::new();let mut failed=Vec::new();
-        {
+        let mut frames=Vec::new();let mut snapshots=Vec::new();let mut failed=Vec::new();
+        let sink = {
             let mut sessions=self.sessions.lock().unwrap();if self.maintenance.load(Ordering::SeqCst){return;}
+            let sink=self.transcript_sink.lock().unwrap().clone();
             let mut clocks=self.checkpoints.lock().unwrap();let at=now();
             for (id,clock) in clocks.iter_mut(){
                 let Some(session)=sessions.get_mut(id) else {continue;};
@@ -249,8 +322,9 @@ impl AgentHost {
                     frames.push(TranscriptFrame{id:id.clone(),base_revision:clock.base_revision,revision:session.revision,messages:session.messages[start..].to_vec()});
                 }else{snapshots.push(session.clone());}
             }
-        }
-        for id in failed{self.runtimes.lock().unwrap().remove(&id);}
+            sink
+        };
+        for id in failed{self.retire_runtime(&id, None);}
         for snapshot in snapshots{(self.sink)(&snapshot);}
         if let Some(sink)=sink{for frame in frames{sink(&frame);}}
     }
@@ -264,6 +338,8 @@ impl AgentHost {
         {let mut sessions=self.sessions.lock().map_err(|e|e.to_string())?;if self.maintenance.load(Ordering::SeqCst){return Err("正在恢复会话，请稍后重试".into());}self.persist(&session)?;sessions.insert(id,session.clone());}(self.sink)(&session); Ok(session)
     }
     fn workspace_cwd(&self, workspace_id: &str, cwd: Option<String>) -> Result<String> {
+        let _probe = self.workspace_probe_gate.read().map_err(|e| e.to_string())?;
+        if self.maintenance.load(Ordering::SeqCst) {return Err("正在恢复会话，请稍后重试".into());}
         let directory = if let Some(cwd) = cwd.filter(|s| !s.trim().is_empty()) {PathBuf::from(cwd)} else {let directory = self.root.join("workspaces").join(workspace_id); fs::create_dir_all(&directory).map_err(|e| e.to_string())?; directory};
         let directory = directory.canonicalize().map_err(|e| format!("工作目录不可用：{e}"))?;
         if !directory.is_dir() {return Err("请选择文件夹作为工作目录".into());}
@@ -291,6 +367,8 @@ impl AgentHost {
         if let Ok(mut stored) = self.model_catalog_sink.lock() {*stored = Some(sink);}
     }
     fn fetch_model_catalog(&self, (backend, cwd, thread_id): &ModelCatalogKey) -> Result<ModelOptions> {
+        let _probe = self.workspace_probe_gate.read().map_err(|e| e.to_string())?;
+        if self.maintenance.load(Ordering::SeqCst) {return Err("正在恢复会话，请稍后重试".into());}
         let provider = providers::discover(backend).ok_or("未找到本机或 WSL 执行器")?;
         let (command, _, token) = provider.command(cwd, None, &self.root.join("provider-sessions"), None, true, (None, None))?;
         let rpc = Rpc::start(command, backend.clone(), token, None)?;
@@ -381,13 +459,13 @@ impl AgentHost {
         }
         Ok(catalog)
     }
-    fn connect(self: &Arc<Self>, id: &str, selection: (Option<&str>, Option<&str>)) -> Result<(Arc<Rpc>, Option<String>)> {
+    fn connect(self: &Arc<Self>, id: &str, run_id: &str, selection: (Option<&str>, Option<&str>)) -> Result<(Arc<Rpc>, Option<String>)> {
         if let Some(runtime) = self.runtimes.lock().map_err(|e| e.to_string())?.get(id).cloned() {return Ok((runtime, None));}
         let session = self.session(id)?;
         let provider = providers::discover(&session.backend).ok_or("未找到执行器")?;
         let tools=self.tools.lock().map_err(|e|e.to_string())?.clone().map(|tools|ToolConfig{command:tools.executable.to_string_lossy().into(),args:vec!["--northstar-mcp".into(),tools.root.to_string_lossy().into(),id.into()],definitions:tools.definitions});
         let (command, planned, token) = provider.command(&session.cwd, session.source_id.as_deref(), &self.root.join("provider-sessions"), tools.as_ref(), false, selection)?;
-        let rpc = Rpc::start(command, session.backend.clone(), token, Some((Arc::downgrade(self), id.to_string())))?;
+        let rpc = Rpc::start(command, session.backend.clone(), token, Some((Arc::downgrade(self), id.to_string(), run_id.to_owned())))?;
         let mut effective_model = None;
         let mut effective_effort = None;
         let source = match session.backend.as_str() {
@@ -411,7 +489,11 @@ impl AgentHost {
             _ => return Err("执行器类型无效".into()),
         };
         let claude_launch = (session.backend == "claude").then(|| source.clone());
+        let mut attached = false;
         self.update(id, |session| {
+            if rpc.reader.retired.load(Ordering::SeqCst) || session.runs.last().is_none_or(|run| {
+                run.id != run_id || !["running", "needs_input"].contains(&run.state.as_str()) || run.cancel_requested
+            }) {return;}
             // Claude's init event confirms the ID once its transcript exists.
             if claude_launch.is_none() {session.source_id = Some(source);}
             session.error = None;
@@ -419,14 +501,36 @@ impl AgentHost {
                 session.effective_model = effective_model;
                 session.effective_effort = effective_effort;
             }
+            self.runtimes.lock().unwrap().insert(id.to_owned(), rpc.clone());
+            rpc.reader.attached.store(true, Ordering::SeqCst);
+            attached = true;
         })?;
-        self.runtimes.lock().map_err(|e| e.to_string())?.insert(id.to_string(), rpc.clone()); Ok((rpc, claude_launch))
+        if !attached {
+            rpc.reader.retired.store(true, Ordering::SeqCst);
+            return Err("执行已结束，可继续此会话。".into());
+        }
+        Ok((rpc, claude_launch))
+    }
+    fn retire_runtime(&self, id: &str, owner: Option<&ReaderOwner>) -> Option<Arc<Rpc>> {
+        let mut runtimes = self.runtimes.lock().unwrap();
+        if owner.is_some_and(|expected| runtimes.get(id).is_none_or(|current| !std::ptr::eq(&*current.reader, expected))) {
+            return None;
+        }
+        let rpc = runtimes.remove(id)?;
+        rpc.reader.retired.store(true, Ordering::SeqCst);
+        Some(rpc)
     }
     pub fn send(self: &Arc<Self>, id: &str, run_id: String, text: String) -> Result<AgentSession> {
-        self.send_with_options(id, run_id, text, None, None)
+        self.send_with_options(id, run_id, text, None, None, Vec::new())
     }
-    pub fn send_with_options(self: &Arc<Self>, id: &str, run_id: String, text: String, model: Option<String>, effort: Option<String>) -> Result<AgentSession> {
-        if text.trim().is_empty() || text.len() > 100_000 || !valid_id(&run_id) {return Err("消息内容或执行标识无效".into());}
+    pub fn suggest_files(&self, id: &str, query: &str) -> Result<Vec<FileSuggestion>> {
+        let _probe = self.workspace_probe_gate.read().map_err(|e| e.to_string())?;
+        if self.maintenance.load(Ordering::SeqCst) {return Err("正在恢复会话，请稍后重试".into());}
+        let session = self.session(id)?;
+        chat_files::suggestions(Path::new(&session.cwd), query)
+    }
+    pub fn send_with_options(self: &Arc<Self>, id: &str, run_id: String, text: String, model: Option<String>, effort: Option<String>, files: Vec<ChatFile>) -> Result<AgentSession> {
+        if (text.trim().is_empty() && files.is_empty()) || text.len() > 100_000 || !valid_id(&run_id) {return Err("消息内容或执行标识无效".into());}
         let session = self.session(id)?;
         if session.runs.iter().any(|r| ["running", "needs_input"].contains(&r.state.as_str())) {return Err("此会话仍有执行未结束".into());}
         if session.runs.iter().any(|r| r.id == run_id) {return Ok(session);}
@@ -438,22 +542,33 @@ impl AgentHost {
                 Self::effective_model_options(catalog, &session).validate(model.as_deref(), effort.as_deref())?;
             }
         }
+        let prepared = {
+            let _probe = self.workspace_probe_gate.read().map_err(|e| e.to_string())?;
+            if self.maintenance.load(Ordering::SeqCst) {return Err("正在恢复会话，请稍后重试".into());}
+            chat_files::prepare(Path::new(&session.cwd), &text, files)?
+        };
         let mut rejected = false;
         let snapshot = self.update(id, |session| {
             if session.runs.iter().any(|r| ["running", "needs_input"].contains(&r.state.as_str()) || r.id == run_id) {rejected = true; return;}
-            if session.messages.is_empty() && session.title.starts_with("新的会话") {session.title = text.trim().lines().next().unwrap_or(text.trim()).chars().take(32).collect();}
+            if session.messages.is_empty() && session.title.starts_with("新的会话") {
+                let title = text.trim().lines().next().filter(|line| !line.is_empty())
+                    .or_else(|| prepared.files.first().map(|file| file.name.as_str())).unwrap_or("新的会话");
+                session.title = title.chars().take(32).collect();
+            }
             session.error = None;
-            session.messages.push(Message {id: format!("{run_id}-user"), role: "user".into(), text: text.clone(), at: now()});
-            session.runs.push(Run {id: run_id.clone(), state: "running".into(), started_at: now(), finished_at: None, source_turn_id: None, error: None, cancel_requested: false, context: None, phase: matches!(session.backend.as_str(), "codex" | "pi").then_some(RunPhase::Connecting), activity: Vec::new()});
+            session.messages.push(Message {id: format!("{run_id}-user"), role: "user".into(), text: text.clone(), at: now(), files: prepared.files.clone()});
+            session.runs.push(Run {id: run_id.clone(), state: "running".into(), started_at: now(), finished_at: None, source_turn_id: None, error: None, cancel_requested: false, context: None, phase: matches!(session.backend.as_str(), "codex" | "pi").then_some(RunPhase::Connecting), activity: Vec::new(), pi_messages: PiMessageSequence::default()});
         })?;
         if rejected {return Err("此会话仍有执行未结束，或执行标识重复".into());}
         let is_pi = session.backend == "pi";
         let host = self.clone(); let id = id.to_string();
         std::thread::spawn(move || {
+            let mut reader = None;
             let result = (|| {
-                let connection = host.connect(&id, (model.as_deref(), effort.as_deref()));
+                let connection = host.connect(&id, &run_id, (model.as_deref(), effort.as_deref()));
                 if is_pi && connection.is_err() {providers::invalidate_pi_discovery();}
                 let (rpc, claude_launch) = connection?;
+                reader = Some(rpc.reader.clone());
                 let session = host.session(&id)?;
                 if session.runs.last().is_none_or(|r| r.id != run_id || r.state != "running" || r.cancel_requested) {return Ok(());}
                 let source = if session.backend == "codex" {
@@ -463,7 +578,7 @@ impl AgentHost {
                         }
                     })?;
                     if submitting.runs.last().is_none_or(|r| r.id != run_id || r.state != "running" || r.cancel_requested) {return Ok(());}
-                    let mut params = json!({"threadId":session.source_id,"input":[{"type":"text","text":text}]});
+                    let mut params = json!({"threadId":session.source_id,"input":prepared.codex_input()});
                     if let Some(model) = &model {params["model"] = json!(model);}
                     if let Some(effort) = &effort {params["effort"] = json!(effort);}
                     let result = rpc.request("turn/start", params)?;
@@ -499,9 +614,9 @@ impl AgentHost {
                         }
                     })?;
                     if submitting.runs.last().is_none_or(|r| r.id != run_id || r.state != "running" || r.cancel_requested) {return Ok(());}
-                    if session.backend == "claude" {rpc.write(json!({"type":"user","message":{"role":"user","content":text},"parent_tool_use_id":null,"session_id":claude_launch.or(session.source_id)}))?;}
+                    if session.backend == "claude" {rpc.write(json!({"type":"user","message":{"role":"user","content":prepared.claude_content()},"parent_tool_use_id":null,"session_id":claude_launch.or(session.source_id)}))?;}
                     else {
-                        let result = rpc.request("prompt", json!({"message":text}))?;
+                        let result = rpc.request("prompt", prepared.pi_prompt())?;
                         let no_agent_started = || host.session(&id).is_ok_and(|s| s.runs.last().is_some_and(|run| {
                             run.id == run_id && run.state == "running" && run.phase == Some(RunPhase::Submitting) && !run.cancel_requested
                         }));
@@ -539,35 +654,59 @@ impl AgentHost {
                         }
                     }
                 })?;
-                if after.runs.iter().any(|r| r.id == run_id && (r.state == "cancelled" || r.cancel_requested)) {interrupt(&rpc, &after, Some(&source))?;}
+                if !rpc.reader.retired.load(Ordering::SeqCst) && after.runs.last().is_some_and(|r| r.id == run_id && r.cancel_requested && ["running", "needs_input"].contains(&r.state.as_str())) {
+                    interrupt(&rpc, &after, Some(&source))?;
+                }
                 Ok(())
             })();
-            if let Err(error) = result {if let Ok(session) = host.session(&id) {
-                if let Some(run) = session.runs.last().filter(|run| run.id == run_id) {
-                    if run.state != "cancelled" {let _ = host.fail(&id, error);}
-                    host.runtimes.lock().unwrap().remove(&id);
-                }
-            }
+            if let Err(error) = result {
+                let mut discarded = None;
+                let _ = host.update(&id, |s| {
+                    if s.runs.last().is_none_or(|run| run.id != run_id || run.cancel_requested || !["running", "needs_input"].contains(&run.state.as_str())) {return;}
+                    if let Some(reader) = reader.as_deref() {discarded = host.retire_runtime(&id, Some(reader));}
+                    mark_failure(s, error);
+                });
+                drop(discarded);
             }
         }); Ok(snapshot)
     }
-    fn fail(&self, id: &str, error: String) -> Result<AgentSession> {self.update(id, |s| {s.error = Some(error.clone()); s.requests.clear(); if let Some(run) = s.runs.last_mut().filter(|r| ["running", "needs_input"].contains(&r.state.as_str())) {run.state = if run.cancel_requested {"cancelled"} else {"failed"}.into(); run.finished_at = Some(now()); run.error = (!run.cancel_requested).then_some(error); if run.cancel_requested {s.error = None;}}})}
     pub fn stop(&self, id: &str) -> Result<AgentSession> {
         let session = self.session(id)?;
-        if let Some(_) = session.runs.last().filter(|r| ["running", "needs_input"].contains(&r.state.as_str())) {
-            if session.runs.last().is_some_and(|r| r.cancel_requested) {return Ok(session);}
-            let session = self.update(id, |s| {if let Some(run) = s.runs.last_mut().filter(|r| ["running", "needs_input"].contains(&r.state.as_str())) {run.cancel_requested = true;}})?;
-            let Some(run) = session.runs.last().filter(|r| r.cancel_requested) else {return Ok(session);};
-            let rpc = self.runtimes.lock().unwrap().get(id).cloned();
-            let fallback = rpc.as_ref().is_some_and(|rpc| (session.backend != "codex" || run.source_turn_id.is_some()) && interrupt(rpc, &session, run.source_turn_id.as_deref()).is_err());
-            let latest = self.session(id)?;
-            if latest.runs.last().is_some_and(|r| !["running", "needs_input"].contains(&r.state.as_str())) {return Ok(latest);}
-            // An accepted turn can precede the provider's active-turn registration.
-            // If interrupt cannot address it yet, close this owned process instead.
-            let stopped = self.update(id, |s| {s.requests.clear(); if let Some(run) = s.runs.last_mut() {if ["running", "needs_input"].contains(&run.state.as_str()) {run.state = "cancelled".into(); run.finished_at = Some(now());}}})?;
-            if fallback {self.runtimes.lock().unwrap().remove(id);}
-            drop(rpc); Ok(stopped)
-        } else {Ok(session)}
+        let Some(run) = session.runs.last().filter(|run| ["running", "needs_input"].contains(&run.state.as_str()) && !run.cancel_requested) else {return Ok(session);};
+        let run_id = &run.id;
+        let mut claimed = false;
+        let session = self.update(id, |s| {
+            if let Some(run) = s.runs.last_mut().filter(|run| &run.id == run_id && ["running", "needs_input"].contains(&run.state.as_str()) && !run.cancel_requested) {
+                run.cancel_requested = true;
+                claimed = true;
+            }
+        })?;
+        if !claimed {return Ok(session);}
+        let run = session.runs.last().unwrap();
+        let rpc = self.runtimes.lock().unwrap().get(id).cloned();
+        if let Some(rpc) = &rpc {
+            if session.backend != "codex" || run.source_turn_id.is_some() {
+                let _ = interrupt(rpc, &session, run.source_turn_id.as_deref());
+            }
+        }
+        // An interrupt ACK does not guarantee the provider's final event has arrived.
+        // Retire an unconfirmed connection before another turn can consume those events.
+        let discarded = {
+            let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+            let latest = sessions.get(id).ok_or("会话不存在")?;
+            if latest.runs.last().is_none_or(|r| &r.id != run_id || !["running", "needs_input"].contains(&r.state.as_str())) {
+                return Ok(latest.clone());
+            }
+            self.retire_runtime(id, rpc.as_ref().map(|r| &*r.reader))
+        };
+        if let Some(discarded) = &discarded {discarded.terminate();}
+        self.update(id, |s| {
+            if let Some(run) = s.runs.last_mut().filter(|run| &run.id == run_id && ["running", "needs_input"].contains(&run.state.as_str())) {
+                run.state = "cancelled".into();
+                run.finished_at = Some(now());
+                s.requests.clear();
+            }
+        })
     }
     pub fn respond(&self, id: &str, request_id: &str, answer: Value) -> Result<AgentSession> {
         let session = self.session(id)?;
@@ -592,21 +731,40 @@ impl AgentHost {
                 }
             }
         }
-        if let Ok(mut runtimes) = self.runtimes.lock() {runtimes.clear();}
+        if let Ok(mut runtimes) = self.runtimes.lock() {
+            for rpc in runtimes.values() {rpc.reader.retired.store(true, Ordering::SeqCst);}
+            runtimes.clear();
+        }
     }
     pub fn checkpoint_all(&self)->Result<()> {let ids=self.list()?.into_iter().map(|s|s.id).collect::<Vec<_>>();for id in ids {self.update(&id,|_|{})?;}Ok(())}
     pub fn prepare_restore(&self)->Result<()> {
         self.maintenance.store(true,Ordering::SeqCst);let active=self.sessions.lock().map_err(|e|e.to_string())?.values().any(|s|s.runs.iter().any(|r|["running","needs_input"].contains(&r.state.as_str())));
-        if active {self.maintenance.store(false,Ordering::SeqCst);return Err("请先等待正在执行的会话结束，或停止它们，再恢复备份。".into());}self.shutdown();Ok(())
+        if active {self.maintenance.store(false,Ordering::SeqCst);return Err("请先等待正在执行的会话结束，或停止它们，再恢复备份。".into());}
+        self.shutdown();
+        // Windows cannot replace a workspace directory held by a catalog probe.
+        let _drained = self.workspace_probe_gate.write().map_err(|e| e.to_string())?;
+        Ok(())
     }
     pub fn cancel_restore(&self){self.maintenance.store(false,Ordering::SeqCst);}
-    fn event(&self, id: &str, value: &Value) {
-        if let Some(backend)=self.sessions.lock().ok().and_then(|sessions|sessions.get(id).map(|s|s.backend.clone())) {if backend != "codex" {if providers::relevant(&backend, value) {let stream = value["type"] == "stream_event" || (value["type"] == "message_update" && value["assistantMessageEvent"]["type"] == "text_delta"); let _ = self.update_stream(id, stream, |s| providers::apply_event(s, value));} return;}}
+    fn event(&self, id: &str, value: &Value, reader: Option<&ReaderOwner>) {
+        if reader.is_some_and(|r| r.retired.load(Ordering::SeqCst)) {return;}
+        let applies = |session: &AgentSession| reader.is_none_or(|r| r.applies_to(session));
+        if let Some(backend)=self.sessions.lock().ok().and_then(|sessions|sessions.get(id).map(|s|s.backend.clone())) {if backend != "codex" {if providers::relevant(&backend, value) {let stream = value["type"] == "stream_event" || (value["type"] == "message_update" && value["assistantMessageEvent"]["type"] == "text_delta"); let _ = self.update_stream(id, stream, |s| {if applies(s) {providers::apply_event(s, value);}});} return;}}
         let method = value["method"].as_str().unwrap_or(""); let p = &value["params"];
         if value.get("id").is_some() && value.get("method").is_some() {
             let kind = if ["item/commandExecution/requestApproval","item/fileChange/requestApproval"].contains(&method) {"approval"} else if method=="mcpServer/elicitation/request" && p["mode"]=="form" {"elicitation"} else if method == "item/tool/requestUserInput" {"input"} else {"unsupported"};
             let title = p["message"].as_str().or(p["reason"].as_str()).or(p["command"].as_str()).unwrap_or(method).chars().take(2000).collect();
-            let _ = self.update(id, |s| {let request_id = value["id"].to_string(); if !s.requests.iter().any(|r| r.id == request_id) {s.requests.push(Request {id: request_id, kind: kind.into(), title, payload: p.clone(), source_id: value["id"].clone()});} if let Some(run) = s.runs.last_mut() {run.state = "needs_input".into();}}); return;
+            let _ = self.update(id, |s| {
+                if !applies(s) {return;}
+                let Some((run, turn)) = codex_run(s, p) else {return;};
+                if run.cancel_requested {return;}
+                if let Some(turn) = turn {run.source_turn_id.get_or_insert_with(|| turn.to_owned());}
+                run.state = "needs_input".into();
+                let request_id = value["id"].to_string();
+                if !s.requests.iter().any(|r| r.id == request_id) {
+                    s.requests.push(Request {id: request_id, kind: kind.into(), title, payload: p.clone(), source_id: value["id"].clone()});
+                }
+            }); return;
         }
         let activity = match method {
             "item/started" | "item/completed" => feedback::item(&p["item"], method == "item/completed"),
@@ -615,27 +773,42 @@ impl AgentHost {
         };
         if activity.is_some() || ["item/agentMessage/delta", "turn/started", "turn/completed", "error"].contains(&method)
             || (method == "item/completed" && p["item"]["type"] == "agentMessage") {
-            let _ = self.update_stream(id, method == "item/agentMessage/delta", |s| apply_codex_event(s, method, p, activity));
+            let _ = self.update_stream(id, method == "item/agentMessage/delta", |s| {
+                if applies(s) {apply_codex_event(s, method, p, activity);}
+            });
         }
     }
 }
-fn read_protocol(stdout: std::process::ChildStdout, pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>>, events: Option<(Weak<AgentHost>, String)>, backend: String) {
+fn mark_failure(session: &mut AgentSession, error: String) {
+    let Some(run) = session.runs.last_mut().filter(|run| ["running", "needs_input"].contains(&run.state.as_str())) else {return;};
+    run.state = if run.cancel_requested {"cancelled"} else {"failed"}.into();
+    run.finished_at = Some(now());
+    run.error = (!run.cancel_requested).then_some(error);
+    session.error = run.error.clone();
+    session.requests.clear();
+}
+fn read_protocol(stdout: std::process::ChildStdout, pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>>, events: Option<(Weak<AgentHost>, String, String)>, backend: String, reader: Arc<ReaderOwner>) {
     for line in BufReader::new(stdout).lines() {
         let Ok(line) = line else {break;}; let Ok(value) = serde_json::from_str::<Value>(&line) else {continue;};
         if let Some((key, reply)) = providers::reply(&backend, &value) {if let Some(sender) = pending.lock().unwrap().remove(&key) {let _ = sender.send(reply);}}
-        else if let Some((host, id)) = &events {
+        else if let Some((host, id, _)) = &events {
             let Some(host) = host.upgrade() else {break;};
-            host.event(id, &value);
+            host.event(id, &value, Some(&reader));
         }
     }
     pending.lock().unwrap().clear();
-    if let Some((host, id)) = events {
+    if reader.retired.load(Ordering::SeqCst) {return;}
+    if let Some((host, id, _)) = events {
         if let Some(host) = host.upgrade() {
             if backend == "pi" {providers::invalidate_pi_discovery();}
-            if host.session(&id).is_ok_and(|s| s.runs.last().is_some_and(|r| ["running", "needs_input"].contains(&r.state.as_str()))) {
-                let _ = host.fail(&id, "执行器连接已关闭，可继续此会话。".into());
-            }
-            host.runtimes.lock().unwrap().remove(&id);
+            let mut discarded = None;
+            let _ = host.update(&id, |s| {
+                if !reader.applies_to(s) {return;}
+                discarded = host.retire_runtime(&id, Some(&reader));
+                reader.retired.store(true, Ordering::SeqCst);
+                mark_failure(s, "执行器连接已关闭，可继续此会话。".into());
+            });
+            drop(discarded);
         }
     }
 }
@@ -643,15 +816,20 @@ fn interrupt(rpc: &Rpc, session: &AgentSession, turn: Option<&str>) -> Result<()
     let (method, params) = match session.backend.as_str() {"codex" => ("turn/interrupt", json!({"threadId":session.source_id,"turnId":turn})), "claude" => ("interrupt", json!({})), "pi" => ("abort", json!({})), _ => return Err("执行器类型无效".into())};
     rpc.request(method, params).map(|_| ())
 }
-fn apply_codex_event(s: &mut AgentSession, method: &str, p: &Value, activity: Option<Activity>) {
-    if p["threadId"].as_str().is_some_and(|id| s.source_id.as_deref().is_some_and(|own| own != id)) {return;}
+fn codex_run<'a, 'b>(s: &'a mut AgentSession, p: &'b Value) -> Option<(&'a mut Run, Option<&'b str>)> {
+    if p["threadId"].as_str().is_some_and(|id| s.source_id.as_deref().is_some_and(|own| own != id)) {return None;}
     let incoming_turn = p["turnId"].as_str().or_else(|| p["turn"]["id"].as_str());
-    let Some((current, previous)) = s.runs.split_last_mut() else {return;};
-    if !["running", "needs_input"].contains(&current.state.as_str()) || (current.cancel_requested && method != "turn/completed") {return;}
+    let (current, previous) = s.runs.split_last_mut()?;
+    if !["running", "needs_input"].contains(&current.state.as_str()) {return None;}
+    if incoming_turn.is_some_and(|turn| current.source_turn_id.as_deref().is_some_and(|own| own != turn)
+        || previous.iter().any(|run| run.source_turn_id.as_deref() == Some(turn))) {return None;}
+    Some((current, incoming_turn))
+}
+fn apply_codex_event(s: &mut AgentSession, method: &str, p: &Value, activity: Option<Activity>) {
+    let Some((current, incoming_turn)) = codex_run(s, p) else {return;};
+    if current.cancel_requested && method != "turn/completed" {return;}
     if current.phase == Some(RunPhase::Connecting) && method != "error" {return;}
     if let Some(incoming) = incoming_turn {
-        if current.source_turn_id.as_deref().is_some_and(|own| own != incoming)
-            || previous.iter().any(|run| run.source_turn_id.as_deref() == Some(incoming)) {return;}
         current.source_turn_id.get_or_insert_with(|| incoming.to_owned());
     }
     if let Some(activity) = activity {
@@ -665,14 +843,14 @@ fn apply_codex_event(s: &mut AgentSession, method: &str, p: &Value, activity: Op
             let Some(delta) = p["delta"].as_str().filter(|delta| !delta.is_empty()) else {return;};
             current.advance_phase(RunPhase::Responding);
             let id = p["itemId"].as_str().unwrap_or("assistant"); let key = format!("{}-{id}", current.id);
-            if !s.messages.iter().any(|m| m.id == key) {s.messages.push(Message {id: key.clone(), role: "assistant".into(), text: String::new(), at: now()});}
+            if !s.messages.iter().any(|m| m.id == key) {s.messages.push(Message {id: key.clone(), role: "assistant".into(), text: String::new(), at: now(), files: Vec::new()});}
             if let Some(message) = s.messages.iter_mut().find(|m| m.id == key) {message.text.push_str(delta);}
         },
         "item/completed" if p["item"]["type"] == "agentMessage" => {
             let item = &p["item"]; let key = format!("{}-{}", current.id, item["id"].as_str().unwrap_or("assistant"));
             let Some(text) = item["text"].as_str().filter(|text| !text.is_empty()).map(str::to_owned) else {return;};
             current.advance_phase(RunPhase::Responding);
-            if let Some(message) = s.messages.iter_mut().find(|m| m.id == key) {message.text = text;} else {s.messages.push(Message {id: key, role: "assistant".into(), text, at: now()});}
+            if let Some(message) = s.messages.iter_mut().find(|m| m.id == key) {message.text = text;} else {s.messages.push(Message {id: key, role: "assistant".into(), text, at: now(), files: Vec::new()});}
         },
         "turn/completed" => {
             current.state = if current.cancel_requested {"cancelled"} else {match p["turn"]["status"].as_str() {Some("completed") => "succeeded", Some("interrupted") => "cancelled", _ => "failed"}}.into();
@@ -703,13 +881,30 @@ pub fn backends() -> Vec<Backend> {
 mod tests {
     use super::*;
     #[test]
+    fn session_management_is_durable_and_rejects_active_batches_and_failed_writes() {
+        let root=std::env::temp_dir().join(format!("northstar-session-management-{}",uuid::Uuid::new_v4()));let host=AgentHost::open(root.clone(),Arc::new(|_|{})).unwrap();
+        let mut a=record();a.runs.clear();a.cwd=root.to_string_lossy().into();let mut b=a.clone();b.id="b".into();let mut other=a.clone();other.id="other".into();other.workspace_id="other".into();
+        for s in [&a,&b,&other]{host.persist(s).unwrap();host.sessions.lock().unwrap().insert(s.id.clone(),s.clone());}
+        assert!(host.rename("s","  ").is_err());assert!(host.rename("s","line\nbreak").is_err());
+        host.rename("s","Renamed").unwrap();assert_eq!(host.session("s").unwrap().title,"Renamed");
+        for state in ["running","needs_input"] {let mut run=record().runs.remove(0);run.state=state.into();host.sessions.lock().unwrap().get_mut("b").unwrap().runs=vec![run];assert!(host.delete(&["s".into(),"b".into()],None).is_err());assert!(host.session("s").is_ok());}
+        host.sessions.lock().unwrap().get_mut("b").unwrap().runs.clear();
+        host.db.lock().unwrap().execute_batch("CREATE TRIGGER reject_delete BEFORE DELETE ON agent_sessions BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
+        assert!(host.delete(&[],Some("w")).is_err());assert!(host.session("s").is_ok());assert!(host.session("b").is_ok());
+        host.db.lock().unwrap().execute_batch("DROP TRIGGER reject_delete;").unwrap();
+        std::fs::write(root.join("keep.txt"),"Keep files").unwrap();assert_eq!(host.delete(&[],Some("w")).unwrap().len(),2);
+        assert!(host.session("s").is_err());assert!(host.session("b").is_err());assert!(host.session("other").is_ok());
+        assert!(host.delete(&["s".into()],None).unwrap().is_empty());host.shutdown();drop(host);
+        let reopened=AgentHost::open(root.clone(),Arc::new(|_|{})).unwrap();assert!(reopened.session("s").is_err());assert_eq!(reopened.list().unwrap().len(),1);assert_eq!(std::fs::read_to_string(root.join("keep.txt")).unwrap(),"Keep files");
+    }
+    #[test]
     fn deleting_and_undoing_a_node_only_changes_session_binding(){
-        let root=std::env::temp_dir().join(format!("northstar-node-binding-{}",uuid::Uuid::new_v4()));let host=AgentHost::open(root.clone(),Arc::new(|_|{})).unwrap();let mut session=record();session.node_id=Some("node".into());session.messages.push(Message{id:"user".into(),role:"user".into(),text:"Keep prompt".into(),at:1});host.persist(&session).unwrap();host.sessions.lock().unwrap().insert("s".into(),session);
+        let root=std::env::temp_dir().join(format!("northstar-node-binding-{}",uuid::Uuid::new_v4()));let host=AgentHost::open(root.clone(),Arc::new(|_|{})).unwrap();let mut session=record();session.node_id=Some("node".into());session.messages.push(Message{id:"user".into(),role:"user".into(),text:"Keep prompt".into(),at:1, files: Vec::new()});host.persist(&session).unwrap();host.sessions.lock().unwrap().insert("s".into(),session);
         let mut snapshot=json!({"spaces":[{"id":"w","nodes":[{"id":"root"}]}],"sessions":[{"id":"s","workspaceId":"w","nodeId":null}]});host.reconcile_nodes(&snapshot).unwrap();let detached=host.session("s").unwrap();assert!(detached.node_id.is_none());assert_eq!(detached.messages[0].text,"Keep prompt");assert_eq!(detached.runs[0].state,"running");assert_eq!(detached.source_id.as_deref(),Some("thread"));
         snapshot["spaces"][0]["nodes"]=json!([{"id":"node"}]);snapshot["sessions"][0]["nodeId"]=json!("node");host.reconcile_nodes(&snapshot).unwrap();assert_eq!(host.session("s").unwrap().node_id.as_deref(),Some("node"));
         host.shutdown();drop(host);assert_eq!(AgentHost::open(root,Arc::new(|_|{})).unwrap().session("s").unwrap().node_id.as_deref(),Some("node"));
     }
-    fn record() -> AgentSession {AgentSession {id: "s".into(), workspace_id: "w".into(), node_id: None, backend: "codex".into(), title: "test".into(), cwd: String::new(), source_id: Some("thread".into()), created_at: 0, revision: 1, messages: vec![], requests: vec![], error: None, effective_model: None, effective_effort: None, runs: vec![Run {id: "run".into(), state: "running".into(), started_at: 0, finished_at: None, source_turn_id: Some("turn".into()), error: None, cancel_requested: false, context: None, phase: Some(RunPhase::Responding), activity: Vec::new()}]}}
+    fn record() -> AgentSession {AgentSession {id: "s".into(), workspace_id: "w".into(), node_id: None, backend: "codex".into(), title: "test".into(), cwd: String::new(), source_id: Some("thread".into()), created_at: 0, revision: 1, messages: vec![], requests: vec![], error: None, effective_model: None, effective_effort: None, runs: vec![Run {id: "run".into(), state: "running".into(), started_at: 0, finished_at: None, source_turn_id: Some("turn".into()), error: None, cancel_requested: false, context: None, phase: Some(RunPhase::Responding), activity: Vec::new(), pi_messages: PiMessageSequence::default()}]}}
     #[test]
     fn streams_without_duplicate_final_messages_and_never_maps_failure_to_success() {
         let mut s = record();
@@ -725,6 +920,58 @@ mod tests {
     fn ignores_other_threads_and_keeps_cancelled_run_cancelled() {
         let mut s = record(); apply_codex_event(&mut s, "item/agentMessage/delta", &json!({"threadId":"other","itemId":"a","delta":"wrong"}),None); assert!(s.messages.is_empty());
         s.runs[0].state = "cancelled".into(); apply_codex_event(&mut s, "turn/completed", &json!({"turn":{"status":"completed"}}),None); assert_eq!(s.runs[0].state, "cancelled");
+    }
+    #[test]
+    fn codex_approvals_only_pause_the_matching_active_turn() {
+        let root = std::env::temp_dir().join(format!("draftway-approval-routing-{}", uuid::Uuid::new_v4()));
+        let host = AgentHost::open(root, Arc::new(|_| {})).unwrap();
+        let mut session = record();
+        session.runs[0].state = "succeeded".into();
+        host.sessions.lock().unwrap().insert("s".into(), session);
+        let approval = |id, thread, turn| json!({"id":id,"method":"item/commandExecution/requestApproval",
+            "params":{"threadId":thread,"turnId":turn}});
+        host.event("s", &approval("late", "thread", "turn"), None);
+        let saved = host.session("s").unwrap();
+        assert_eq!(saved.runs[0].state, "succeeded");
+        assert!(saved.requests.is_empty());
+        host.update("s", |s| {
+            let mut next = record().runs.remove(0);
+            next.id = "next-run".into();
+            next.source_turn_id = None;
+            s.runs.push(next);
+        }).unwrap();
+        host.event("s", &approval("previous", "thread", "turn"), None);
+        host.event("s", &approval("other", "other-thread", "next"), None);
+        let saved = host.session("s").unwrap();
+        assert_eq!(saved.runs[1].state, "running");
+        assert!(saved.requests.is_empty());
+        host.event("s", &approval("current", "thread", "next"), None);
+        host.event("s", &approval("current", "thread", "next"), None);
+        let saved = host.session("s").unwrap();
+        assert_eq!(saved.runs[1].state, "needs_input");
+        assert_eq!(saved.runs[1].source_turn_id.as_deref(), Some("next"));
+        assert_eq!(saved.requests.len(), 1);
+    }
+    #[test]
+    fn retired_or_superseded_reader_cannot_finish_new_turn() {
+        let root = std::env::temp_dir().join(format!("draftway-reader-fence-{}", uuid::Uuid::new_v4()));
+        let host = AgentHost::open(root, Arc::new(|_| {})).unwrap();
+        let mut session = record();
+        session.backend = "claude".into();
+        session.runs[0].id = "new-run".into();
+        host.sessions.lock().unwrap().insert("s".into(), session);
+        let old = ReaderOwner {startup_run: "old-run".into(), ..Default::default()};
+        let frame = json!({"type":"result","subtype":"success","session_id":"thread","result":"Late"});
+        host.event("s", &frame, Some(&old));
+        old.attached.store(true, Ordering::SeqCst);
+        old.retired.store(true, Ordering::SeqCst);
+        host.event("s", &frame, Some(&old));
+        let saved = host.session("s").unwrap();
+        assert_eq!(saved.runs[0].state, "running");
+        assert!(saved.messages.is_empty());
+        let current = ReaderOwner {startup_run: "new-run".into(), ..Default::default()};
+        host.event("s", &frame, Some(&current));
+        assert_eq!(host.session("s").unwrap().runs[0].state, "succeeded");
     }
     #[test]
     fn codex_feedback_uses_real_current_turn_events_and_keeps_terminal_rows() {
@@ -772,7 +1019,7 @@ mod tests {
             let host = AgentHost::open(dir.clone(), Arc::new(|_| {})).unwrap();
             let mut session = record();
             session.runs[0].source_turn_id = None;
-            session.messages.push(Message {id: "run-user".into(), role: "user".into(), text: "keep".into(), at: 0});
+            session.messages.push(Message {id: "run-user".into(), role: "user".into(), text: "keep".into(), at: 0, files: Vec::new()});
             host.persist(&session).unwrap();
             if graceful {
                 host.sessions.lock().unwrap().insert(session.id.clone(), session);
@@ -812,11 +1059,29 @@ mod tests {
         let root=std::env::temp_dir().join(format!("northstar-agent-restore-{}",uuid::Uuid::new_v4()));let host=AgentHost::open(root,Arc::new(|_|{})).unwrap();host.sessions.lock().unwrap().insert("s".into(),record());assert!(host.prepare_restore().is_err());host.update("s",|s|s.runs[0].state="cancelled".into()).unwrap();host.prepare_restore().unwrap();assert!(host.update("s",|s|s.title="overwrite".into()).is_err());assert_eq!(host.session("s").unwrap().title,"test");host.cancel_restore();host.update("s",|s|s.title="after".into()).unwrap();
     }
     #[test]
+    fn restore_drains_workspace_probes_and_rejects_new_ones() {
+        let root = std::env::temp_dir().join(format!("draftway-restore-probes-{}", uuid::Uuid::new_v4()));
+        let host = AgentHost::open(root, Arc::new(|_| {})).unwrap();
+        let ongoing = host.workspace_probe_gate.read().unwrap();
+        let (done, result) = mpsc::channel();
+        let restoring = host.clone();
+        std::thread::spawn(move || {done.send(restoring.prepare_restore()).unwrap();});
+        let started = Instant::now();
+        while !host.maintenance.load(Ordering::SeqCst) && started.elapsed() < Duration::from_secs(2) {
+            std::thread::yield_now();
+        }
+        assert!(host.maintenance.load(Ordering::SeqCst));
+        assert!(matches!(result.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        drop(ongoing);
+        assert!(result.recv_timeout(Duration::from_secs(2)).unwrap().is_ok());
+        assert!(host.workspace_cwd("workspace", None).is_err());
+    }
+    #[test]
     fn sparse_stream_publishes_without_another_token_and_omits_history() {
         let root=std::env::temp_dir().join(format!("northstar-stream-frame-{}",uuid::Uuid::new_v4()));
         let host=AgentHost::open(root,Arc::new(|_|{})).unwrap();let mut session=record();
-        session.messages=(0..1000).map(|i|Message{id:format!("old-{i}"),role:"assistant".into(),text:"history ".repeat(100),at:0}).collect();
-        session.messages.push(Message{id:"run-user".into(),role:"user".into(),text:"raw prompt".into(),at:1});
+        session.messages=(0..1000).map(|i|Message{id:format!("old-{i}"),role:"assistant".into(),text:"history ".repeat(100),at:0,files:Vec::new()}).collect();
+        session.messages.push(Message{id:"run-user".into(),role:"user".into(),text:"raw prompt".into(),at:1, files: Vec::new()});
         host.sessions.lock().unwrap().insert("s".into(),session);let base=host.update("s",|_|{}).unwrap().revision;
         let (tx,rx)=mpsc::channel();host.configure_transcript_sink(Arc::new(move|frame|{let _=tx.send(frame.clone());}));
         host.update_stream("s",true,|s|apply_codex_event(s,"item/agentMessage/delta",&json!({"threadId":"thread","itemId":"a","delta":"first token"}),None)).unwrap();
@@ -863,7 +1128,7 @@ mod tests {
         let mut command = std::process::Command::new(std::env::current_exe().unwrap()); command.arg("--help").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         #[cfg(windows)] {use std::os::windows::process::CommandExt; command.creation_flags(0x08000000);}
         let mut child = command.spawn().unwrap(); let writer = child.stdin.take().unwrap(); child.wait().unwrap();
-        host.runtimes.lock().unwrap().insert("s".into(), Arc::new(Rpc {writer: Mutex::new(writer), child: Mutex::new(child), pending: Arc::new(Mutex::new(HashMap::new())), serial: AtomicU64::new(1), backend: "codex".into(), ownership: process::Ownership::empty()}));
+        host.runtimes.lock().unwrap().insert("s".into(), Arc::new(Rpc {writer: Mutex::new(writer), child: Mutex::new(child), pending: Arc::new(Mutex::new(HashMap::new())), serial: AtomicU64::new(1), backend: "codex".into(), ownership: process::Ownership::empty(), reader: Arc::new(ReaderOwner::default())}));
         assert_eq!(host.stop("s").unwrap().runs[0].state, "cancelled"); assert!(host.runtimes.lock().unwrap().is_empty()); assert_eq!(host.stop("s").unwrap().runs[0].state, "cancelled");
     }
 }

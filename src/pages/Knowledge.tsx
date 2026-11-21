@@ -7,7 +7,7 @@ import type {KnowledgeEditorHandle} from '../KnowledgeEditor';
 import '../note-editor.css';
 const KnowledgeGraph=lazy(()=>import('./KnowledgeGraph'));
 const KnowledgeEditor=lazy(()=>import('../KnowledgeEditor'));
-export default function Knowledge({personal=false}:{personal?:boolean}){return personal?<Suspense fallback={<p>正在打开知识图…</p>}><KnowledgeGraph/></Suspense>:<Notes/>;}
+export default function Knowledge({personal=false,theme}:{personal?:boolean;theme?:'light'|'dark'}){return personal?<Suspense fallback={<p>正在打开知识图…</p>}><KnowledgeGraph theme={theme}/></Suspense>:<Notes/>;}
 function Notes(){
  const ctx=useWorkbench();const [query,setQuery]=useState('');const [selected,setSelected]=useState<string|null>(null);const [created,setCreated]=useState<Note|null>(null);const [switching,setSwitching]=useState(false);const editor=useRef<KnowledgeEditorHandle>(null);const search=useRef<HTMLInputElement>(null);
  const records=ctx.data.records.filter((record):record is Note=>record.kind==='note'&&!record.archived&&knowledgeFormat(record)!=='folder').sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));

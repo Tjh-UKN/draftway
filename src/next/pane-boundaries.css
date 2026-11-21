@@ -1,27 +1,27 @@
 .dock-layout {
   --dock-divider-width: 9px;
-  --dock-seam: #d6d7da;
+  --dock-seam: var(--app-divider, #d6d7da);
 }
 
 .dock-layout .dock-group-header {
-  background: #f6f6f7;
+  background: var(--app-sidebar, #f6f6f7);
   border-bottom-color: var(--dock-seam);
   padding-inline: 7px;
 }
 
 .dock-layout .dock-tab.active {
-  background: #fff;
-  color: #363638;
+  background: var(--app-panel, #fff);
+  color: var(--app-text, #363638);
 }
 
 .dock-layout .focused > .dock-group-header .dock-tab.active {
-  border-bottom-color: #484952;
-  color: #171719;
+  border-bottom-color: var(--app-accent, #484952);
+  color: var(--app-text, #171719);
 }
 
 .dock-layout .dock-split > .dock-divider {
   border: 0;
-  background: #f1f1f3;
+  background: var(--app-raised, #f1f1f3);
   z-index: 8;
 }
 
@@ -40,14 +40,14 @@
   top: 50%;
   transform: translate(-50%, -50%);
   border-radius: 3px;
-  background: #90929a;
+  background: var(--app-muted, #90929a);
 }
 .dock-layout .split-row > .dock-divider::after { width: 3px; height: 28px; }
 .dock-layout .split-column > .dock-divider::after { width: 28px; height: 3px; }
 .dock-layout .dock-split > .dock-divider:hover,
-.resizing-panes .dock-divider:active { background: #e4e5e9; }
+.resizing-panes .dock-divider:active { background: var(--app-hover, #e4e5e9); }
 .dock-layout .dock-divider:focus-visible { outline-offset: -2px; }
 .dock-layout > .dock-drop-preview {
-  border: 1px solid #81899b;
-  background: #dce2edb8;
+  border: 1px solid var(--app-accent, #81899b);
+  background: color-mix(in srgb, var(--app-accent-soft, #dce2ed) 72%, transparent);
 }
