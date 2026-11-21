@@ -16,43 +16,83 @@
 }
 
 .transcript-activities {
-  margin-top: 4px;
+  margin: 4px 0 12px;
   font-size: 12px;
   color: var(--app-muted, #575757);
 }
 
-.transcript-activities .run-activity-row {
-  border-bottom: 0;
-  border-left: 1px solid var(--line);
-  padding: 4px 0 4px 10px;
-}
-
 .run-activity-row {
-  padding: 7px 0;
-  border-bottom: 1px solid var(--line);
+  min-width: 0;
+  padding: 4px 0 4px 10px;
+  border-left: 1px solid var(--line);
 }
 
 .run-activity-line {
   display: flex;
-  align-items: start;
+  align-items: center;
   gap: 8px;
 }
 
 .run-activity-line > svg {
   flex-shrink: 0;
-  margin-top: 2px;
 }
 
-.run-activity-line > span {
+.activity-title {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-target,
+.activity-live-output {
   min-width: 0;
-  flex: 1;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-live-output {
+  display: block;
+  margin: 3px 0 0 22px;
+  font-size: 11px;
 }
 
 .run-activity-line > small {
+  margin-left: auto;
   flex-shrink: 0;
   color: var(--app-muted, #686868);
   white-space: nowrap;
+}
+
+.run-activity-line > small[data-status="failed"] { color: var(--app-danger, #b23d34); }
+
+.activity-detail > summary,
+.activity-search-group > details > summary {
+  list-style: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.activity-detail > summary::-webkit-details-marker,
+.activity-search-group > details > summary::-webkit-details-marker { display: none; }
+.activity-detail > summary:hover { background: var(--app-hover, #eee); }
+.activity-detail[open] > summary > .activity-chevron { transform: rotate(90deg); }
+
+.activity-search-group > details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 4px 0;
+}
+
+.activity-search-group .run-activity-list { margin-left: 7px; }
+
+.activity-output-label {
+  display: block;
+  margin-top: 7px;
+  font-size: 11px;
 }
 
 .run-activity-row pre {
@@ -65,16 +105,6 @@
   background: var(--app-raised, #f6f6f6);
   border-radius: 6px;
   font-size: 11px;
-}
-
-.run-activity-history {
-  margin-top: 8px;
-}
-
-.run-activity-history > summary {
-  width: fit-content;
-  padding: 4px 0;
-  cursor: pointer;
 }
 
 .unsent-agent-message .message-copy{opacity:1}

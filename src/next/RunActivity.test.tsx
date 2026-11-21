@@ -1,8 +1,9 @@
 import {renderToStaticMarkup} from 'react-dom/server';
 import {expect,it} from 'vitest';
-import {RunActivity} from './RunActivity';
+import {RunActivity, TranscriptActivities} from './RunActivity';
 import {SessionTranscript} from './SessionTranscript';
 import type {AgentSession, Message, Run} from './core';
+import {activityByMessage} from './session-transcript';
 
 const run: Run = {id: 'run', sessionId: 'session', state: 'running', startedAt: 0, dueAt: 0};
 
@@ -15,23 +16,26 @@ it('describes the current phase before the reply arrives', () => {
 it('shows actual tool steps and withholds private reasoning text', () => {
   const activity: Run['activity'] = [
     {id: 'thought', kind: 'thinking', title: 'private reasoning title', status: 'running', detail: 'private reasoning text'},
-    {id: 'command', kind: 'command', title: 'git status', status: 'running'},
-    {id: 'read', kind: 'files', title: 'Read README.md', status: 'completed', detail: 'README.md'},
+    {id: 'command', kind: 'command', title: '执行命令', detail: 'git status', status: 'running', output: 'first line\nworking tree clean'},
+    {id: 'read', kind: 'files', title: '读取文件', status: 'completed', detail: 'README.md'},
   ];
-  const html = renderToStaticMarkup(<RunActivity run={{...run, phase: 'executing', activity}}/>);
+  const live = {...run, phase: 'executing' as const, activity};
+  const html = renderToStaticMarkup(<TranscriptActivities entries={activityByMessage([live]).get('run-user')!}/>);
   expect(html).toContain('git status');
-  expect(html).toContain('执行记录（1）');
-  expect(html).toContain('<details class="run-activity-history">');
-  expect(html).not.toContain('执行器处理中…');
+  expect(html).toContain('README.md');
+  expect(html).toContain('<details class="activity-detail">');
+  expect(html).toContain('class="activity-live-output">working tree clean');
+  expect(renderToStaticMarkup(<RunActivity run={live}/>)).toBe('');
   expect(html).not.toContain('private reasoning');
 
-  const settled = renderToStaticMarkup(<RunActivity run={{...run, state: 'cancelled', activity}}/>);
-  expect(settled).toContain('执行记录（3）');
+  const settled = renderToStaticMarkup(<TranscriptActivities entries={activityByMessage([{...live, state: 'cancelled'}]).get('run-user')!}/>);
+  expect(settled).toContain('working tree clean');
+  expect(settled).not.toContain('activity-live-output');
   expect(settled).not.toContain('spinning');
   expect(settled).not.toContain('private reasoning');
 });
 
-it('places Pi activities between their original messages and keeps earlier turns in history', () => {
+it('places activity between its original messages and groups adjacent web actions', () => {
   const messages: Message[] = [
     {id: 'old-user', role: 'user', text: '旧问题', at: 1},
     {id: 'old-reply', role: 'assistant', text: '旧回答', at: 2},
@@ -46,14 +50,16 @@ it('places Pi activities between their original messages and keeps earlier turns
   const live: Run = {...run, state: 'running', activity: [
     {id: 'think', kind: 'thinking', title: 'Private title', detail: 'Private detail', status: 'completed', afterMessageId: 'run-user'},
     {id: 'read', kind: 'tool', title: '读取目录', status: 'running', afterMessageId: 'before-tool'},
+    {id: 'query', kind: 'search', title: '搜索网页', detail: 'wearable data', status: 'completed', afterMessageId: 'before-tool'},
+    {id: 'page', kind: 'search', title: '打开网页', detail: 'https://example.com/source', status: 'completed', afterMessageId: 'before-tool'},
   ]};
   const html = renderToStaticMarkup(<SessionTranscript session={session} provider="Pi" demo={false} visible activityRuns={[
     {...run, id: 'old', state: 'succeeded', activity: [{id: 'list', kind: 'tool', title: '列出文件', status: 'completed'}]},
     live,
   ]}>
-    <RunActivity run={live} placedInTranscript/>
+    <RunActivity run={live}/>
   </SessionTranscript>);
-  const order = ['旧问题', '列出文件', '旧回答', '新问题', '思考', '我先查看目录。', '读取目录', '<strong>结果</strong>'];
+  const order = ['旧问题', '列出文件', '旧回答', '新问题', '我先查看目录。', '读取目录', '网页活动', 'wearable data', 'https://example.com/source', '<strong>结果</strong>'];
   expect(order.reduce((previous, fragment) => {
     const index = html.indexOf(fragment);
     expect(index).toBeGreaterThan(previous);

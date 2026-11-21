@@ -46,6 +46,9 @@ export interface RunActivity {
   title: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   detail?: string;
+  subject?: string;
+  output?: string;
+  exitCode?: number;
   afterMessageId?: string;
 }
 export interface Run {

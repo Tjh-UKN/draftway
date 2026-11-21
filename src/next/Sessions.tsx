@@ -36,7 +36,7 @@ export function SessionView({state, session, change, onNode, active = true,visib
   const readModelOptions = runtime?.modelOptions;
   const {id, integrationId: backend, cwd} = session;
   const sessionRuns = useMemo(() => state.runs.filter(run => run.sessionId === id), [state.runs, id]);
-  const activityRuns = pi ? sessionRuns : undefined;
+  const activityRuns = hasNativeProgress ? sessionRuns : undefined;
   const unsentRuns = sessionRuns.filter(run => run.state === 'failed' && run.pendingText !== undefined);
   const directory = cwd && modelCatalogDirectory(cwd);
   const modelOptionsScope = JSON.stringify([id, backend, directory]);
@@ -92,7 +92,7 @@ export function SessionView({state, session, change, onNode, active = true,visib
     {linkError&&<p className="agent-error session-file-error" role="alert">{linkError}</p>}
     <SessionTranscript session={session} store={runtime?.transcripts} provider={provider} demo={demo} active={active} visible={visible} onOpenLink={runtime?openLink:undefined} onOpenLocalPath={!demo&&runtime?openLocalPath:undefined} activityRuns={activityRuns}>
       {!session.messages.length && !unsentRuns.length && <Empty title="开始对话"/>}
-      {run && hasNativeProgress && <RunActivity key={run.id} run={run} placedInTranscript={pi}/>}
+      {run && hasNativeProgress && <RunActivity key={run.id} run={run}/>}
       {!hasNativeProgress && run?.state === 'running' && <div className="run-progress"><LoaderCircle size={15} className="spinning"/><span>{run.stopping ? '正在停止…' : '正在回复…'}</span></div>}
       {run?.state === 'needs_input' && demo && <div className="run-attention"><CircleAlert size={16}/><span>需要你的输入</span><button className="primary-button" disabled={!adapter} onClick={() => {const at = Date.now(); change(current => adapter!.resume(current, run.id, at));}}>继续模拟</button></div>}
       {!demo && session.requests?.map(request => <AgentRequestForm key={request.id} request={request} onRespond={answer => runtime?.respond(session.id, request.id, answer)}/>)}

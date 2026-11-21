@@ -252,7 +252,7 @@ pub fn relevant(backend: &str, value: &Value) -> bool {
             "message_update" => ["text_delta", "text_end", "thinking_start", "thinking_end"].contains(&value["assistantMessageEvent"]["type"].as_str().unwrap_or("")),
             "message_start" | "message_end" => value["message"]["role"] == "assistant",
             "extension_error" => value["event"] == "command",
-            "agent_start" | "agent_settled" | "tool_execution_start" | "tool_execution_end" |
+            "agent_start" | "agent_settled" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" |
             "auto_retry_start" | "auto_retry_end" | "auto_compaction_start" | "auto_compaction_end" |
             "extension_ui_request" => true,
             _ => false,
@@ -309,6 +309,7 @@ pub fn apply_event(session: &mut AgentSession, value: &Value) {
             return;
         }
         match event {
+            "tool_execution_update" => feedback::update_output(&mut run.activity, &value["toolCallId"], &value["partialResult"], false),
             "agent_start" => {run.advance_phase(RunPhase::Executing); run.error = None;},
             "extension_error" if value["event"] == "command" && run.phase == Some(RunPhase::Submitting) => {
                 run.error = Some(value["error"].as_str().unwrap_or("Pi 扩展命令执行失败").chars().take(1000).collect());
@@ -401,6 +402,30 @@ mod tests {
         let mut s = session("pi"); apply_event(&mut s, &json!({"type":"agent_end","willRetry":true,"messages":[]})); assert_eq!(s.runs[0].state, "running");
         apply_event(&mut s, &json!({"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"provider unavailable"}}));
         apply_event(&mut s, &json!({"type":"agent_settled","aborted":false})); assert_eq!(s.runs[0].state, "failed");
+    }
+    #[test]
+    fn pi_tool_events_update_the_original_step_with_actual_output() {
+        let mut s = session("pi");
+        apply_event(&mut s, &json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Checking."}}));
+        let start = json!({"type":"tool_execution_start","toolCallId":"cmd","toolName":"bash","args":{"command":"git status"}});
+        let update = json!({"type":"tool_execution_update","toolCallId":"cmd","toolName":"bash","partialResult":{"content":[{"type":"text","text":"loading"}]}});
+        assert!(relevant("pi", &update));
+        apply_event(&mut s, &start);
+        apply_event(&mut s, &update);
+        let live = serde_json::to_value(feedback::live_output(&s.runs[0].activity).next().unwrap()).unwrap();
+        assert_eq!(live["detail"], "git status");
+        assert_eq!(live["output"], "loading");
+        assert_eq!(live["afterMessageId"], s.messages[0].id);
+        apply_event(&mut s, &json!({"type":"tool_execution_end","toolCallId":"cmd","toolName":"bash","isError":true,
+            "result":{"content":[{"type":"text","text":"failed"},{"type":"image","data":"omitted"}],"details":{"exitCode":1}}}));
+        apply_event(&mut s, &update);
+        let rows = serde_json::to_value(&s.runs[0].activity).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 1);
+        assert_eq!(rows[0]["detail"], "git status");
+        assert_eq!(rows[0]["output"], "failed");
+        assert_eq!(rows[0]["status"], "failed");
+        assert_eq!(rows[0]["exitCode"], 1);
+        assert!(feedback::live_output(&s.runs[0].activity).next().is_none());
     }
     #[test]
     fn pi_stdout_delta_and_final_share_the_message_and_block_identity() {

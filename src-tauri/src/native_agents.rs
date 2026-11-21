@@ -28,7 +28,17 @@ pub type Sink = Arc<dyn Fn(&AgentSession) + Send + Sync>;
 pub type TranscriptSink = Arc<dyn Fn(&TranscriptFrame) + Send + Sync>;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TranscriptFrame {pub id:String,pub base_revision:u64,pub revision:u64,pub messages:Vec<Message>}
+pub struct TranscriptFrame {
+    pub id: String,
+    pub base_revision: u64,
+    pub revision: u64,
+    pub messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activity: Option<TranscriptActivityFrame>,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscriptActivityFrame {run_id: String, items: Vec<Activity>}
 #[derive(Default)]
 struct Checkpoint {saved_at:u64,base_revision:u64,dirty:bool,unsaved:bool}
 fn now() -> u64 {chrono::Utc::now().timestamp_millis() as u64}
@@ -319,7 +329,11 @@ impl AgentHost {
                 if sink.is_some(){
                     // Only this turn crosses IPC; historical messages remain in the transcript store.
                     let start=session.messages.iter().rposition(|m|m.role=="user").map_or(0,|i|i+1);
-                    frames.push(TranscriptFrame{id:id.clone(),base_revision:clock.base_revision,revision:session.revision,messages:session.messages[start..].to_vec()});
+                    let activity = session.runs.last().and_then(|run| {
+                        let items: Vec<_> = feedback::live_output(&run.activity).cloned().collect();
+                        (!items.is_empty()).then(|| TranscriptActivityFrame {run_id: run.id.clone(), items})
+                    });
+                    frames.push(TranscriptFrame{id:id.clone(),base_revision:clock.base_revision,revision:session.revision,messages:session.messages[start..].to_vec(),activity});
                 }else{snapshots.push(session.clone());}
             }
             sink
@@ -749,7 +763,15 @@ impl AgentHost {
     fn event(&self, id: &str, value: &Value, reader: Option<&ReaderOwner>) {
         if reader.is_some_and(|r| r.retired.load(Ordering::SeqCst)) {return;}
         let applies = |session: &AgentSession| reader.is_none_or(|r| r.applies_to(session));
-        if let Some(backend)=self.sessions.lock().ok().and_then(|sessions|sessions.get(id).map(|s|s.backend.clone())) {if backend != "codex" {if providers::relevant(&backend, value) {let stream = value["type"] == "stream_event" || (value["type"] == "message_update" && value["assistantMessageEvent"]["type"] == "text_delta"); let _ = self.update_stream(id, stream, |s| {if applies(s) {providers::apply_event(s, value);}});} return;}}
+        let backend = self.sessions.lock().ok().and_then(|sessions| sessions.get(id).map(|s| s.backend.clone()));
+        if let Some(backend) = backend.filter(|backend| backend != "codex") {
+            if providers::relevant(&backend, value) {
+                let stream = value["type"] == "stream_event" || value["type"] == "tool_execution_update"
+                    || (value["type"] == "message_update" && value["assistantMessageEvent"]["type"] == "text_delta");
+                let _ = self.update_stream(id, stream, |s| {if applies(s) {providers::apply_event(s, value);}});
+            }
+            return;
+        }
         let method = value["method"].as_str().unwrap_or(""); let p = &value["params"];
         if value.get("id").is_some() && value.get("method").is_some() {
             let kind = if ["item/commandExecution/requestApproval","item/fileChange/requestApproval"].contains(&method) {"approval"} else if method=="mcpServer/elicitation/request" && p["mode"]=="form" {"elicitation"} else if method == "item/tool/requestUserInput" {"input"} else {"unsupported"};
@@ -771,9 +793,10 @@ impl AgentHost {
             "turn/plan/updated" => feedback::plan(p),
             _ => None,
         };
-        if activity.is_some() || ["item/agentMessage/delta", "turn/started", "turn/completed", "error"].contains(&method)
+        let stream = matches!(method, "item/agentMessage/delta" | "item/commandExecution/outputDelta");
+        if activity.is_some() || stream || ["turn/started", "turn/completed", "error"].contains(&method)
             || (method == "item/completed" && p["item"]["type"] == "agentMessage") {
-            let _ = self.update_stream(id, method == "item/agentMessage/delta", |s| {
+            let _ = self.update_stream(id, stream, |s| {
                 if applies(s) {apply_codex_event(s, method, p, activity);}
             });
         }
@@ -826,18 +849,21 @@ fn codex_run<'a, 'b>(s: &'a mut AgentSession, p: &'b Value) -> Option<(&'a mut R
     Some((current, incoming_turn))
 }
 fn apply_codex_event(s: &mut AgentSession, method: &str, p: &Value, activity: Option<Activity>) {
+    let anchor = activity.as_ref().and_then(|_| s.messages.last()).map(|message| message.id.clone());
     let Some((current, incoming_turn)) = codex_run(s, p) else {return;};
     if current.cancel_requested && method != "turn/completed" {return;}
     if current.phase == Some(RunPhase::Connecting) && method != "error" {return;}
     if let Some(incoming) = incoming_turn {
         current.source_turn_id.get_or_insert_with(|| incoming.to_owned());
     }
-    if let Some(activity) = activity {
+    if let Some(mut activity) = activity {
         current.advance_phase(RunPhase::Executing);
+        activity.after_message_id = anchor;
         feedback::upsert(&mut current.activity, activity);
         return;
     }
     match method {
+        "item/commandExecution/outputDelta" => feedback::update_output(&mut current.activity, &p["itemId"], &p["delta"], true),
         "turn/started" => current.advance_phase(RunPhase::Executing),
         "item/agentMessage/delta" => {
             let Some(delta) = p["delta"].as_str().filter(|delta| !delta.is_empty()) else {return;};
@@ -995,7 +1021,9 @@ mod tests {
         assert_eq!(session.runs[1].activity.len(), 1);
         let current = serde_json::to_value(&session.runs[1]).unwrap();
         assert_eq!(current["activity"][0]["status"], "failed");
-        assert_eq!(current["activity"][0]["detail"], "test\nfailure\n退出码 1");
+        assert_eq!(current["activity"][0]["detail"], "test");
+        assert_eq!(current["activity"][0]["output"], "failure");
+        assert_eq!(current["activity"][0]["exitCode"], 1);
         apply_codex_event(&mut session, "item/agentMessage/delta", &json!({"turnId":"turn","delta":"正文"}), None);
         apply_codex_event(&mut session, "turn/started", &json!({"turn":{"id":"turn"}}), None);
         assert_eq!(session.runs[1].phase, Some(RunPhase::Responding));
@@ -1011,6 +1039,29 @@ mod tests {
         fields.remove("activity");
         let legacy: Run = serde_json::from_value(legacy).unwrap();
         assert!(legacy.phase.is_none() && legacy.activity.is_empty());
+    }
+    #[test]
+    fn codex_web_action_and_command_delta_anchor_after_streamed_text() {
+        let mut s = record();
+        let text = json!({"turnId":"turn","itemId":"intro","delta":"Checking sources."});
+        apply_codex_event(&mut s, "item/agentMessage/delta", &text, None);
+        let search = json!({"id":"search","type":"webSearch","query":"","action":{"type":"openPage","url":"https://example.com/source"}});
+        apply_codex_event(&mut s, "item/completed", &json!({"turnId":"turn"}), feedback::item(&search, true));
+        let command = json!({"id":"cmd","type":"commandExecution","command":"rg TODO src",
+            "commandActions":[{"type":"search","command":"rg TODO src","query":"TODO","path":"src"}]});
+        apply_codex_event(&mut s, "item/started", &json!({"turnId":"turn"}), feedback::item(&command, false));
+        for delta in ["working ", "tree clean"] {
+            let output = json!({"turnId":"turn","itemId":"cmd","delta":delta});
+            apply_codex_event(&mut s, "item/commandExecution/outputDelta", &output, None);
+        }
+        let rows = serde_json::to_value(&s.runs[0].activity).unwrap();
+        assert_eq!(rows[0]["detail"], "https://example.com/source");
+        assert_eq!(rows[0]["afterMessageId"], "run-intro");
+        assert_eq!(rows[1]["afterMessageId"], "run-intro");
+        assert_eq!(rows[1]["title"], "搜索文件内容");
+        assert_eq!(rows[1]["subject"], "TODO");
+        assert_eq!(rows[1]["detail"], "rg TODO src");
+        assert_eq!(rows[1]["output"], "working tree clean");
     }
     #[test]
     fn restores_unfinished_execution_as_interrupted_and_retains_transcript() {

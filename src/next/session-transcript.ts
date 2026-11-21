@@ -1,7 +1,8 @@
 import type {Message, Run, RunActivity} from './core';
 
-export interface TranscriptFrame {id:string;baseRevision:number;revision:number;messages:Message[]}
-export interface TranscriptSnapshot {revision:number;messages:Message[]}
+interface ActivityFrame {runId: string; items: RunActivity[]}
+export interface TranscriptFrame {id:string;baseRevision:number;revision:number;messages:Message[];activity?:ActivityFrame}
+export interface TranscriptSnapshot {revision:number;messages:Message[];activity?:ActivityFrame}
 
 export interface TranscriptActivity {
   item: RunActivity;
@@ -10,12 +11,16 @@ export interface TranscriptActivity {
   waiting: boolean;
 }
 
-export function activityByMessage(runs?: readonly Run[]): Map<string, TranscriptActivity[]> {
+export function activityByMessage(runs?: readonly Run[], progress?: ActivityFrame): Map<string, TranscriptActivity[]> {
   const groups = new Map<string, TranscriptActivity[]>();
   for (const run of runs ?? []) {
     const waiting = run.state === 'needs_input';
     const live = run.state === 'running' || waiting;
-    for (const item of run.activity ?? []) {
+    const hasTool = run.activity?.some(item => item.kind !== 'thinking' && item.status === 'running');
+    const updates = progress?.runId === run.id ? new Map(progress.items.map(item => [item.id, item])) : undefined;
+    for (const stored of run.activity ?? []) {
+      const item = live && stored.status === 'running' ? updates?.get(stored.id) ?? stored : stored;
+      if (item.kind === 'thinking' && (!live || hasTool || item.status !== 'running')) continue;
       const anchor = item.afterMessageId ?? `${run.id}-user`;
       const entry = {item, runId: run.id, live, waiting};
       const group = groups.get(anchor);
@@ -74,7 +79,7 @@ export class SessionTranscripts {
     const updates=new Map(frame.messages.map(message=>[message.id,message]));
     const combined=old.messages.map(message=>{const update=updates.get(message.id);updates.delete(message.id);return update||message;});
     combined.push(...updates.values());
-    this.publish(frame.id,{revision:frame.revision,messages:reuseMessages(old.messages,combined)});
+    this.publish(frame.id,{revision:frame.revision,messages:reuseMessages(old.messages,combined),activity:frame.activity});
     return true;
   }
 }

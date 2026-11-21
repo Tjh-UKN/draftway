@@ -30,8 +30,10 @@ export const SessionTranscript=memo(function SessionTranscript({session,store,pr
   const subscribe=useCallback((listener:()=>void)=>visible?store?.subscribe(session.id,listener)||(()=>{}):()=>{},[store,session.id,visible]);
   const snapshot=useCallback(()=>store?.get(session.id),[store,session.id]);
   const live=useSyncExternalStore(subscribe,snapshot,snapshot);
-  const messages=live&&live.revision>(session.nativeRevision||0)?live.messages:session.messages;
-  const activities=useMemo(()=>activityByMessage(activityRuns),[activityRuns]);
+  const streamed=live&&live.revision>(session.nativeRevision||0)?live:undefined;
+  const messages=streamed?.messages??session.messages;
+  const progress=streamed?.activity;
+  const activities=useMemo(()=>activityByMessage(activityRuns,progress),[activityRuns,progress]);
   const userId=messages.reduce<string|undefined>((id,message)=>message.role==='user'?message.id:id,undefined);
   const previousUser=useRef(userId);
   const scroller=useRef<HTMLDivElement>(null),follow=useRef(true),offset=useRef(0),wasVisible=useRef(false);

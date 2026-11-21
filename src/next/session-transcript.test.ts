@@ -1,6 +1,6 @@
 import {describe,it,expect} from 'vitest';
-import {reuseMessages,SessionTranscripts} from './session-transcript';
-import type {Message} from './core';
+import {activityByMessage,reuseMessages,SessionTranscripts} from './session-transcript';
+import type {Message, Run, RunActivity} from './core';
 const message=(id:string,text=id):Message=>({id,role:'assistant',text,at:1});
 describe('per-session transcript frames',()=>{
   it('retains settled row identity and isolates subscriptions from other sessions',()=>{
@@ -28,5 +28,19 @@ describe('per-session transcript frames',()=>{
     const store=new SessionTranscripts();store.replace('chat',50,[message('old')]);store.clear();
     store.replace('chat',2,[message('restored')]);expect(store.get('chat')!.messages[0].text).toBe('restored');
     expect(store.apply({id:'chat',baseRevision:2,revision:3,messages:[message('next')]})).toBe(true);
+  });
+  it('overlays output for the running step and lets the settled snapshot win',()=>{
+    const store = new SessionTranscripts();
+    const step: RunActivity = {id:'command', kind:'command', title:'执行命令', status:'running', afterMessageId:'intro'};
+    const run: Run = {id:'run', sessionId:'chat', state:'running', startedAt:0, dueAt:0, activity:[step]};
+    store.replace('chat', 1, [message('intro')]);
+    store.apply({id:'chat', baseRevision:1, revision:2, messages:[], activity:{runId:run.id, items:[{...step,output:'partial'}]}});
+    const progress = store.get('chat')?.activity;
+    expect(activityByMessage([run], progress).get('intro')?.[0].item.output).toBe('partial');
+    expect(activityByMessage([{...run, id:'other'}], progress).get('intro')?.[0].item.output).toBeUndefined();
+    const final = {...step, status:'completed' as const, output:'final'};
+    expect(activityByMessage([{...run, state:'succeeded', activity:[final]}], progress).get('intro')?.[0].item).toBe(final);
+    store.replace('chat', 3, [message('intro')]);
+    expect(store.get('chat')?.activity).toBeUndefined();
   });
 });
