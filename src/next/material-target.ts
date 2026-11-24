@@ -1,5 +1,8 @@
-export interface NodeMaterial {id: string; title: string; target: string}
+import {localPath} from '../local-paths';
+
+export interface NodeMaterial {id: string; title: string; target: string; output?: boolean}
 export interface MaterialTarget {kind: 'obsidian' | 'web' | 'file'; target: string; title: string; href?: string; detail: string}
+export const nodeMaterialLimit = 100;
 const leaf = (value: string) => value.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || value;
 const invalid = () => new Error('请粘贴 Obsidian 笔记链接、网页地址或完整文件路径。');
 
@@ -45,6 +48,13 @@ export function parseMaterialTarget(input: string): MaterialTarget {
 
 export function validMaterial(value: unknown): value is NodeMaterial {
   const item = value as NodeMaterial;
-  if (!item || typeof item.id !== 'string' || !item.id || typeof item.title !== 'string' || !item.title.trim() || item.title.length > 240 || typeof item.target !== 'string') return false;
+  if (!item || typeof item.id !== 'string' || !item.id || typeof item.title !== 'string' || !item.title.trim() || item.title.length > 240 || typeof item.target !== 'string' || (item.output !== undefined && typeof item.output !== 'boolean')) return false;
   try {parseMaterialTarget(item.target); return true;} catch {return false;}
+}
+
+export function materialTargetKey(value: string) {
+  try {
+    const target = parseMaterialTarget(value);
+    return target.kind === 'file' ? localPath(target.target)?.toLowerCase() ?? target.target : target.target;
+  } catch {return value;}
 }

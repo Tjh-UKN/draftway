@@ -1,4 +1,4 @@
-import {parseMaterialTarget, validMaterial, type NodeMaterial} from './material-target';
+import {nodeMaterialLimit, parseMaterialTarget, validMaterial, type NodeMaterial} from './material-target';
 import {boundedText} from './text';
 export type NodeKind = 'root' | 'idea' | 'analysis' | 'event' | 'document' | 'code' | 'artifact';
 export interface NodeUpdate {id: string; text: string; at: number; sessionId?: string}
@@ -156,7 +156,7 @@ export function parseState(value: unknown): DesignState {
       if (typeof n.id !== 'string' || typeof n.title !== 'string' || !n.title.trim() || n.title.length > 120 || !['root', 'idea', 'analysis', 'event', 'document', 'code', 'artifact'].includes(n.kind) || ![-1, 1].includes(n.side) || typeof n.body !== 'string' || typeof n.due !== 'string' || !Number.isFinite(n.progress) || n.progress < 0 || n.progress > 100 || (n.kind === 'root') !== (n.parentId === null) || (n.task !== undefined && typeof n.task !== 'boolean') || (n.sourceArtifactId !== undefined && typeof n.sourceArtifactId !== 'string') || (n.updates !== undefined && (!Array.isArray(n.updates) || n.updates.some(u => !u || typeof u.id !== 'string' || typeof u.text !== 'string' || !Number.isFinite(u.at) || (u.sessionId !== undefined && typeof u.sessionId !== 'string'))))) throw new Error('节点内容不完整。');
       const legacy = n as LegacyNode;
       if ((legacy.steps !== undefined && (!Array.isArray(legacy.steps) || legacy.steps.length > 100 || legacy.steps.some(s => !s || typeof s.id !== 'string' || typeof s.title !== 'string' || typeof s.done !== 'boolean'))) || (legacy.reference !== undefined && typeof legacy.reference !== 'string') || (legacy.completed !== undefined && typeof legacy.completed !== 'boolean')) throw new Error('旧节点内容不完整。');
-      if (n.materials !== undefined && (!Array.isArray(n.materials) || n.materials.length > 100 || !n.materials.every(validMaterial) || new Set(n.materials.map(m => m.id)).size !== n.materials.length)) throw new Error('关联材料格式无效。');
+      if (n.materials !== undefined && (!Array.isArray(n.materials) || n.materials.length > nodeMaterialLimit || !n.materials.every(validMaterial) || new Set(n.materials.map(m => m.id)).size !== n.materials.length)) throw new Error('关联材料格式无效。');
       let parent = n.parentId;
       const visited = new Set([n.id]);
       while (parent) {if (visited.has(parent) || !nodeIds.has(parent)) throw new Error('节点关系无效。'); visited.add(parent); parent = space.nodes.find(item => item.id === parent)!.parentId;}

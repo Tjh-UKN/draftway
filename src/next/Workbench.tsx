@@ -1,4 +1,5 @@
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode} from 'react';
+import {invoke} from '@tauri-apps/api/core';
 import {BookOpen, Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, FolderOpen, Globe, MessageSquare, Pencil, Plus, Search, Settings2, Terminal, Trash2, Puzzle, X} from 'lucide-react';
 import {AppearancePicker} from '../AppearancePicker';
 import {useAppearance} from '../appearance';
@@ -22,6 +23,8 @@ import {useNativeBackground} from './NativeBackground';
 import {ReportView} from './ReportView';
 import {MaterialView} from './MaterialView';
 import {parseMaterialTarget, type NodeMaterial} from './material-target';
+import {isHtmlReport, openLocalReport} from './local-report';
+import type {SessionMaterial} from './session-materials';
 import {useMapOperations} from './map-operations';
 import {BusinessView} from './BusinessView';
 import {useKnowledgeCollection} from './KnowledgeCollection';
@@ -195,8 +198,21 @@ export default function Workbench() {
     setDialog(null);
     setInbox(false);
   }
-  function openMaterial(material: NodeMaterial, selected: MindNode) {
+  function openMaterial(material: NodeMaterial | SessionMaterial, selected: MindNode) {
     const parsed=parseMaterialTarget(material.target);
+    if ('sessionId' in material) {
+      if (parsed.kind === 'web') {
+        const tab: DockTab = {id: crypto.randomUUID(), kind: 'browser', title: material.title, url: parsed.target};
+        updateSpace(workspace => ({...workspace, dock: openDockTab(workspace.dock, tab)}));
+        return;
+      }
+      if (!agents) throw new Error('请在 DraftWay 桌面版打开本地文件。');
+      if (isHtmlReport(parsed.target)) {
+        change(state => openLocalReport(state, space.id, parsed.target));
+        return;
+      }
+      return invoke('open_session_path', {id: material.sessionId, path: parsed.target});
+    }
     const tab: DockTab=parsed.kind==='web' ? {id:crypto.randomUUID(),kind:'browser',title:material.title || parsed.title,url:parsed.target} : {id:`material:${selected.id}:${material.id}`,kind:'material',title:material.title || parsed.title,nodeId:selected.id,materialId:material.id};
     const open = () => updateSpace(workspace => workspace.nodes.some(node => node.id === selected.id && node.materials?.some(item => item.id === material.id))
       ? {...workspace, dock: openDockTab(workspace.dock, tab)} : workspace);
@@ -208,16 +224,22 @@ export default function Workbench() {
   }
 
   useEffect(() => {recentSwitch.current = null;}, [space.id]);
-  function updateNode(node: MindNode) {
+  function updateNodeMaterials(nodeId: string, update: (materials: NodeMaterial[]) => NodeMaterial[]) {
+    if (persistence.readOnly) return;
     edit(space.id, s => updateWorkspace(s, space.id, workspace => {
-      const retained = new Set(node.materials?.map(material => material.id));
+      const node = workspace.nodes.find(item => item.id === nodeId);
+      if (!node) return workspace;
+      const previous = node.materials ?? [];
+      const materials = update(previous);
+      if (previous === materials) return workspace;
+      const retained = new Set(materials.map(material => material.id));
       let dock = workspace.dock;
       for (const tab of workspace.dock.tabs) {
         if (tab.kind === 'material' && tab.nodeId === node.id && !retained.has(tab.materialId)) {
           dock = closeDockTab(dock, tab.id);
         }
       }
-      return {...workspace, dock, nodes: workspace.nodes.map(item => item.id === node.id ? {...item, materials: node.materials} : item)};
+      return {...workspace, dock, nodes: workspace.nodes.map(item => item.id === node.id ? {...item, materials} : item)};
     }));
   }
   useEffect(() => {
@@ -279,7 +301,8 @@ export default function Workbench() {
       }} onInspect={id=>{setNewNodeId(null);changeView({...graph,selectedId:id});}} onRename={(id,title)=>{edit(space.id,s=>renameMapNode(s,space.id,id,title));if(id===newNodeId){setNewNodeId(null);changeView({...graph,selectedId:null});}}} autoEditId={newNodeId === graph.selectedId ? newNodeId : null} onAdd={parentId => {if (space.nodes.length >= 250) return; const id = crypto.randomUUID(); edit(space.id,s => createMapNode(s, space.id, parentId, id, tab.id)); setNewNodeId(id);}} sessionCounts={sessionCounts}/></main>
       {selected && <NodeInspector key={`${space.id}-${selected.id}`} space={space} node={selected} onDelete={()=>{setNewNodeId(null);edit(space.id,s=>deleteMapBranch(s,space.id,selected.id));}} onEditBody={value=>edit(space.id,s=>editNodeBody(s,space.id,selected.id,value),"body:"+selected.id)} onClose={() => changeView({...graph, selectedId: null})} onFocus={() => changeView({...graph, focusId: selected.id, selectedId: null, collapsed: [], camera: null})}>
         <div className="inspector-scroll unified-node-details"><NodeOverview space={space} node={selected} onDue={due=>edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,due}:n)})))} onOpen={id=>changeView({...graph,selectedId:id,focusId:null,camera:null})} onAdd={()=>{const id=crypto.randomUUID();edit(space.id,s=>{const next=addSubtask(s,space.id,selected.id,id);return next===s?s:updateWorkspace(next,space.id,w=>updateMapGraph(w,{...mapGraph(w,tab.id),selectedId:id,focusId:null,collapsed:graph.collapsed.filter(value=>value!==selected.id),camera:null},tab.id));});setNewNodeId(id);}}/>
-          <NodeMaterials node={selected} onChange={updateNode} onOpen={material => openMaterial(material, selected)}/>
+          <NodeMaterials node={selected} workspaceId={space.id} cwd={space.cwd} sessions={nodeSessions} readOnly={persistence.readOnly}
+            onChange={update => updateNodeMaterials(selected.id, update)} onOpen={material => openMaterial(material, selected)}/>
           <section className="node-detail-section"><div className="detail-section-heading"><h3>关联会话（{nodeSessions.length}）</h3></div><BackendPicker text="新建会话" label={`在${selected.title}中新建会话`} onChoose={agent => startSession(agent, selected.id)} onOpen={() => {setInbox(false); updateSpace(w => ({...w, sessionPanelOpen: false}));}} onLink={() => setDialog('link')}/>{nodeSessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!nodeSessions.length && <p className="quiet-note">还没有关联会话</p>}</section>
           <section className="node-detail-section"><div className="detail-section-heading"><h3>更新记录</h3></div><div className="node-timeline">{[...(selected.updates || [])].filter(update=>update.id!=='migration-task-state').reverse().map(update => {const source = sessions.find(s => s.id === update.sessionId); return <div key={update.id}><strong>{update.text}</strong><small>{update.at === 0 && update.id.startsWith('migration-') ? '旧数据迁移' : new Date(update.at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})} · {source ? `${agentNames[source.agentId || 'codex']}${source.integrationId === 'demo-agent' ? '（模拟）' : ''}` : '我'}</small>{source && <button className="text-button" onClick={() => openAgent(source.id)}>查看来源会话<ChevronRight size={12}/></button>}</div>;})}{!selected.updates?.length && <p className="quiet-note">执行结果与手动记录会留在这里</p>}</div><ProgressForm onSubmit={text => {const id = crypto.randomUUID(); const at = Date.now(); edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,updates:[...(n.updates||[]),{id,text,at}]}:n)})));}}/></section>
         </div>

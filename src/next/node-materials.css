@@ -1,0 +1,19 @@
+.node-material-list {
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.material-output-action,
+.material-output-state {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 3px;
+  padding-inline: 3px;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.material-output-state {
+  color: var(--app-muted, #686868);
+}

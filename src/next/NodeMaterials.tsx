@@ -1,37 +1,95 @@
-import {useState} from 'react';
+import {useMemo, useState} from 'react';
 import {BookOpen, Check, Copy, ExternalLink, FileText, Globe, Plus, X} from 'lucide-react';
+import type {AgentSession} from './core';
 import type {MindNode} from './model';
-import {parseMaterialTarget, type NodeMaterial} from './material-target';
+import {materialTargetKey, nodeMaterialLimit, parseMaterialTarget, type NodeMaterial} from './material-target';
+import {addNodeOutput, nodeSessionMaterials, type SessionMaterial} from './session-materials';
 import {boundedText} from './text';
+import './node-materials.css';
 
-export function NodeMaterials({node, onChange, onOpen}: {node: MindNode; onChange: (node: MindNode) => void; onOpen?: (material: NodeMaterial) => void}) {
+type Material = NodeMaterial | SessionMaterial;
+type MaterialUpdate = (materials: NodeMaterial[]) => NodeMaterial[];
+
+export function NodeMaterials({node, workspaceId, cwd, sessions, readOnly, onChange, onOpen}: {
+  node: MindNode;
+  workspaceId: string;
+  cwd?: string;
+  sessions: AgentSession[];
+  readOnly: boolean;
+  onChange: (update: MaterialUpdate) => void;
+  onOpen: (material: Material) => void | Promise<unknown>;
+}) {
   const [adding, setAdding] = useState(false);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState('');
-  const materials: NodeMaterial[] = node.materials || [];
+  const stored = node.materials ?? [];
+  const storedKeys = new Set(stored.map(item => materialTargetKey(item.target)));
+  const automatic = useMemo(() => nodeSessionMaterials(sessions, workspaceId, node.id, cwd), [sessions, workspaceId, node.id, cwd]);
+  const materials: Material[] = [...stored, ...automatic.filter(item => !storedKeys.has(materialTargetKey(item.target)))];
+  const outputs = stored.filter(item => item.output);
+  const full = stored.length >= nodeMaterialLimit;
+
   function add() {
     try {
       const parsed = parseMaterialTarget(input);
-      if (materials.some(m => {try {return parseMaterialTarget(m.target).target === parsed.target;} catch {return m.target === parsed.target;}})) throw new Error('这份材料已经关联。');
-      onChange({...node, materials: [...(node.materials || []), {id: crypto.randomUUID(), title: boundedText(parsed.title,240), target: parsed.target}]});
+      const key = materialTargetKey(parsed.target);
+      if (materials.some(item => materialTargetKey(item.target) === key)) throw new Error('这份素材已经在列表里。');
+      const material = {id: crypto.randomUUID(), title: boundedText(parsed.title, 240), target: parsed.target};
+      onChange(current => current.length >= nodeMaterialLimit || current.some(item => materialTargetKey(item.target) === key)
+        ? current : [...current, material]);
       setInput(''); setError(''); setAdding(false);
-    } catch (e) {setError(e instanceof Error ? e.message : '无法添加这份材料。');}
+    } catch (cause) {setError(cause instanceof Error ? cause.message : '无法添加这份素材。');}
   }
-  return <section className="node-detail-section node-materials"><div className="detail-section-heading"><h3>关联材料（{materials.length}）</h3><button className="icon-button" aria-label="关联材料" title="关联材料" disabled={materials.length >= 100} onClick={() => {setAdding(value => !value); setError('');}}><Plus size={16}/></button></div>
-    {materials.map(material => {
-      let parsed; try {parsed = parseMaterialTarget(material.target);} catch {parsed = {kind: 'file' as const, target: material.target, title: material.target, detail: material.target, href: undefined};}
-      const title = material.title || parsed.title;
-      const Icon = parsed.kind === 'obsidian' ? BookOpen : parsed.kind === 'web' ? Globe : FileText;
-      const content = <><Icon size={16}/><span><strong>{title}</strong><small>{parsed.detail}</small></span>{parsed.href && <ExternalLink size={12}/>}</>;
-      return <div className="material-row" key={material.id}>
-        {onOpen ? <button className="material-link" type="button" title={material.target} onClick={() => {try {onOpen(material);}catch(e){setError(String(e));}}}>{content}</button> : parsed.href ? <a className="material-link" href={parsed.href} target={parsed.kind === 'web' ? '_blank' : undefined} rel="noopener noreferrer" title={material.target}>{content}</a> : <span className="material-link" title={material.target}>{content}</span>}
-        {parsed.kind === 'file' && <button className="icon-button" aria-label={`复制${title}路径`} title="复制文件路径" onClick={async () => {try {await navigator.clipboard.writeText(material.target); setCopied(material.id); setError('');} catch {setError('复制失败，请从材料文字中复制路径。');}}}>{copied === material.id ? <Check size={13}/> : <Copy size={13}/>}</button>}
-        <button className="icon-button material-remove" aria-label={`解除关联${title}`} title="解除关联" onClick={() => onChange({...node, materials: materials.filter(m => m.id !== material.id)})}><X size={13}/></button>
-      </div>;
-    })}
-    {!materials.length && !adding && <p className="quiet-note">笔记、网页或文件</p>}
-    {adding && <form className="material-add" onSubmit={event => {event.preventDefault(); add();}}><input autoFocus aria-label="材料链接或路径" placeholder="粘贴 Obsidian 链接、网页或文件路径" maxLength={4096} value={input} onChange={event => {setInput(event.target.value); setError('');}} onKeyDown={event => {if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); setAdding(false); setError('');}}}/><button className="icon-button" aria-label="保存关联材料" title="关联材料" disabled={!input.trim()}><Check size={15}/></button><p className="quiet-note">Obsidian：在笔记中复制链接后粘贴。</p></form>}
-    {error && <p className="material-error" role="alert">{error}</p>}
-  </section>;
+
+  function row(material: Material, inOutputs: boolean) {
+    const parsed = parseMaterialTarget(material.target);
+    const saved = 'id' in material;
+    const title = material.title || parsed.title;
+    const Icon = parsed.kind === 'obsidian' ? BookOpen : parsed.kind === 'web' ? Globe : FileText;
+    const source = 'sessionTitle' in material ? `会话：${material.sessionTitle}` : undefined;
+    const content = <><Icon size={16}/><span><strong>{title}</strong><small>{parsed.detail}</small></span>{parsed.href && <ExternalLink size={12}/>}</>;
+    return <div className="material-row" key={saved ? material.id : materialTargetKey(material.target)}>
+      {parsed.kind === 'obsidian' && !saved
+        ? <a className="material-link" href={parsed.href} title={source}>{content}</a>
+        : <button className="material-link" type="button" title={source ? `${material.target}\n${source}` : material.target} onClick={async () => {
+          try {setError(''); await onOpen(material);}
+          catch (cause) {setError(cause instanceof Error ? cause.message : String(cause));}
+        }}>{content}</button>}
+      {parsed.kind === 'file' && <button type="button" className="icon-button" aria-label={`复制${title}路径`} title="复制文件路径" onClick={async () => {
+        try {await navigator.clipboard.writeText(material.target); setCopied(material.target); setError('');}
+        catch {setError('复制失败，请从素材文字中复制路径。');}
+      }}>{copied === material.target ? <Check size={13}/> : <Copy size={13}/>}</button>}
+      {inOutputs && saved
+        ? <button type="button" className="icon-button" aria-label={`从产出区移除 ${title}`} title="从产出区移除" disabled={readOnly} onClick={() => {
+          onChange(current => current.map(item => item.id === material.id ? {...item, output: false} : item));
+        }}><X size={13}/></button>
+        : saved && material.output ? <span className="material-output-state"><Check size={12}/>已加入产出</span>
+          : <button type="button" className="text-button material-output-action" aria-label={`加入产出区 ${title}`} title="加入产出区" disabled={readOnly || (!saved && full)} onClick={() => {
+            const id = crypto.randomUUID();
+            onChange(current => addNodeOutput(current, material, id));
+          }}><Plus size={12}/>加入产出</button>}
+      {saved && !inOutputs && !material.output && <button type="button" className="icon-button material-remove" aria-label={`移除素材 ${title}`} title="移除素材" disabled={readOnly}
+        onClick={() => onChange(current => current.filter(item => item.id !== material.id || item.output))}><X size={13}/></button>}
+    </div>;
+  }
+
+  return <>
+    <section className="node-detail-section node-materials" aria-label="素材区">
+      <div className="detail-section-heading"><h3>素材区（{materials.length}）</h3><button type="button" className="icon-button" aria-label="添加素材" title="添加素材" disabled={readOnly || full}
+        onClick={() => {setAdding(value => !value); setError('');}}><Plus size={16}/></button></div>
+      {materials.length ? <div className="node-material-list">{materials.map(item => row(item, false))}</div> : !adding && <p className="quiet-note">节点下的会话文件和链接会自动出现在这里</p>}
+      {adding && <form className="material-add" onSubmit={event => {event.preventDefault(); add();}}>
+        <input autoFocus aria-label="素材链接或路径" placeholder="粘贴 Obsidian 链接、网页或文件路径" maxLength={4096} value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => {
+          if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); setAdding(false); setError('');}
+        }}/>
+        <button className="icon-button" aria-label="保存素材" title="保存素材" disabled={readOnly || full || !input.trim()}><Check size={15}/></button>
+      </form>}
+      {error && <p className="material-error" role="alert">{error}</p>}
+    </section>
+    <section className="node-detail-section node-materials" aria-label="产出区">
+      <div className="detail-section-heading"><h3>产出区（{outputs.length}）</h3></div>
+      {outputs.length ? <div className="node-material-list">{outputs.map(item => row(item, true))}</div> : <p className="quiet-note">从素材区挑选要保留的成果</p>}
+    </section>
+  </>;
 }
