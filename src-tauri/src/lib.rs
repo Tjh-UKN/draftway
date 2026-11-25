@@ -84,6 +84,12 @@ async fn open_session_path(state:tauri::State<'_,AppState>,agents:tauri::State<'
     tauri::async_runtime::spawn_blocking(move||{let path=resources::session_target(&store,&session.workspace_id,&session.cwd,&path)?;open::that(resources::display_path(&path)).map_err(error)}).await.map_err(error)?
 }
 #[tauri::command]
+async fn available_session_materials(state: tauri::State<'_, AppState>, agents: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, paths: Vec<String>) -> Result<Vec<String>> {
+    let session = agents.session(&id)?;
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || resources::available_session_materials(&store, &session.workspace_id, &session.cwd, paths)).await.map_err(error)?
+}
+#[tauri::command]
 async fn agent_create(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, workspace_id: String, node_id: Option<String>, backend: String, title: String, cwd: Option<String>) -> Result<native_agents::AgentSession> {let host=state.inner().clone();tauri::async_runtime::spawn_blocking(move||host.create(id, workspace_id, node_id, backend, title, cwd)).await.map_err(error)?}
 #[tauri::command]
 async fn agent_send(state: tauri::State<'_, Arc<native_agents::AgentHost>>, id: String, run_id: String, text: String, model: Option<String>, effort: Option<String>, files: Option<Vec<native_agents::ChatFile>>) -> Result<native_agents::AgentSession> {
@@ -329,7 +335,7 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_plugins,change_plugins,html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,delete_knowledge,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_model_options,agent_prefetch_model_options,agent_list,agent_get,read_workspace_html,agent_rename,agent_delete,open_session_path,agent_create,agent_send,agent_file_suggestions,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,local_web_services,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_plugins,change_plugins,html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,delete_knowledge,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_model_options,agent_prefetch_model_options,agent_list,agent_get,read_workspace_html,agent_rename,agent_delete,open_session_path,available_session_materials,agent_create,agent_send,agent_file_suggestions,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,local_web_services,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问 Draftway 宿主命令"); return true;}
                 if invoke.message.webview_ref().state::<AppState>().store.maintenance.load(Ordering::SeqCst)&&invoke.message.command()!="quit_app"{invoke.resolver.reject("正在恢复数据，暂时停止写入");return true;}

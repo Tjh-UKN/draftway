@@ -1,0 +1,20 @@
+.workspace-group-action:hover,.workspace-group-toggle:hover{background:var(--app-hover,#ededed)}
+.workspace-group{flex-shrink:0;min-width:0}
+.workspace-group-header{display:flex;align-items:center;gap:2px;min-width:0;min-height:34px;border-radius:8px}
+.workspace-group-header.active{background:var(--app-accent-soft,#eaeaea)}
+.workspace-group-toggle{display:flex;align-items:center;gap:7px;flex:1;min-width:0;min-height:34px;padding:0 5px;border-radius:7px;color:var(--app-text,#222);font-size:12px;text-align:left}
+.workspace-group-toggle>svg,.workspace-group-action>svg{flex-shrink:0;color:var(--app-muted,#696969)}
+.workspace-group-toggle>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workspace-group-action{display:grid;place-items:center;flex:0 0 26px;height:28px;border-radius:6px}
+.workspace-group-children{display:grid;gap:4px;margin:3px 0 0 12px;padding-left:7px;border-left:1px solid var(--app-line,#e5e5e5)}
+.workspace-group-children[hidden],.workspace-group-children:empty{display:none}
+.workspace-top-level-drop{display:flex;align-items:center;justify-content:center;flex-shrink:0;min-height:34px;margin:0;border:1px dashed var(--app-divider,#d8d8d8);border-radius:6px;color:var(--app-muted,#626262);letter-spacing:0}
+.workspace-list [data-workspace-drop-target]{background:var(--app-accent-soft,#eaeaea);box-shadow:inset 0 0 0 1px var(--app-accent,#666)}
+.workspace-list .workspace-sidebar-row{position:relative}
+.workspace-list [data-workspace-draggable]>button{user-select:none}
+.workspace-grip{position:absolute;left:0;opacity:0;color:var(--app-faint,#929292);cursor:grab;touch-action:none}
+.workspace-sidebar-row:hover .workspace-grip,.workspace-sidebar-row:focus-within .workspace-grip{opacity:1}
+.workspace-list [data-workspace-dragging]{opacity:.45}
+.workspace-list [data-workspace-drop-edge]::after{content:'';position:absolute;z-index:1;left:4px;right:4px;height:2px;border-radius:2px;background:var(--app-accent,#666);pointer-events:none}
+.workspace-list [data-workspace-drop-edge=before]::after{top:0}
+.workspace-list [data-workspace-drop-edge=after]::after{bottom:0}

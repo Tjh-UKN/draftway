@@ -16,8 +16,11 @@ fn roots(space: &Value) -> Vec<PathBuf> {
     space["cwd"].as_str().map(PathBuf::from).into_iter().chain(space["_ownedRoot"].as_str().map(PathBuf::from)).chain(space["materialRoots"].as_array().into_iter().flatten().filter_map(|root|root["path"].as_str().map(PathBuf::from))).filter_map(|path|path.canonicalize().ok()).filter(|path|path.is_dir()).collect()
 }
 pub fn scoped(space: &Value, path: &Path) -> Result<PathBuf> {
+    scoped_path(&roots(space), path)
+}
+fn scoped_path(roots: &[PathBuf], path: &Path) -> Result<PathBuf> {
     let file=path.canonicalize().map_err(|e|format!("文件不可用：{e}"))?;
-    if !roots(space).iter().any(|root|file.starts_with(root)) {return Err("材料不在工作目录或材料目录内，请在「自定工作区」添加它所在的目录。".into());}
+    if !roots.iter().any(|root|file.starts_with(root)) {return Err("材料不在工作目录或材料目录内，请在「自定工作区」添加它所在的目录。".into());}
     Ok(file)
 }
 fn target_path(space: &Value, value: &str) -> Result<PathBuf> {
@@ -137,18 +140,47 @@ pub fn workspace_html(store:&Store,workspace:&str,value:&str)->Result<TextFile>{
     let file=read(path)?;if file.text.len()>1_000_000{return Err("HTML 超过 1 MB".into());}Ok(file)
 }
 pub fn session_target(store:&Store,workspace:&str,cwd:&str,value:&str)->Result<PathBuf>{
+    let requested = session_file_path(cwd, value)?;
+    let mut roots = roots(&space(store, workspace)?);
+    add_session_root(&mut roots, cwd);
+    openable_session_path(scoped_path(&roots, &requested)?)
+}
+fn add_session_root(roots: &mut Vec<PathBuf>, cwd: &str) {
+    if let Ok(path) = Path::new(cwd).canonicalize() {
+        if path.is_dir() { roots.push(path); }
+    }
+}
+fn session_file_path(cwd: &str, value: &str) -> Result<PathBuf> {
     if value.len()>32768||value.chars().any(char::is_control){return Err("文件路径无效".into());}
-    let mut space=space(store,workspace)?;
-    if !space["materialRoots"].is_array(){space["materialRoots"]=serde_json::json!([]);}
-    space["materialRoots"].as_array_mut().unwrap().push(serde_json::json!({"path":cwd}));
     let requested=if value.starts_with("file:"){url::Url::parse(value).map_err(error)?.to_file_path().map_err(|_|"文件链接无效")?}else{PathBuf::from(value)};
     #[cfg(windows)] if requested.to_string_lossy().get(2..).is_some_and(|tail|tail.contains(':')){return Err("文件路径无效".into());}
-    let path=scoped(&space,&if requested.is_absolute(){requested}else{Path::new(cwd).join(requested)})?;
+    Ok(if requested.is_absolute() {requested} else {Path::new(cwd).join(requested)})
+}
+fn openable_session_path(path: PathBuf) -> Result<PathBuf> {
     let ext=path.extension().and_then(|e|e.to_str()).unwrap_or("").to_ascii_lowercase();
     if !path.is_dir()&&!["html","htm","md","markdown","txt","pdf","docx","xlsx","pptx","png","jpg","jpeg","gif","webp","svg","csv","log","json","yaml","yml","toml","excalidraw","mindmap"].contains(&ext.as_str()){
         return Err("此文件类型请从资源管理器打开".into());
     }
     Ok(path)
+}
+
+pub fn available_session_materials(store: &Store, workspace: &str, cwd: &str, paths: Vec<String>) -> Result<Vec<String>> {
+    let workspace_roots = roots(&space(store, workspace)?);
+    let temp_root = std::env::temp_dir().canonicalize().ok();
+    Ok(available_session_files(&workspace_roots, cwd, temp_root.as_deref(), paths))
+}
+fn available_session_files(workspace_roots: &[PathBuf], cwd: &str, temp_root: Option<&Path>, paths: Vec<String>) -> Vec<String> {
+    let mut session_roots = workspace_roots.to_vec();
+    add_session_root(&mut session_roots, cwd);
+    let is_html = |path: &Path| path.extension().and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"));
+    paths.into_iter().filter(|value| {
+        let Ok(requested) = session_file_path(cwd, value) else {return false;};
+        let html = is_html(&requested);
+        let roots = if html {workspace_roots} else {&session_roots};
+        let Ok(path) = scoped_path(roots, &requested) else {return false;};
+        path.is_file() && !temp_root.is_some_and(|root| path.starts_with(root)) && (!html || is_html(&path))
+    }).collect()
 }
 fn git(directory: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output_path=std::env::temp_dir().join(format!("northstar-git-{}",uuid::Uuid::new_v4()));let output=fs::File::create(&output_path).map_err(error)?;
@@ -194,6 +226,17 @@ mod tests {
         fs::write(owned.join("run.cmd"),"echo not run").unwrap();assert!(session_target(&store,"w",&owned.to_string_lossy(),"run.cmd").is_err());
         assert!(workspace_html(&store,"w",&owned.join("run.cmd").to_string_lossy()).is_err());
         assert!(session_target(&store,"w",&owned.to_string_lossy(),"missing.html").is_err());
+        let scratch = owned.join("scratch");
+        fs::create_dir_all(&scratch).unwrap();
+        fs::write(scratch.join("temporary.md"), "Temporary").unwrap();
+        fs::write(owned.join("analysis.py"), "print('result')").unwrap();
+        fs::create_dir(owned.join("folder.md")).unwrap();
+        let workspace_roots = roots(&space(&store, "w").unwrap());
+        let candidates = ["PR 检视报告.html", "analysis.py", "scratch/temporary.md", "folder.md", "missing.html", "../../../outside.html"];
+        assert_eq!(available_session_files(&workspace_roots, &owned.to_string_lossy(), Some(&scratch.canonicalize().unwrap()),
+            candidates.map(String::from).to_vec()), vec!["PR 检视报告.html", "analysis.py"]);
+        fs::remove_file(&report).unwrap();
+        assert!(available_session_files(&workspace_roots, &owned.to_string_lossy(), None, vec!["PR 检视报告.html".into()]).is_empty());
     }
     #[test]
     fn hand_opened_materials_use_local_permissions_while_mcp_stays_scoped() {

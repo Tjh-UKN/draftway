@@ -4,6 +4,7 @@ import App from './App';
 import {initializeAppearance} from '../appearance';
 import '../appearance.css';
 import './shell.css';
+import './workspace-chrome.css';
 
 initializeAppearance();
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

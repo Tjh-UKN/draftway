@@ -2,5 +2,5 @@
   "identifier": "com.northstar.workbench.preview",
   "productName": "Draftway Preview",
   "build": {"beforeDevCommand": ""},
-  "app": {"windows": [{"label": "main", "url": "next.html", "title": "Draftway · 工作区预览", "width": 1440, "height": 960, "minWidth": 960, "minHeight": 640, "decorations": true, "backgroundColor": "#ffffff"}]}
+  "app": {"windows": [{"label": "main", "url": "next.html", "title": "Draftway", "width": 1440, "height": 960, "minWidth": 960, "minHeight": 640, "decorations": false, "backgroundColor": "#f7f7f7"}]}
 }

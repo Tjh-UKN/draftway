@@ -1,6 +1,7 @@
 import {closeSurface, createWorkspace, defaultSessionWindow, updateWorkspace, type WorkbenchState} from './core';
 import {closeDockTab} from './docking';
 import {boundedText} from './text';
+import {moveWorkspaceToGroup} from './workspace-groups';
 
 export function assertSessionsIdle(state: WorkbenchState, ids: string[]) {
   if (state.runs.some(run => ids.includes(run.sessionId) && ['running', 'needs_input'].includes(run.state))) throw Error('请先停止正在执行或等待输入的会话，再删除。');
@@ -34,7 +35,7 @@ export function deleteSessions(state: WorkbenchState, ids: string[]): WorkbenchS
 
 export function deleteWorkspace(state: WorkbenchState, id: string): WorkbenchState {
   if (!state.spaces.some(space => space.id === id)) return state;
-  const next = deleteSessions(state, state.sessions.filter(session => session.workspaceId === id).map(session => session.id));
+  const next = moveWorkspaceToGroup(deleteSessions(state, state.sessions.filter(session => session.workspaceId === id).map(session => session.id)), id, '');
   const spaces = next.spaces.filter(space => space.id !== id);
   if (!spaces.length) spaces.push(createWorkspace('我的工作区', 'blank'));
   return {...next, spaces, activeId: next.activeId === id ? spaces[0].id : next.activeId, notices: next.notices.filter(notice => notice.workspaceId !== id)};

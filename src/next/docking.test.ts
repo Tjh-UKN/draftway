@@ -56,10 +56,11 @@ describe('workspace pane tree', () => {
     expect(space.nodes.find(n => n.id === 'new-idea')).toMatchObject({parentId: 'act', title: '新节点', body: ''});
     expect(mapGraph(space, 'map-2').selectedId).toBe('new-idea');
     expect(space.graph).toEqual(primaryGraph);
-    state = updateWorkspace(state, 'design', w => updateMapGraph(w, {...mapGraph(w, 'map-2'), camera: {x: 42, y: 10, zoom: .7}, collapsed: ['think']}, 'map-2'));
+    state = updateWorkspace(state, 'design', w => updateMapGraph(w, {...mapGraph(w, 'map-2'), camera: {x: 42, y: 10, zoom: .7}, collapsed: ['think'], background: 'stars'}, 'map-2'));
     state = parseWorkbench(JSON.parse(JSON.stringify(state)));
     space = state.spaces[0];
-    expect(mapGraph(space, 'map-2')).toMatchObject({selectedId: 'new-idea', camera: {x: 42, y: 10, zoom: .7}, collapsed: ['think']});
+    expect(mapGraph(space, 'map-2')).toMatchObject({selectedId: 'new-idea', camera: {x: 42, y: 10, zoom: .7}, collapsed: ['think'], background: 'stars'});
+    expect(space.graph.background).toBeUndefined();
     expect(focusedGroup(space.dock).activeId).toBe('map-2');
     expect(closeDockTab(space.dock, 'map-2').tabs.map(t => t.id)).toEqual(['workspace']);
     expect(space.nodes.some(n => n.id === 'new-idea')).toBe(true);

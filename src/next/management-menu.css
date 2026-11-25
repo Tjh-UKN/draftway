@@ -1,11 +1,12 @@
 .management-context-menu{position:fixed;z-index:2000;min-width:176px;max-height:calc(100vh - 16px);overflow-x:hidden;overflow-y:auto;padding:6px;border:1px solid var(--app-line,#00000012);border-radius:12px;background:var(--app-panel,#fff);color:var(--app-text,#0a0a0a);box-shadow:0 1px 2px var(--app-shadow,#0000000a),0 8px 24px var(--app-shadow,#00000014);outline:none;user-select:none;animation:management-menu-in 150ms ease-out}
-.management-context-menu [role=menuitem]{position:relative;display:flex;align-items:center;gap:8px;width:100%;padding:5px 10px;border-radius:6px;text-align:left;font:400 13px/16px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","Noto Sans",Arial,sans-serif;white-space:nowrap;cursor:default;outline:none}
-.management-context-menu [role=menuitem]:focus{background:var(--app-hover,#00000014)}
-.management-context-menu [role=menuitem]>svg{flex-shrink:0;pointer-events:none;color:var(--app-muted,#696969)}
+.management-context-menu :is([role=menuitem],[role=menuitemradio]){position:relative;display:flex;align-items:center;gap:8px;width:100%;padding:5px 10px;border-radius:6px;text-align:left;font:400 13px/16px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","Noto Sans",Arial,sans-serif;white-space:nowrap;cursor:default;outline:none}
+.management-context-menu :is([role=menuitem],[role=menuitemradio]):focus{background:var(--app-hover,#00000014)}
+.management-context-menu :is([role=menuitem],[role=menuitemradio])>svg{flex-shrink:0;pointer-events:none;color:var(--app-muted,#696969)}
+.management-context-menu [role=menuitemradio]>.management-menu-check{margin-left:auto;color:var(--app-accent,#53515d)}
 .management-context-menu [role=menuitem].danger-text{color:var(--app-danger,#b20010)}
 .management-context-menu [role=menuitem].danger-text>svg{color:currentColor}
 .management-context-menu [role=menuitem].danger-text:focus{background:var(--app-danger-bg,#e400141a)}
-.management-context-menu [role=menuitem]:disabled{opacity:.4;pointer-events:none}
+.management-context-menu :is([role=menuitem],[role=menuitemradio]):disabled{opacity:.4;pointer-events:none}
 .management-menu-separator{height:1px;margin:6px -6px;background:var(--app-line,#00000012)}
 .management-menu-shortcut{margin-left:auto;padding-left:16px;flex-shrink:0;color:var(--app-muted,#696969)}
 @keyframes management-menu-in{from{opacity:0}to{opacity:1}}

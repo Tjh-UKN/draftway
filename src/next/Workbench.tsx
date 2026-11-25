@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode} from 'react';
 import {invoke} from '@tauri-apps/api/core';
-import {BookOpen, Bell, ChevronDown, ChevronRight, CircleAlert, ExternalLink, FolderOpen, Globe, MessageSquare, Pencil, Plus, Search, Settings2, Terminal, Trash2, Puzzle, X} from 'lucide-react';
+import {ArrowDown, ArrowUp, BookOpen, Bell, ChevronDown, ChevronRight, CircleAlert, FolderInput, FolderOpen, FolderPlus, Globe, LayoutGrid, MessageSquare, Pencil, Plus, Search, Settings2, Terminal, Trash2, Puzzle, X} from 'lucide-react';
 import {AppearancePicker} from '../AppearancePicker';
 import {useAppearance} from '../appearance';
 import {addSubtask, closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, mapGraph, openMapTab, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, reviewUrl, editNodeBody, renameMapNode, sessionNodeIds, shellStorageKey, updateMapGraph, updateWorkspace, type AgentSession, type GraphState, type Notice, type Workspace, type WorkbenchState} from './core';
@@ -37,10 +37,20 @@ import {boundedText} from './text';
 import {Dialog, Empty, Star} from './ui';
 
 import {WorkspaceEntry} from './WorkspaceEntry';
+import {MoveWorkspaceDialog, WorkspaceGroupDialog, WorkspaceGroupEntry, WorkspaceGroupField} from './WorkspaceGroups';
+import {dissolveWorkspaceGroup, expandWorkspaceGroup, moveWorkspaceGroup, moveWorkspaceToGroup, updateWorkspaceGroup, workspaceGroupOf, type WorkspaceGroup} from './workspace-groups';
+import {useWorkspaceDrag} from './workspace-drag';
 import {ManagementMenu, type ManagementAction} from './ManagementMenu';
 import {assertSessionsIdle, deleteSessions, deleteWorkspace, renameSession} from './session-management';
 import {DeleteDialog, RenameSessionDialog, SessionManagement} from './SessionManagement';
 import {LocalServices, type LocalService} from './LocalServices';
+import {DesktopWindowControls} from './DesktopWindowControls';
+
+type WorkbenchMenu = {x: number; y: number; keyboard?: boolean} & (
+  {kind: 'create'; trigger: HTMLButtonElement} |
+  {kind: 'workspace' | 'session' | 'group'; id: string; name: string}
+);
+
 function freshWorkbench(){const space=createWorkspace('我的工作区','blank');return initialWorkbench({version:2,activeId:space.id,spaces:[space]});}
 function loadWorkbench() {
   try {
@@ -62,13 +72,19 @@ export default function Workbench() {
   const [dialog, setDialog] = useState<'workspace' | 'settings' | 'plugins' | 'search' | 'link' | 'customize' | 'localServices' | null>(null);
   const [newNodeId, setNewNodeId] = useState<string | null>(null);
   const [inbox, setInbox] = useState(false);
-  const [managementMenu, setManagementMenu] = useState<{kind: 'workspace' | 'session'; id: string; name: string; x: number; y: number; keyboard?: boolean} | null>(null);
+  const [managementMenu, setManagementMenu] = useState<WorkbenchMenu | null>(null);
   const [renamingSession, setRenamingSession] = useState<AgentSession | null>(null);
   const [renamingWorkspace, setRenamingWorkspace] = useState<Workspace | null>(null);
+  const [workspaceCreationGroup, setWorkspaceCreationGroup] = useState('');
+  const [groupEditor, setGroupEditor] = useState<{id?: string} | null>(null);
+  const [movingWorkspaceId, setMovingWorkspaceId] = useState<string | null>(null);
   const [deletion, setDeletion] = useState<{kind: 'workspace' | 'session'; id: string; name: string} | null>(null);
   const [knowledgeOpen,setKnowledgeOpen]=useState(false);
   const [knowledgeVisited,setKnowledgeVisited]=useState(false);
   const space = state.spaces.find(s => s.id === state.activeId)!;
+  const workspaceGroups = state.workspaceGroups ?? [];
+  const movingWorkspace = state.spaces.find(item => item.id === movingWorkspaceId);
+  const editingGroup = workspaceGroups.find(item => item.id === groupEditor?.id);
   const focusedTabId = focusedGroup(space.dock).activeId;
   const selected = space.nodes.find(n => n.id === mapGraph(space, focusedTabId).selectedId);
   const sessions = state.sessions.filter(s => s.workspaceId === space.id);
@@ -76,6 +92,8 @@ export default function Workbench() {
   const change: ChangeState = useCallback(update => dispatch({type:'change',update}), []);
   const edit=(workspaceId:string,update:(value:WorkbenchState)=>WorkbenchState,key?:string)=>dispatch({type:'edit',workspaceId,update,key,at:Date.now()});
   const persistence = useWorkbenchPersistence(state, change, loaded.error);
+  const workspaceDrag = useWorkspaceDrag(persistence.readOnly, (id, target) =>
+    change(s => moveWorkspaceToGroup(s, id, target.groupId, target.neighbor)));
   const knowledge=useKnowledgeCollection(state,persistence.ready&&!persistence.readOnly&&persistence.saved);
   const nativeBrowsers = useNativeBrowserHost(state, change, persistence.ready);
   const agents = useNativeAgents(state, change, persistence.ready,!knowledgeOpen,!persistence.readOnly);
@@ -131,15 +149,24 @@ export default function Workbench() {
     const tick = () => change(s => reconcileSessions(s, Date.now()));
     tick(); const timer = setInterval(tick, 500); return () => clearInterval(timer);
   }, [change, persistence.ready]);
-  function switchSpace(id: string) {setKnowledgeOpen(false);change(s => ({...s, activeId: id})); setDialog(null); setNewNodeId(null); setInbox(false);}
+  function switchSpace(id: string) {setKnowledgeOpen(false);change(s => ({...expandWorkspaceGroup(s, id), activeId: id})); setDialog(null); setNewNodeId(null); setInbox(false);}
+  function showWorkspaceCreation(groupId = '') {
+    setWorkspaceCreationGroup(groupId);
+    setKnowledgeOpen(false);
+    setDialog('workspace');
+  }
+  function beginWorkspaceRename(workspace: Workspace) {
+    change(s => expandWorkspaceGroup(s, workspace.id));
+    setRenamingWorkspace(workspace);
+  }
   function openAgent(id: string) {
     setKnowledgeOpen(false);
-    change(s => {const next = openSession(s, id); return updateWorkspace(next, next.activeId, w => ({...w, sessionPanelOpen: false}));});
+    change(s => {const next = openSession(s, id); return updateWorkspace(expandWorkspaceGroup(next, next.activeId), next.activeId, w => ({...w, sessionPanelOpen: false}));});
     setInbox(false); setDialog(null);
   }
   function openReport(workspaceId: string, url: string, file: string) {
     setKnowledgeOpen(false);
-    change(s => ({...updateWorkspace(s, workspaceId, w => ({...w, dock: openDockTab(w.dock, {id: `report:${url}:${file}`, kind: 'report', title: 'PR 检视报告', url, file})})), activeId: workspaceId}));
+    change(s => ({...updateWorkspace(expandWorkspaceGroup(s, workspaceId), workspaceId, w => ({...w, dock: openDockTab(w.dock, {id: `report:${url}:${file}`, kind: 'report', title: 'PR 检视报告', url, file})})), activeId: workspaceId}));
     setInbox(false); setDialog(null);
   }
   function openNotice(notice: Notice) {
@@ -287,9 +314,11 @@ export default function Workbench() {
     const graph = mapGraph(space, tab.id);
     const selected = space.nodes.find(n => n.id === graph.selectedId && n.id !== newNodeId);
     const nodeSessions = selected ? sessions.filter(s => sessionNodeIds(s).includes(selected.id) || selected.updates?.some(u=>u.sessionId===s.id)) : [];
+    const updates = (selected?.updates ?? []).filter(update => update.id !== 'migration-task-state').reverse();
     const changeView = (graph: GraphState) => changeGraph(graph, tab.id);
     return <div className="workspace-map-scene">
-      <main className="workspace-map" aria-label="工作区"><GraphView key={`${space.id}-${tab.id}`} space={{...space, graph}} onChange={changeView} editing={{
+      <main className="workspace-map" aria-label="工作区"><GraphView key={`${space.id}-${tab.id}`} space={{...space, graph}} onChange={changeView}
+        onBackgroundChange={persistence.readOnly ? undefined : background => updateSpace(w => updateMapGraph(w, {...mapGraph(w, tab.id), background}, tab.id))} editing={{
         canUndo:!!editor.past[space.id]?.length,canRedo:!!editor.future[space.id]?.length,error:editor.error,
         undo:()=>{setNewNodeId(null);dispatch({type:'undo',workspaceId:space.id});},redo:()=>{setNewNodeId(null);dispatch({type:'redo',workspaceId:space.id});},
         sibling:nodeId=>{const id=crypto.randomUUID();edit(space.id,s=>createMapSibling(s,space.id,nodeId,id,tab.id));setNewNodeId(id);},
@@ -299,52 +328,163 @@ export default function Workbench() {
         paste:(nodeId,text,token)=>{try{const internal=text===undefined||token===nodeClipboard.current?.token?nodeClipboard.current:null;const nodes=clipboardNodes(text??nodeClipboard.current?.text??'',internal);const ids=nodes.map(()=>crypto.randomUUID());edit(space.id,s=>pasteMapBranch(s,space.id,nodeId,nodes,ids,tab.id));return ids[0]||null;}catch(error){dispatch({type:'error',message:String(error)});return null;}},
         failure:message=>dispatch({type:'error',message})
       }} onInspect={id=>{setNewNodeId(null);changeView({...graph,selectedId:id});}} onRename={(id,title)=>{edit(space.id,s=>renameMapNode(s,space.id,id,title));if(id===newNodeId){setNewNodeId(null);changeView({...graph,selectedId:null});}}} autoEditId={newNodeId === graph.selectedId ? newNodeId : null} onAdd={parentId => {if (space.nodes.length >= 250) return; const id = crypto.randomUUID(); edit(space.id,s => createMapNode(s, space.id, parentId, id, tab.id)); setNewNodeId(id);}} sessionCounts={sessionCounts}/></main>
-      {selected && <NodeInspector key={`${space.id}-${selected.id}`} space={space} node={selected} onDelete={()=>{setNewNodeId(null);edit(space.id,s=>deleteMapBranch(s,space.id,selected.id));}} onEditBody={value=>edit(space.id,s=>editNodeBody(s,space.id,selected.id,value),"body:"+selected.id)} onClose={() => changeView({...graph, selectedId: null})} onFocus={() => changeView({...graph, focusId: selected.id, selectedId: null, collapsed: [], camera: null})}>
-        <div className="inspector-scroll unified-node-details"><NodeOverview space={space} node={selected} onDue={due=>edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,due}:n)})))} onOpen={id=>changeView({...graph,selectedId:id,focusId:null,camera:null})} onAdd={()=>{const id=crypto.randomUUID();edit(space.id,s=>{const next=addSubtask(s,space.id,selected.id,id);return next===s?s:updateWorkspace(next,space.id,w=>updateMapGraph(w,{...mapGraph(w,tab.id),selectedId:id,focusId:null,collapsed:graph.collapsed.filter(value=>value!==selected.id),camera:null},tab.id));});setNewNodeId(id);}}/>
+      {selected && <NodeInspector key={`${space.id}-${selected.id}`} node={selected} onDelete={()=>{setNewNodeId(null);edit(space.id,s=>deleteMapBranch(s,space.id,selected.id));}} onEditBody={value=>edit(space.id,s=>editNodeBody(s,space.id,selected.id,value),"body:"+selected.id)} onClose={() => changeView({...graph, selectedId: null})} onFocus={() => changeView({...graph, focusId: selected.id, selectedId: null, collapsed: [], camera: null})}>
+        <NodeOverview space={space} node={selected} onDue={due=>edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,due}:n)})))} onOpen={id=>changeView({...graph,selectedId:id,focusId:null,camera:null})} onAdd={()=>{const id=crypto.randomUUID();edit(space.id,s=>{const next=addSubtask(s,space.id,selected.id,id);return next===s?s:updateWorkspace(next,space.id,w=>updateMapGraph(w,{...mapGraph(w,tab.id),selectedId:id,focusId:null,collapsed:graph.collapsed.filter(value=>value!==selected.id),camera:null},tab.id));});setNewNodeId(id);}}/>
           <NodeMaterials node={selected} workspaceId={space.id} cwd={space.cwd} sessions={nodeSessions} readOnly={persistence.readOnly}
             onChange={update => updateNodeMaterials(selected.id, update)} onOpen={material => openMaterial(material, selected)}/>
-          <section className="node-detail-section"><div className="detail-section-heading"><h3>关联会话（{nodeSessions.length}）</h3></div><BackendPicker text="新建会话" label={`在${selected.title}中新建会话`} onChoose={agent => startSession(agent, selected.id)} onOpen={() => {setInbox(false); updateSpace(w => ({...w, sessionPanelOpen: false}));}} onLink={() => setDialog('link')}/>{nodeSessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}{!nodeSessions.length && <p className="quiet-note">还没有关联会话</p>}</section>
-          <section className="node-detail-section"><div className="detail-section-heading"><h3>更新记录</h3></div><div className="node-timeline">{[...(selected.updates || [])].filter(update=>update.id!=='migration-task-state').reverse().map(update => {const source = sessions.find(s => s.id === update.sessionId); return <div key={update.id}><strong>{update.text}</strong><small>{update.at === 0 && update.id.startsWith('migration-') ? '旧数据迁移' : new Date(update.at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})} · {source ? `${agentNames[source.agentId || 'codex']}${source.integrationId === 'demo-agent' ? '（模拟）' : ''}` : '我'}</small>{source && <button className="text-button" onClick={() => openAgent(source.id)}>查看来源会话<ChevronRight size={12}/></button>}</div>;})}{!selected.updates?.length && <p className="quiet-note">执行结果与手动记录会留在这里</p>}</div><ProgressForm onSubmit={text => {const id = crypto.randomUUID(); const at = Date.now(); edit(space.id,s=>updateWorkspace(s,space.id,w=>({...w,nodes:w.nodes.map(n=>n.id===selected.id?{...n,updates:[...(n.updates||[]),{id,text,at}]}:n)})));}}/></section>
-        </div>
+          <section className="node-detail-section">
+            <div className="detail-section-heading">
+              <h3>关联会话{nodeSessions.length > 0 && <span className="detail-count">{nodeSessions.length}</span>}</h3>
+              <BackendPicker text="新建会话" label={`在${selected.title}中新建会话`} onChoose={agent => startSession(agent, selected.id)}
+                onOpen={() => {setInbox(false); updateSpace(w => ({...w, sessionPanelOpen: false}));}} onLink={() => setDialog('link')}/>
+            </div>
+            {nodeSessions.map(session => <SessionRow key={session.id} state={state} session={session} onOpen={() => openAgent(session.id)}/>)}
+          </section>
+          <section className="node-detail-section">
+            <div className="detail-section-heading"><h3>更新记录{updates.length > 0 && <span className="detail-count">{updates.length}</span>}</h3></div>
+            {updates.length > 0 && <div className="node-timeline">{updates.map(update => {
+              const source = sessions.find(s => s.id === update.sessionId);
+              const time = update.at === 0 && update.id.startsWith('migration-') ? '旧数据迁移' : new Date(update.at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'});
+              const author = source ? `${agentNames[source.agentId || 'codex']}${source.integrationId === 'demo-agent' ? '（模拟）' : ''}` : '我';
+              return <div key={update.id}>
+                <strong>{update.text}</strong><small>{time} · {author}</small>
+                {source && <button className="text-button" onClick={() => openAgent(source.id)}>查看来源会话<ChevronRight size={12}/></button>}
+              </div>;
+            })}</div>}
+            <ProgressForm onSubmit={text => {
+              const update = {id: crypto.randomUUID(), at: Date.now(), text};
+              edit(space.id, s => updateWorkspace(s, space.id, w => ({...w, nodes: w.nodes.map(n => n.id === selected.id ? {...n, updates: [...(n.updates ?? []), update]} : n)})));
+            }}/>
+          </section>
       </NodeInspector>}
     </div>;
   }
-  if (!persistence.ready) return <div className="workbench-loading">正在恢复工作区…</div>;
-  const managementActions: ManagementAction[] = !managementMenu ? [] : managementMenu.kind === 'workspace' ? [
+  if (!persistence.ready) return <div className="workbench-loading" data-tauri-drag-region>正在恢复工作区…<DesktopWindowControls/></div>;
+  const canCreateWorkspace = !persistence.readOnly && state.spaces.length < 20;
+  const createMenuOpen = managementMenu?.kind === 'create';
+  const workspaceTitle = knowledgeOpen ? '个人知识库' : space.name;
+  const inlineTabs = !knowledgeOpen && space.dock.root.kind === 'group';
+  const windowTitle = <h1 title={workspaceTitle} onDoubleClick={() => {if (!knowledgeOpen && !persistence.readOnly) beginWorkspaceRename(space);}}>{workspaceTitle}</h1>;
+  const windowActions = <div className="workspace-titlebar-actions">
+    <div className="workspace-actions">
+      {!knowledgeOpen && <>
+        <button className={`session-panel-toggle ${space.sessionPanelOpen ? 'active' : ''}`} aria-expanded={space.sessionPanelOpen}
+          aria-controls="workspace-session-panel" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: !w.sessionPanelOpen}))}>
+          会话记录（{sessions.length}）<ChevronDown size={13}/>{sessions.some(s => s.unread) && <i className="unread-dot"/>}
+        </button>
+        {agents && <button className="text-button" aria-label="本地服务" title="本地服务" onClick={() => setDialog('localServices')}><Globe size={15}/></button>}
+      </>}
+      <button className="icon-button bell-button" aria-label={`通知${unread ? `，${unread}条未读` : ''}`} title="通知" aria-expanded={inbox}
+        onClick={() => setInbox(v => !v)}><Bell size={15}/>{!!unread && <span>{unread}</span>}</button>
+      {!knowledgeOpen && <button className="text-button" aria-label="自定工作区" title="自定工作区"
+        onClick={() => setDialog('customize')}><Settings2 size={15}/></button>}
+    </div>
+    <DesktopWindowControls/>
+  </div>;
+  const groupsByWorkspace = new Set(workspaceGroups.flatMap(group => group.workspaceIds));
+  const ungroupedWorkspaces = state.spaces.filter(item => !groupsByWorkspace.has(item.id));
+  const menuGroupIndex = managementMenu?.kind === 'group' ? workspaceGroups.findIndex(group => group.id === managementMenu.id) : -1;
+  const renderWorkspace = (item: Workspace) => {
+    const index = state.spaces.indexOf(item);
+    const count = state.notices.filter(n => n.workspaceId === item.id && !n.read).length;
+    const running = state.runs.some(r => r.state === 'running' && state.sessions.some(s => s.id === r.sessionId && s.workspaceId === item.id)) || !!(item.review && background.reviews[item.id]?.runningCount);
+    return <WorkspaceEntry key={item.id} space={item} active={!knowledgeOpen && item.id === space.id} editing={renamingWorkspace?.id === item.id}
+      dragging={workspaceDrag.dragging === item.id} dropEdge={workspaceDrag.destination?.neighbor?.id === item.id ? workspaceDrag.destination.neighbor.position : undefined}
+      disabled={persistence.readOnly} title={item.name + (index < 9 ? ' · Alt+' + (index + 1) : '')} onOpen={() => switchSpace(item.id)}
+      onRename={() => beginWorkspaceRename(item)} onSave={name => change(s => updateWorkspace(s, item.id, w => ({...w, name})))} onFinish={() => setRenamingWorkspace(null)}>
+      {count ? <span className="count-badge dark">{count}</span> : running ? <span className="running-dot" aria-label="有任务运行中"/> : null}
+    </WorkspaceEntry>;
+  };
+  const managementActions: ManagementAction[] = !managementMenu ? [] : managementMenu.kind === 'create' ? [
+    {label: '新建工作区', icon: LayoutGrid, disabled: !canCreateWorkspace, run: () => showWorkspaceCreation()},
+    {label: '新建分组', icon: FolderPlus, disabled: persistence.readOnly, run: () => setGroupEditor({})},
+  ] : managementMenu.kind === 'workspace' ? [
     {label: '打开工作区', icon: FolderOpen, run: () => switchSpace(managementMenu.id)},
     {label: '重命名工作区', icon: Pencil, shortcut: 'F2', disabled: !persistence.ready || persistence.readOnly, run: () => setRenamingWorkspace(state.spaces.find(w => w.id === managementMenu.id) || null)},
     {label: '自定工作区', icon: Settings2, run: () => {switchSpace(managementMenu.id); setDialog('customize');}},
-    {label: '删除工作区', icon: Trash2, separatorBefore: true, danger: true, disabled: !persistence.ready || persistence.readOnly, run: () => setDeletion(managementMenu)},
+    ...(workspaceGroups.length ? [{label: '移动到分组', icon: FolderInput, disabled: persistence.readOnly, run: () => setMovingWorkspaceId(managementMenu.id)}] : []),
+    {label: '删除工作区', icon: Trash2, separatorBefore: true, danger: true, disabled: persistence.readOnly, run: () => setDeletion({kind: 'workspace', id: managementMenu.id, name: managementMenu.name})},
+  ] : managementMenu.kind === 'group' ? [
+    {label: '在组内新建工作区', icon: Plus, disabled: !canCreateWorkspace, run: () => showWorkspaceCreation(managementMenu.id)},
+    {label: '重命名分组', icon: Pencil, shortcut: 'F2', disabled: persistence.readOnly, run: () => setGroupEditor({id: managementMenu.id})},
+    {label: '上移分组', icon: ArrowUp, disabled: persistence.readOnly || menuGroupIndex < 1,
+      run: () => change(s => moveWorkspaceGroup(s, managementMenu.id, -1))},
+    {label: '下移分组', icon: ArrowDown, disabled: persistence.readOnly || menuGroupIndex < 0 || menuGroupIndex === workspaceGroups.length - 1,
+      run: () => change(s => moveWorkspaceGroup(s, managementMenu.id, 1))},
+    {label: '解散分组', icon: FolderOpen, separatorBefore: true, disabled: persistence.readOnly,
+      run: () => change(s => dissolveWorkspaceGroup(s, managementMenu.id))},
   ] : [
     {label: '打开会话', icon: MessageSquare, run: () => openAgent(managementMenu.id)},
     {label: '重命名会话', icon: Pencil, disabled: !persistence.ready || persistence.readOnly, run: () => setRenamingSession(state.sessions.find(s => s.id === managementMenu.id) || null)},
     {label: '关闭页签', icon: X, disabled: !state.spaces.some(w => w.dock.tabs.some(t => t.kind === 'session' && t.sessionId === managementMenu.id)), run: () => {const session = state.sessions.find(s => s.id === managementMenu.id); if (session) change(s => closeSessionTab(s, session.workspaceId, session.id));}},
-    {label: '删除会话', icon: Trash2, separatorBefore: true, danger: true, disabled: !persistence.ready || persistence.readOnly, run: () => setDeletion(managementMenu)},
+    {label: '删除会话', icon: Trash2, separatorBefore: true, danger: true, disabled: !persistence.ready || persistence.readOnly, run: () => setDeletion({kind: 'session', id: managementMenu.id, name: managementMenu.name})},
   ];
   return <AgentRuntimeContext.Provider value={agentRuntime}><div className="workbench-shell map-first-shell" onContextMenu={event => {
     if ((event.target as Element).closest('input, textarea, [contenteditable=true]')) return;
-    const element = (event.target as Element).closest<HTMLElement>('[data-workspace-id], [data-session-id], [data-dock-tab-id]');
+    const element = (event.target as Element).closest<HTMLElement>('[data-workspace-id], [data-workspace-group-id], [data-session-id], [data-dock-tab-id]');
     if (!element) return;
     const workspace = state.spaces.find(w => w.id === element.dataset.workspaceId);
+    const group = workspaceGroups.find(item => item.id === element.dataset.workspaceGroupId);
     const tab = space.dock.tabs.find(t => t.id === element.dataset.dockTabId);
     const session = state.sessions.find(s => s.id === (element.dataset.sessionId || (tab?.kind === 'session' ? tab.sessionId : undefined)));
-    const target = workspace || session;
+    const target = workspace || group || session;
     if (!target) return;
     event.preventDefault();
     const box = element.getBoundingClientRect();
-    setManagementMenu({kind: workspace ? 'workspace' : 'session', id: target.id, name: workspace ? workspace.name : session!.title, x: event.clientX || box.left, y: event.clientY || box.bottom, keyboard: !event.clientX && !event.clientY});
+    setManagementMenu({kind: workspace ? 'workspace' : group ? 'group' : 'session', id: target.id,
+      name: workspace?.name ?? group?.name ?? session!.title, x: event.clientX || box.left, y: event.clientY || box.bottom,
+      keyboard: !event.clientX && !event.clientY});
   }}>
-    <aside className="shell-sidebar" aria-label="主导航"><div className="sidebar-brand"><Star/><span>Draftway</span></div>
-      <nav className="global-navigation"><button onClick={() => {setKnowledgeOpen(false);setDialog('workspace');}} disabled={state.spaces.length >= 20}><Plus size={17}/>新建工作区</button><button onClick={() => setDialog('search')}><Search size={17}/>搜索<kbd>Ctrl K</kbd></button><button className={knowledgeOpen?'active':''} aria-current={knowledgeOpen?'page':undefined} onClick={()=>{setKnowledgeVisited(true);setKnowledgeOpen(true);setDialog(null);setInbox(false);}}><BookOpen size={17}/>个人知识库</button></nav>
-      <div className="sidebar-label">工作区</div><nav className="workspace-list" aria-label="工作区">{state.spaces.map((item, index) => {
-        const count = state.notices.filter(n => n.workspaceId === item.id && !n.read).length;
-        const running = state.runs.some(r => r.state === 'running' && state.sessions.some(s => s.id === r.sessionId && s.workspaceId === item.id)) || !!(item.review && background.reviews[item.id]?.runningCount);
-        return <WorkspaceEntry key={item.id} space={item} active={!knowledgeOpen && item.id === space.id} editing={renamingWorkspace?.id === item.id} disabled={!persistence.ready || persistence.readOnly} title={`${item.name}${index < 9 ? ` · Alt+${index + 1}` : ''}`} onOpen={() => switchSpace(item.id)} onRename={() => setRenamingWorkspace(item)} onSave={name => change(s => updateWorkspace(s, item.id, w => ({...w, name})))} onFinish={() => setRenamingWorkspace(null)}>{count ? <span className="count-badge dark">{count}</span> : running ? <span className="running-dot" aria-label="有任务运行中"/> : null}</WorkspaceEntry>;
-      })}</nav><div className="sidebar-bottom"><span><span className="profile-avatar">我</span>个人空间</span><button onClick={() => setDialog('settings')}><Settings2 size={16}/>接入与设置</button><button onClick={()=>setDialog('plugins')}><Puzzle size={16}/>插件</button><button onClick={()=>openBusiness('overview')}><ExternalLink size={14}/>个人工作台</button></div>
+    <div className="workspace-frame">
+    <aside className="shell-sidebar" aria-label="主导航">
+      <div className="sidebar-brand" data-tauri-drag-region><Star size={16}/><span>Draftway</span></div>
+      <nav className="global-navigation">
+        <div className="sidebar-search-row">
+          <button type="button" className="sidebar-search" onClick={() => setDialog('search')}><Search size={16}/>搜索<kbd>Ctrl K</kbd></button>
+          <button type="button" className="icon-button sidebar-create" id="sidebar-create-button" aria-label="新建" title="新建"
+            aria-haspopup="menu" aria-expanded={createMenuOpen} disabled={persistence.readOnly} onClick={event => {
+              const trigger = event.currentTarget;
+              const box = trigger.getBoundingClientRect();
+              setManagementMenu(createMenuOpen ? null : {kind: 'create', trigger, x: box.left, y: box.bottom + 6, keyboard: event.detail === 0});
+            }}><Plus size={18}/></button>
+        </div>
+        <button className={knowledgeOpen?'active':''} aria-current={knowledgeOpen?'page':undefined} onClick={()=>{setKnowledgeVisited(true);setKnowledgeOpen(true);setDialog(null);setInbox(false);}}><BookOpen size={17}/>个人知识库</button>
+      </nav>
+      <div className="sidebar-label">工作区</div>
+      <nav className="workspace-list" aria-label="工作区" {...workspaceDrag.handlers}>
+        {workspaceGroups.map(group => <WorkspaceGroupEntry key={group.id} group={group} active={!knowledgeOpen && group.workspaceIds.includes(space.id)}
+          dropping={workspaceDrag.destination?.groupId === group.id && !workspaceDrag.destination.neighbor}
+          canRename={!persistence.readOnly}
+          onToggle={() => change(s => updateWorkspaceGroup(s, group.id, item => ({...item, collapsed: !item.collapsed})))}
+          onRename={() => setGroupEditor({id: group.id})}
+          onMenu={event => {
+            const box = event.currentTarget.getBoundingClientRect();
+            setManagementMenu({kind: 'group', id: group.id, name: group.name, x: box.right, y: box.bottom, keyboard: event.detail === 0});
+          }}>
+          {group.workspaceIds.map(id => state.spaces.find(item => item.id === id)).filter(item => item !== undefined).map(renderWorkspace)}
+        </WorkspaceGroupEntry>)}
+        {ungroupedWorkspaces.map(renderWorkspace)}
+        {workspaceDrag.dragging && groupsByWorkspace.has(workspaceDrag.dragging) &&
+          <div className="sidebar-label workspace-top-level-drop" data-workspace-drop-ungrouped
+            data-workspace-drop-target={workspaceDrag.destination?.groupId === '' && !workspaceDrag.destination.neighbor || undefined}>移到顶层</div>}
+      </nav>
+      <div className="sidebar-bottom">
+        <span><span className="profile-avatar">我</span><span>个人空间</span></span>
+        <div className="sidebar-utilities">
+          <button className="icon-button" aria-label="接入与设置" title="接入与设置" onClick={() => setDialog('settings')}><Settings2 size={15}/></button>
+          <button className="icon-button" aria-label="插件" title="插件" onClick={()=>setDialog('plugins')}><Puzzle size={15}/></button>
+          <button className="icon-button" aria-label="个人工作台" title="个人工作台" onClick={()=>openBusiness('overview')}><LayoutGrid size={14}/></button>
+        </div>
+      </div>
     </aside>
-    <div className="shell-body"><header className="workspace-heading dock-workspace-heading"><div className="workspace-title-row"><h1 onDoubleClick={() => {if (!knowledgeOpen && persistence.ready && !persistence.readOnly) setRenamingWorkspace(space);}}>{knowledgeOpen?'个人知识库':space.name}</h1><div className="workspace-actions">{!knowledgeOpen&&<><button className={`session-panel-toggle ${space.sessionPanelOpen ? 'active' : ''}`} aria-expanded={space.sessionPanelOpen} aria-controls="workspace-session-panel" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: !w.sessionPanelOpen}))}>会话记录（{sessions.length}）<ChevronDown size={14}/>{sessions.some(s => s.unread) && <i className="unread-dot"/>}</button><span className="vertical-divider"/></>}{!knowledgeOpen && agents && <button className="text-button" aria-label="本地服务" title="本地服务" onClick={() => setDialog('localServices')}><Globe size={16}/><span>本地服务</span></button>}<button className="icon-button bell-button" aria-label={`通知${unread ? `，${unread}条未读` : ''}`} aria-expanded={inbox} onClick={() => setInbox(v => !v)}><Bell size={18}/>{!!unread && <span>{unread}</span>}</button>{!knowledgeOpen&&<button className="text-button" onClick={() => setDialog('customize')}><Settings2 size={16}/><span>自定工作区</span></button>}</div></div></header>
-    <div className="workspace-body workspace-map-body dock-workspace-body">
-      <div className="workspace-content-host" hidden={knowledgeOpen}><DockLayout key={space.id} state={state} space={space} onChange={update => updateSpace(w => ({...w, dock: update(w.dock)}))} onSelect={selectTab} onClose={closeTab} onCreate={createTab} render={(tab, active, visible) => {
+    <div className="shell-body">
+      {!inlineTabs && <header className="workspace-heading dock-workspace-heading" data-tauri-drag-region>
+        <div className="workspace-title-row" data-tauri-drag-region>{windowTitle}{windowActions}</div>
+      </header>}
+    <div className={`workspace-body workspace-map-body dock-workspace-body${inlineTabs ? ' with-inline-tabs' : ''}`}>
+      <div className="workspace-content-host" hidden={knowledgeOpen}><DockLayout key={space.id} state={state} space={space}
+        windowChrome={inlineTabs ? {title: windowTitle, actions: windowActions} : undefined}
+        onChange={update => updateSpace(w => ({...w, dock: update(w.dock)}))} onSelect={selectTab} onClose={closeTab} onCreate={createTab} render={(tab, active, visible) => {
         if (tab.kind === 'map') return mapView(tab);
         if (tab.kind === 'events') return <TasksView space={space} onOpen={openNode}/>;
         if (tab.kind === 'browser') return <BrowserView tab={tab} active={active&&!knowledgeOpen} onChange={updateTab} native={nativeBrowsers}/>;
@@ -359,16 +499,35 @@ export default function Workbench() {
       {!knowledgeOpen&&space.sessionPanelOpen && <aside className="workspace-session-panel" id="workspace-session-panel" aria-label="当前工作区会话"><header><h2>会话记录（{sessions.length}）</h2><button className="icon-button" aria-label="收起会话面板" onClick={() => updateSpace(w => ({...w, sessionPanelOpen: false}))}><X size={16}/></button></header><p className="quiet-note">{space.name} · 关闭页签后仍可在这里重新打开</p><SessionManagement key={space.id} state={state} workspaceId={space.id} disabled={!persistence.ready || persistence.readOnly} onOpen={openAgent} onRename={renameManagedSession} onDelete={session => setDeletion({kind: 'session', id: session.id, name: session.title})}/></aside>}
 
     </div>
-    <footer className="shell-status"><span>{(persistence.error || mapError) ? <><CircleAlert size={12}/>{persistence.error || mapError}<button onClick={persistence.retry}>{persistence.readOnly ? '重试读取' : '重试保存'}</button></> : <><span className="saved-dot"/>{persistence.saved ? '已保存到本机' : '正在保存'}</>}</span><span>Alt + 1…9 切换工作区 · Ctrl + Tab 切换最近页签</span></footer></div>
+    </div>
+    </div>
+    <footer className="shell-status"><span>{(persistence.error || mapError) ? <><CircleAlert size={12}/>{persistence.error || mapError}<button onClick={persistence.retry}>{persistence.readOnly ? '重试读取' : '重试保存'}</button></> : <><span className="saved-dot"/>{persistence.saved ? '已保存到本机' : '正在保存'}</>}</span><span>Alt + 1…9 切换工作区 · Ctrl + Tab 切换最近页签</span></footer>
     {inbox && <aside className="notification-panel" aria-label="通知中心"><header><h2>通知</h2><button className="text-button" onClick={() => change(s => ({...s, notices: s.notices.map(n => ({...n, read: true})), sessions: s.sessions.map(session => ({...session, unread: false}))}))}>全部已读</button><button className="icon-button" aria-label="关闭通知中心" onClick={() => setInbox(false)}><X size={16}/></button></header>{background.error && <p className="tool-error" role="alert">{background.error}</p>}{state.spaces.filter(w => w.review).map(w => {const status = background.reviews[w.id]; return <div className="review-status" key={w.id}><strong>{w.name}</strong><small>{!status ? agents ? '正在连接检视服务' : '请在 Windows 版跟踪状态' : !status.connected ? `连接中断 · ${status.error}` : status.error || `${status.runningCount} 个 PR 处理中${status.paused ? ' · 已暂停调度' : ''}`}</small>{status?.historyGap && <small>离线期间可能有遗漏，请查看原看板。</small>}{status?.reports.slice(0, 5).map(report => <button className="text-button" key={report.file} onClick={() => openReport(w.id, status.url, report.file)}>{report.prs.map(n => `#${n}`).join('、') || '检视报告'} · {report.state === 'running' ? '进行中' : report.state === 'succeeded' ? '已完成' : report.state === 'failed' ? '失败' : '状态待确认'}<ChevronRight size={12}/></button>)}</div>;})}{[...state.notices].reverse().map(n => <button key={n.id} className={`notice-row ${n.read ? '' : 'unread'}`} onClick={() => openNotice(n)}><Bell size={15}/><span><strong>{n.title}</strong><small>{n.body || state.sessions.find(s => s.id === n.sessionId)?.title || state.spaces.find(w => w.id === n.workspaceId)?.name}</small></span><ChevronRight size={14}/></button>)}{!state.notices.length && <Empty title="这里暂时很安静"/>}</aside>}
-    {managementMenu && <ManagementMenu x={managementMenu.x} y={managementMenu.y} keyboard={managementMenu.keyboard} actions={managementActions} onClose={() => setManagementMenu(null)}/>}
+    {managementMenu && <ManagementMenu key={managementMenu.kind} x={managementMenu.x} y={managementMenu.y} keyboard={managementMenu.keyboard}
+      trigger={createMenuOpen ? managementMenu.trigger : undefined} actions={managementActions} onClose={() => setManagementMenu(null)}/>}
 
     {renamingSession && <RenameSessionDialog session={renamingSession} onClose={() => setRenamingSession(null)} onSave={renameManagedSession}/>}
     {deletion && <DeleteDialog title={deletion.kind === 'workspace' ? '删除工作区' : '删除会话'} description={deletion.kind === 'workspace' ? `删除「${deletion.name}」的地图、布局，以及其中全部 ${state.sessions.filter(session => session.workspaceId === deletion.id).length} 个会话与执行记录。` : `删除「${deletion.name}」的消息、草稿、执行记录和会话产物。已保留到地图的内容继续保留。`} onClose={() => setDeletion(null)} onDelete={removeContent}/>}
-    {dialog === 'workspace' && <WorkspaceDialog templates={state.templates} onClose={() => setDialog(null)} onCreate={(name, templateId, cwd) => {
+    {groupEditor && (!groupEditor.id || editingGroup) && <WorkspaceGroupDialog group={editingGroup} groups={workspaceGroups}
+      onClose={() => setGroupEditor(null)} onSave={name => {
+        if (editingGroup) change(s => updateWorkspaceGroup(s, editingGroup.id, group => ({...group, name})));
+        else {
+          const group = {id: crypto.randomUUID(), name, workspaceIds: []};
+          change(s => ({...s, workspaceGroups: [...(s.workspaceGroups ?? []), group]}));
+        }
+        setGroupEditor(null);
+      }}/>}
+    {movingWorkspace && <MoveWorkspaceDialog name={movingWorkspace.name} groups={workspaceGroups}
+      currentGroup={workspaceGroupOf(state, movingWorkspace.id)?.id ?? ''} onClose={() => setMovingWorkspaceId(null)}
+      onMove={groupId => {
+        change(s => moveWorkspaceToGroup(s, movingWorkspace.id, groupId));
+        setMovingWorkspaceId(null);
+      }}/>}
+    {dialog === 'workspace' && <WorkspaceDialog templates={state.templates} groups={workspaceGroups} initialGroup={workspaceCreationGroup}
+      onClose={() => setDialog(null)} onCreate={(name, templateId, cwd, groupId) => {
       const template = state.templates?.find(item => item.id === templateId);
       const next = template ? fromTemplate(name, template) : createWorkspace(name, 'blank');
-      change(s => ({...s, activeId: next.id, spaces: [...s.spaces, {...next, cwd}]}));
+      change(s => s.spaces.length >= 20 ? s : moveWorkspaceToGroup({...s, activeId: next.id, spaces: [...s.spaces, {...next, cwd}]}, next.id, groupId));
       setDialog(null);
     }}/>}
 
@@ -389,14 +548,17 @@ export default function Workbench() {
 
   </div></AgentRuntimeContext.Provider>;
 }
-function WorkspaceDialog({onClose, onCreate, templates = []}: {
+function WorkspaceDialog({onClose, onCreate, templates = [], groups, initialGroup}: {
   onClose: () => void;
-  onCreate: (name: string, templateId: string, cwd?: string) => void;
+  onCreate: (name: string, templateId: string, cwd: string | undefined, groupId: string) => void;
   templates?: {id: string; name: string}[];
+  groups: WorkspaceGroup[];
+  initialGroup: string;
 }) {
   const agents = useAgentRuntime();
   const [name, setName] = useState('');
   const [templateId, setTemplateId] = useState('');
+  const [groupId, setGroupId] = useState(initialGroup);
   const [cwd, setCwd] = useState<string>();
   const [choosing, setChoosing] = useState(false);
   const [directoryError, setDirectoryError] = useState('');
@@ -418,11 +580,12 @@ function WorkspaceDialog({onClose, onCreate, templates = []}: {
   return <Dialog title="新建工作区" onClose={onClose}>
     <form onSubmit={event => {
       event.preventDefault();
-      if (!choosing && name.trim()) onCreate(name.trim(), templateId, cwd);
+      if (!choosing && name.trim()) onCreate(name.trim(), templateId, cwd, groupId);
     }}>
       <label className="field">工作区名称
         <input autoFocus required maxLength={40} placeholder="填写工作区主题" value={name} onChange={event => setName(event.target.value)}/>
       </label>
+      {!!groups.length && <WorkspaceGroupField groups={groups} value={groupId} onChange={setGroupId}/>}
       {agents && <section className="workspace-directory" aria-label="工作目录（可选）">
         <span>工作目录（可选）</span>
         <p>{cwd || '新会话使用默认工作区目录'}</p>

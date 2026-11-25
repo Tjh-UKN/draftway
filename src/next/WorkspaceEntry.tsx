@@ -1,10 +1,22 @@
 import {useLayoutEffect, useRef, useState, type ReactNode} from 'react';
+import {GripVertical} from 'lucide-react';
 import type {Workspace} from './core';
 import {SpaceSymbol} from './ui';
 
-export function WorkspaceEntry({space, active, editing, disabled, title, children, onOpen, onRename, onSave, onFinish}: {space: Workspace; active: boolean; editing: boolean; disabled: boolean; title: string; children?: ReactNode; onOpen: () => void; onRename: () => void; onSave: (name: string) => void; onFinish: () => void}) {
-  return <div className={`workspace-sidebar-row ${active ? 'active' : ''} ${editing ? 'editing' : ''}`} data-workspace-id={space.id} aria-current={active ? 'page' : undefined}>
-    {editing ? <><SpaceSymbol space={space}/><WorkspaceNameInput name={space.name} disabled={disabled} onSave={onSave} onFinish={onFinish}/></> : <button title={title} onClick={onOpen} onDoubleClick={() => {if (!disabled) onRename();}} onKeyDown={event => {if (event.key === 'F2' && !disabled) {event.preventDefault(); event.stopPropagation(); onRename();}}}><SpaceSymbol space={space}/><span>{space.name}</span>{children}</button>}
+export function WorkspaceEntry({space, active, editing, disabled, dragging, dropEdge, title, children, onOpen, onRename, onSave, onFinish}: {
+  space: Workspace; active: boolean; editing: boolean; disabled: boolean; dragging?: boolean; dropEdge?: 'before' | 'after';
+  title: string; children?: ReactNode; onOpen: () => void; onRename: () => void; onSave: (name: string) => void; onFinish: () => void;
+}) {
+  const draggable = !disabled && !editing;
+  return <div className={`workspace-sidebar-row ${active ? 'active' : ''} ${editing ? 'editing' : ''}`} data-workspace-id={space.id} aria-current={active ? 'page' : undefined}
+    data-workspace-draggable={draggable || undefined} data-workspace-dragging={dragging || undefined} data-workspace-drop-edge={dropEdge}>
+    {editing ? <><SpaceSymbol space={space}/><WorkspaceNameInput name={space.name} disabled={disabled} onSave={onSave} onFinish={onFinish}/></>
+      : <button title={title} onClick={onOpen} onDoubleClick={() => {if (!disabled) onRename();}} onKeyDown={event => {
+        if (event.key === 'F2' && !disabled) {event.preventDefault(); event.stopPropagation(); onRename();}
+      }}>
+        {draggable && <GripVertical className="workspace-grip" size={13} aria-hidden="true" data-workspace-grip/>}
+        <SpaceSymbol space={space}/><span>{space.name}</span>{children}
+      </button>}
   </div>;
 }
 

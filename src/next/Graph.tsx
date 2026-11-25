@@ -1,8 +1,10 @@
 import {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {ArrowLeft, Check, ChevronRight, Expand, Focus, Info, MessageSquare, Minus, Plus, Redo2, ScanLine, Trash2, Undo2, X} from 'lucide-react';
+import {ArrowLeft, ChevronDown, ChevronRight, Expand, Focus, Info, MessageSquare, Minus, Plus, Redo2, ScanLine, Trash2, Undo2, X} from 'lucide-react';
 import {isTask, placeNodes, taskChildren, type MindNode, type NodeKind} from './model';
 import NodeDot from '../NodeDot';
 import type {GraphState, Workspace} from './core';
+import {mapBackground, type MapBackground} from './graph-state';
+import {MapBackgroundPicker} from './MapBackgroundPicker';
 import type {NodeDrop,NodeClipboard,NodeSelection} from './node-operations';
 
 export interface MapCommands {
@@ -18,7 +20,11 @@ export function NodeGlyph({kind}: {kind: NodeKind; size?: number}) {
   return <NodeDot kind={kind}/>;
 }
 export const placeWorkspaceNodes = (space: Workspace) => placeNodes(space.nodes.map(n => ({...n, side: 1 as const})), space.graph.collapsed, space.graph.focusId);
-export function GraphView({space, onChange, onAdd, onRename, onInspect, autoEditId, sessionCounts,editing}: {space: Workspace; onChange: (graph: GraphState) => void; onAdd: (parentId: string) => void; onRename: (id: string, title: string) => void; onInspect: (id: string) => void; autoEditId?: string | null; sessionCounts: Record<string, number>;editing:MapCommands}) {
+export function GraphView({space, onChange, onAdd, onRename, onInspect, autoEditId, sessionCounts, editing, onBackgroundChange}: {
+  space: Workspace; onChange: (graph: GraphState) => void; onAdd: (parentId: string) => void;
+  onRename: (id: string, title: string) => void; onInspect: (id: string) => void; autoEditId?: string | null;
+  sessionCounts: Record<string, number>; editing: MapCommands; onBackgroundChange?: (value: MapBackground) => void;
+}) {
   const frame = useRef<HTMLDivElement>(null);
   const drag = useRef<{x: number; y: number; originX: number; originY: number} | null>(null);
   const [panning, setPanning] = useState(false);
@@ -35,8 +41,12 @@ export function GraphView({space, onChange, onAdd, onRename, onInspect, autoEdit
   const skipClick=useRef(false);
   const [dragPreview,setDragPreview]=useState<{id:string;x:number;y:number}|null>(null);
   const graph = space.graph;
+  const background = mapBackground(graph.background);
   const latest = useRef({graph, onChange}); latest.current = {graph, onChange};
   const positions = useMemo(() => placeWorkspaceNodes(space), [space.nodes, graph.collapsed, graph.focusId]);
+  const positionsById = useMemo(() => new Map(positions.map(item => [item.node.id, item])), [positions]);
+  const activeBranch = new Set<string>();
+  for (let id = graph.selectedId; id && !activeBranch.has(id); id = positionsById.get(id)?.node.parentId ?? null) activeBranch.add(id);
   const camera = graph.camera || {x: 0, y: 0, zoom: 1};
   const activeNode=(target:EventTarget|null)=>target instanceof Element?target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId||menu?.id||graph.selectedId||positions[0]?.node.id:graph.selectedId||positions[0]?.node.id;
   const focusNode=(id:string|null)=>requestAnimationFrame(()=>{
@@ -82,10 +92,28 @@ export function GraphView({space, onChange, onAdd, onRename, onInspect, autoEdit
     return () => viewport.removeEventListener('wheel', wheel);
   }, []);
   function zoom(delta: number) {onChange({...graph, camera: {...camera, zoom: Math.max(.2, Math.min(2, Math.round((camera.zoom + delta) * 100) / 100))}});}
-  return <div className={`graph-view workspace-graph ${panning ? 'panning' : ''}`} ref={frame} aria-label="工作区地图" data-map-workspace-id={space.id} tabIndex={0}
+  const branchAction = graph.collapsed.length ? '展开分支' : '折叠分支';
+  return <div className="graph-workbench">
+    <div className="graph-tools" role="group" aria-label="地图工具">
+      <button className="icon-button" aria-label="撤销地图操作" title="撤销 Ctrl Z" disabled={!editing.canUndo} onClick={()=>{editing.undo();frame.current?.focus();}}><Undo2 size={15}/></button>
+      <button className="icon-button" aria-label="重做地图操作" title="重做 Ctrl Y" disabled={!editing.canRedo} onClick={()=>{editing.redo();frame.current?.focus();}}><Redo2 size={15}/></button>
+      <span className="vertical-divider"/>
+      <button className="icon-button" aria-label={branchAction} title={branchAction} onClick={() => onChange({...graph, collapsed: graph.collapsed.length ? [] : [space.nodes.find(n => !n.parentId)!.id], camera: null})}><ScanLine size={15}/></button>
+      <button className="icon-button" aria-label="适合画布" title="适合画布" onClick={fit}><Expand size={15}/></button>
+      {graph.focusId && <button className="text-button" onClick={() => onChange({...graph, focusId: null, camera: null})}><ArrowLeft size={14}/>返回全图</button>}
+      <span className="zoom-controls">
+        <button className="icon-button" aria-label="缩小画布" title="缩小画布" onClick={() => zoom(-.1)}><Minus size={14}/></button>
+        <button aria-label="恢复百分之百" title="恢复到 100%" onClick={() => onChange({...graph, camera: {...camera, zoom: 1}})}>{Math.round(camera.zoom * 100)}%</button>
+        <button className="icon-button" aria-label="放大画布" title="放大画布" onClick={() => zoom(.1)}><Plus size={14}/></button>
+      </span>
+      {onBackgroundChange && <MapBackgroundPicker value={background} onChange={onBackgroundChange}/>}
+    </div>
+  <div className={`graph-view workspace-graph ${panning ? 'panning' : ''}`} ref={frame} aria-label="工作区地图"
+    data-map-background={background} data-map-workspace-id={space.id} tabIndex={0}
     onClickCapture={event=>{if(skipClick.current){event.preventDefault();event.stopPropagation();skipClick.current=false;return;}if(typing(event.target))return;const target=event.target as Element;const id=target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId;if(id){if(event.ctrlKey||event.metaKey){event.preventDefault();event.stopPropagation();setSelection(old=>{const next=new Set(old);next.has(id)?next.delete(id):next.add(id);return next;});focusNode(id);}else setSelection(new Set([id]));}else if(!target.closest('button,.graph-node-menu'))setSelection(new Set());}}
     onKeyDown={event=>{
       if(typing(event.target)||event.defaultPrevented||event.nativeEvent.isComposing||event.keyCode===229)return;
+      if (event.target instanceof Element && event.target.closest('.graph-node-actions') && ['Enter', ' ', 'Tab'].includes(event.key)) return;
       const id=activeNode(event.target);if(!id)return;const command=event.ctrlKey||event.metaKey;const key=event.key.toLowerCase();
       if(command&&key==='a'){event.preventDefault();event.stopPropagation();setSelection(new Set(positions.map(p=>p.node.id)));return;}
       if(event.key==='Escape'&&selection.size){event.preventDefault();event.stopPropagation();setSelection(new Set());return;}
@@ -126,33 +154,40 @@ export function GraphView({space, onChange, onAdd, onRename, onInspect, autoEdit
     }}
     onPointerUp={event=>{if(boxStart.current||drag.current&&Math.hypot(event.clientX-drag.current.x,event.clientY-drag.current.y)>3){skipClick.current=true;setTimeout(()=>{skipClick.current=false;},0);}boxStart.current=null;setSelectionBox(null);const moving=nodeDrag.current;if(moving?.active){const target=nodeDrop.current;if(target)editing.move(moving.ids,target.id,target.position);event.preventDefault();skipClick.current=true;setTimeout(()=>{skipClick.current=false;},0);focusNode(moving.id);}nodeDrag.current=null;nodeDrop.current=null;setDrop(null);setDragPreview(null);drag.current=null;setPanning(false);}}
     onPointerCancel={()=>{boxStart.current=null;setSelectionBox(null);nodeDrag.current=null;nodeDrop.current=null;setDrop(null);setDragPreview(null);drag.current=null;setPanning(false);}}>
-    {graph.focusId && <button className="graph-return text-button" onClick={() => onChange({...graph, focusId: null, camera: null})}><ArrowLeft size={14}/>返回全图</button>}
     <div className="graph-content" style={{transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`}}>
       <svg className="graph-edges" aria-hidden="true">{positions.slice(1).map(item => {
-        const parent = positions.find(p => p.node.id === item.node.parentId);
+        const parent = item.node.parentId ? positionsById.get(item.node.parentId) : undefined;
         if (!parent) return null;
         const side = item.x > parent.x ? 1 : -1;
         const x1 = parent.x + parent.width / 2 * side;
         const x2 = item.x - item.width / 2 * side;
         const middle = (x1 + x2) / 2;
-        return <path key={item.node.id} d={`M${x1},${parent.y} C${middle},${parent.y} ${middle},${item.y} ${x2},${item.y}`}/>;
+        return <path key={item.node.id} className={activeBranch.has(item.node.id) ? 'graph-edge-active' : undefined}
+          d={`M${x1},${parent.y} C${middle},${parent.y} ${middle},${item.y} ${x2},${item.y}`}/>;
       })}</svg>
       {positions.map(({node, x, y, width, height}, index) => {
         const count = sessionCounts[node.id] || 0;
         const children = space.nodes.some(n => n.parentId === node.id);
+        const collapsed = graph.collapsed.includes(node.id);
+        const branchLabel = `${collapsed ? '展开' : '收起'}${node.title}分支`;
         return <div key={node.id} data-node-id={node.id} draggable={false} className={`graph-node kind-${node.kind} ${index === 0 ? 'root-node' : ''} ${graph.selectedId === node.id ? 'selected' : ''} ${selection.has(node.id)?'multi-selected':''} ${drop?.id===node.id?'node-drop-'+drop.position:''} ${dragPreview?.id===node.id?'node-being-dragged':''}`} style={{left: x - width / 2, top: y - height / 2, width, minHeight: height}}
           onDragStart={event=>{if(!typing(event.target))event.preventDefault();}}
-          onPointerDown={event=>{if(event.button===0&&node.parentId&&!typing(event.target)){nodeDrag.current={id:node.id,ids:selection.has(node.id)?[...selection]:[node.id],x:event.clientX,y:event.clientY,active:false};}}}>
+          onPointerDown={event=>{if(event.button===0&&node.parentId&&!typing(event.target)&&!(event.target as Element).closest('.graph-node-actions')){nodeDrag.current={id:node.id,ids:selection.has(node.id)?[...selection]:[node.id],x:event.clientX,y:event.clientY,active:false};}}}>
           <MapNodeContent node={node} count={count} autoEdit={autoEditId === node.id} onRename={title => onRename(node.id, title)} onInspect={() => onInspect(node.id)} onChild={()=>onAdd(node.id)}/>
-          <button className="graph-node-details" aria-label={`查看${node.title}详情`} title="查看内容、材料与会话" onClick={() => onInspect(node.id)}><Info size={13}/></button>
-          <button className="graph-node-add" aria-label={`在${node.title}下添加节点`} onClick={() => onAdd(node.id)}><Plus size={13}/></button>
-          {children && <button className="graph-node-collapse" aria-label={`${graph.collapsed.includes(node.id) ? '展开' : '收起'}${node.title}分支`} onClick={() => onChange({...graph, collapsed: graph.collapsed.includes(node.id) ? graph.collapsed.filter(id => id !== node.id) : [...graph.collapsed, node.id]})}>{graph.collapsed.includes(node.id) ? '+' : '−'}</button>}
+          <div className={`graph-node-actions${collapsed ? ' collapsed' : ''}`}>
+            <button className="graph-node-details" aria-label={`查看${node.title}详情`} title="查看节点详情" onClick={() => onInspect(node.id)}><Info size={13}/></button>
+            <button className="graph-node-add" aria-label={`在${node.title}下添加节点`} title="添加子节点" onClick={() => onAdd(node.id)}><Plus size={13}/></button>
+            {children && <button className="graph-node-collapse" aria-label={branchLabel} title={branchLabel} aria-expanded={!collapsed}
+              onClick={() => onChange({...graph, collapsed: collapsed ? graph.collapsed.filter(id => id !== node.id) : [...graph.collapsed, node.id]})}>
+              {collapsed ? <ChevronRight size={13}/> : <ChevronDown size={13}/>}
+            </button>}
+          </div>
         </div>;
       })}
     </div>
     {selectionBox&&<div className="graph-selection-box" style={{left:selectionBox.x,top:selectionBox.y,width:selectionBox.width,height:selectionBox.height}}/>}
     {dragPreview&&<span className="node-drag-preview" style={{left:dragPreview.x,top:dragPreview.y}}>{space.nodes.find(n=>n.id===dragPreview.id)?.title}</span>}
-    <span className={`graph-hint ${editing.error?'graph-edit-error':''}`} role="status">{editing.error||(selection.size>1?`已选 ${selection.size} 个节点 · Delete 删除 · Ctrl C 复制 · Esc 取消`:'点标题改名 · 右键节点操作 · Delete 删除 · Ctrl Z 撤销')}</span>
+    {(editing.error || selection.size > 1) && <span className={`graph-hint ${editing.error?'graph-edit-error':''}`} role="status">{editing.error || `已选 ${selection.size} 个节点 · Delete 删除 · Ctrl C 复制 · Esc 取消`}</span>}
     {menu&&<div ref={menuRef} className="graph-node-menu" role="menu" aria-label="节点操作" style={{left:menu.x,top:menu.y}} onKeyDown={event=>{if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();const buttons=[...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];const index=buttons.indexOf(document.activeElement as HTMLButtonElement);buttons[event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length]?.focus();}if(event.key==='Escape'){event.preventDefault();setMenu(null);focusNode(menu.id);}event.stopPropagation();}}>
       <button role="menuitem" onClick={()=>{setMenu(null);onAdd(menu.id);}}>添加子节点<kbd>Tab</kbd></button>
       <button role="menuitem" disabled={!space.nodes.find(n=>n.id===menu.id)?.parentId} onClick={()=>{setMenu(null);editing.sibling(menu.id);}}>添加同级节点<kbd>Enter</kbd></button>
@@ -163,7 +198,7 @@ export function GraphView({space, onChange, onAdd, onRename, onInspect, autoEdit
       <button role="menuitem" onClick={()=>{onChange({...graph,collapsed:graph.collapsed.includes(menu.id)?graph.collapsed.filter(id=>id!==menu.id):[...graph.collapsed,menu.id]});setMenu(null);focusNode(menu.id);}}>{graph.collapsed.includes(menu.id)?'展开分支':'收起分支'}</button>
       <button role="menuitem" className="node-delete-action" disabled={!space.nodes.some(n=>(selection.has(menu.id)?selection.has(n.id):n.id===menu.id)&&n.parentId)} onClick={()=>remove(menu.id)}>删除节点及子节点<kbd>Delete</kbd></button>
     </div>}
-    <div className="graph-tools"><button className="icon-button" aria-label="撤销地图操作" title="撤销 Ctrl Z" disabled={!editing.canUndo} onClick={()=>{editing.undo();frame.current?.focus();}}><Undo2 size={15}/></button><button className="icon-button" aria-label="重做地图操作" title="重做 Ctrl Y" disabled={!editing.canRedo} onClick={()=>{editing.redo();frame.current?.focus();}}><Redo2 size={15}/></button><button className="text-button" onClick={() => onChange({...graph, collapsed: graph.collapsed.length ? [] : [space.nodes.find(n => !n.parentId)!.id], camera: null})}><ScanLine size={14}/>归一</button><button className="icon-button" aria-label="适合画布" onClick={fit}><Expand size={15}/></button><span className="zoom-controls"><button className="icon-button" aria-label="缩小画布" onClick={() => zoom(-.1)}><Minus size={14}/></button><button aria-label="恢复百分之百" onClick={() => onChange({...graph, camera: {...camera, zoom: 1}})}>{Math.round(camera.zoom * 100)}%</button><button className="icon-button" aria-label="放大画布" onClick={() => zoom(.1)}><Plus size={14}/></button></span></div>
+  </div>
   </div>;
 }
 
@@ -205,17 +240,37 @@ export function NodeOverview({space, node, onDue, onOpen, onAdd}: {space: Worksp
   return <section className="node-task-capability">{isTask(node) && <>
     <label className="field">计划完成<input aria-label="计划完成日期" type="date" value={node.due} onChange={event => onDue(event.target.value)}/></label>
   </>}
-    <div className="detail-section-heading"><h3>子任务（{tasks.length}）</h3><button className="text-button" disabled={space.nodes.length >= 250} onClick={onAdd}><Plus size={13}/>添加子任务</button></div>
+    <div className="detail-section-heading"><h3>子任务{tasks.length > 0 && <span className="detail-count">{tasks.length}</span>}</h3><button className="text-button" disabled={space.nodes.length >= 250} onClick={onAdd}><Plus size={13}/>添加子任务</button></div>
     <div className="node-subtasks">{tasks.map(task => <div key={task.id}><button className="text-button" onClick={() => onOpen(task.id)}>{task.title}<ChevronRight size={12}/></button></div>)}</div>
   </section>;
 }
 
-export function NodeInspector({space, node, onEditBody, onClose, onFocus, onDelete, children}: {space: Workspace; node: MindNode; onEditBody: (value: string) => void; onClose: () => void; onFocus: () => void; onDelete?:()=>void; children: React.ReactNode}) {
+export function NodeInspector({node, onEditBody, onClose, onFocus, onDelete, children}: {node: MindNode; onEditBody: (value: string) => void; onClose: () => void; onFocus: () => void; onDelete?:()=>void; children: React.ReactNode}) {
   const content = node.body;
+  const kind = isTask(node) ? 'event' : node.kind;
   const [value, setValue] = useState(content); const [focused, setFocused] = useState(false);
   const original = useRef(content); const cancelled = useRef(false);
   useEffect(() => {if (!focused) setValue(content);}, [content, focused]);
-  return <aside className="node-inspector" aria-label="节点详情"><div className="inspector-meta"><span>{isTask(node) ? '任务' : '节点'} / {space.name}</span><div className="inspector-node-actions">{node.parentId&&onDelete&&<button className="icon-button" aria-label="删除节点及子节点" title="删除节点及子节点，可撤销" onClick={event=>{event.currentTarget.closest('.workspace-map-scene')?.querySelector<HTMLDivElement>('.graph-view')?.focus();onDelete();}}><Trash2 size={15}/></button>}<button className="icon-button" aria-label="关闭节点详情" onClick={onClose}><X size={16}/></button></div></div><h2 className="node-detail-title">{node.title}</h2><textarea className="node-body-editor" aria-label="节点正文" placeholder="记录节点内容…" value={value} rows={7} onFocus={() => {original.current = content;setFocused(true);}} onChange={event => {setValue(event.target.value);onEditBody(event.target.value);}} onBlur={() => {if (!cancelled.current) onEditBody(value);cancelled.current = false;setFocused(false);}} onKeyDown={event => {if (event.key === 'Escape' && !event.nativeEvent.isComposing && event.keyCode !== 229) {event.preventDefault();event.stopPropagation();cancelled.current = true;setValue(original.current);onEditBody(original.current);event.currentTarget.blur();}}}/>{children}<div className="inspector-footer"><button className="text-button" onClick={onFocus}><Focus size={14}/>聚焦此分支</button><span><Check size={12}/>自动保存</span></div></aside>;
+  return <aside className="node-inspector" aria-label="节点详情">
+    <div className="inspector-meta">
+      <span>{isTask(node) ? '任务详情' : '节点详情'}</span>
+      <div className="inspector-node-actions">
+        <button className="icon-button" aria-label="聚焦此分支" title="聚焦此分支" onClick={onFocus}><Focus size={15}/></button>
+        {node.parentId && onDelete && <button className="icon-button" aria-label="删除节点及子节点" title="删除节点及子节点，可撤销" onClick={event=>{event.currentTarget.closest('.workspace-map-scene')?.querySelector<HTMLDivElement>('.graph-view')?.focus();onDelete();}}><Trash2 size={14}/></button>}
+        <button className="icon-button" aria-label="关闭节点详情" title="关闭节点详情" onClick={onClose}><X size={15}/></button>
+      </div>
+    </div>
+    <div className="inspector-scroll unified-node-details">
+      <div className="node-detail-kind"><NodeGlyph kind={kind}/>{nodeKindNames[kind]}</div>
+      <h2 className="node-detail-title">{node.title}</h2>
+      <textarea className="node-body-editor" aria-label="节点正文" placeholder="记录节点内容…" value={value} rows={4}
+        onFocus={() => {original.current = content;setFocused(true);}}
+        onChange={event => {setValue(event.target.value);onEditBody(event.target.value);}}
+        onBlur={() => {if (!cancelled.current) onEditBody(value);cancelled.current = false;setFocused(false);}}
+        onKeyDown={event => {if (event.key === 'Escape' && !event.nativeEvent.isComposing && event.keyCode !== 229) {event.preventDefault();event.stopPropagation();cancelled.current = true;setValue(original.current);onEditBody(original.current);event.currentTarget.blur();}}}/>
+      {children}
+    </div>
+  </aside>;
 }
 
 export function TasksView({space, onOpen}: {space: Workspace; onOpen: (nodeId: string) => void}) {

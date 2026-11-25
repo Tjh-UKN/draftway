@@ -54,6 +54,24 @@ describe('会话材料索引', () => {
     expect(state.spaces[0].nodes.find(item => item.id === 'think')?.materials).toBeUndefined();
   });
 
+  it('skips scratch paths while keeping project files and web links', () => {
+    const {sessions} = createSession(initialWorkbench(), 'design', 'think', 'primary', 1, 'codex');
+    sessions[0].cwd = cwd;
+    sessions[0].messages = [reply([
+      '[Windows scratch](file:///C:/Users/demo/AppData/Local/Temp/preview.html)',
+      '[Linux scratch](/var/tmp/report.html)',
+      '[Project scratch](./tmp/preview.md)',
+      '[Cache](./.cache/render.html)',
+      '[Partial download](./output/report.pdf.part)',
+      '[Office lock](./output/~$report.xlsx)',
+      '[Permanent](./output/temp-analysis.html)',
+      '[Web](https://example.com/tmp/report.html)',
+    ].join('\n\n'))];
+    expect(nodeSessionMaterials(sessions, 'design', 'think').map(item => item.target)).toEqual([
+      'C:\\work\\output\\temp-analysis.html', 'https://example.com/tmp/report.html',
+    ]);
+  });
+
   it('persists chosen outputs without making every source material an output', () => {
     const state = initialWorkbench();
     const node = state.spaces[0].nodes.find(item => item.id === 'think')!;

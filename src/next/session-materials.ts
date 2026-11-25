@@ -10,6 +10,8 @@ const markdown = unified().use(remarkParse).use(remarkGfm);
 const linkLocalPaths = remarkLocalPaths();
 const fileExtension = /\.[\p{L}\d][\p{L}\d_-]{0,15}$/u;
 const bareFile = /\.(?:md|markdown|html?|pdf|txt|csv|json|ya?ml|xml|toml|log|png|jpe?g|gif|webp|svg|xlsx?|docx?|pptx?|zip|mp[34]|py|[jt]sx?|rs|go|sh|ps1)$/i;
+const temporaryDirectory = /(?:^|[\\/])(?:tmp|temp|\.tmp|\.temp|\.cache|\.codex-tmp)[\\/]/i;
+const temporaryFilename = /(?:^~\$|\.(?:tmp|temp|swp|swo|part|crdownload)$|~$)/i;
 
 type MarkdownNode = {
   type: string; value?: string; url?: string; identifier?: string; alt?: string | null; children?: MarkdownNode[];
@@ -93,6 +95,7 @@ export function nodeSessionMaterials(sessions: readonly AgentSession[], workspac
     if (session.workspaceId !== workspaceId || !sessionNodeIds(session).includes(nodeId)) continue;
     const replies = session.messages.filter(message => message.role === 'assistant');
     for (const material of sessionMaterials(replies, session.cwd ?? cwd)) {
+      if (material.kind === 'file' && (temporaryDirectory.test(material.target) || temporaryFilename.test(material.title))) continue;
       const key = materialTargetKey(material.target);
       if (!materials.has(key)) materials.set(key, {...material, sessionId: session.id, sessionTitle: session.title});
     }

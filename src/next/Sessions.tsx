@@ -87,9 +87,15 @@ export function SessionView({state, session, change, onNode, active = true, visi
     if (adapter) change(current => adapter.start(current, session.id, text, 'succeeded', id, at));
   },[busy,canSend,demo,runtime,session,adapter,change]);
   const stop=useCallback(()=>{if(demo&&run&&adapter)change(current=>adapter.cancel(current,run.id));else runtime?.stop(session.id);},[demo,run,adapter,change,runtime,session.id]);
-  return <div className="session-view" aria-label={`会话：${session.title}`}><div className="session-context"><span><Terminal size={14}/>{provider}{demo && <small className="simulation-badge">模拟</small>}</span><SessionStatus state={state} session={session}/></div>
-    {!demo && session.cwd && <div className="session-directory" title={session.cwd}>{session.cwd}</div>}
-    {node && <div className="session-node-context"><button className="text-button" onClick={() => onNode(node.id)}><Files size={13}/>查看节点素材 · {node.title}<ChevronRight size={12}/></button></div>}
+  return <div className="session-view" aria-label={`会话：${session.title}`}>
+    <div className="session-context">
+      <span><Terminal size={14}/>{provider}{demo && <small className="simulation-badge">模拟</small>}</span>
+      {!demo && session.cwd && <span className="session-directory" title={session.cwd}>{session.cwd}</span>}
+      {node && <button className="text-button session-node-context" title={`查看节点素材 · ${node.title}`} onClick={() => onNode(node.id)}>
+        <Files size={13}/><span>查看节点素材 · {node.title}</span><ChevronRight size={12}/>
+      </button>}
+      <SessionStatus state={state} session={session}/>
+    </div>
     {linkError&&<p className="agent-error session-file-error" role="alert">{linkError}</p>}
     <SessionTranscript session={session} store={runtime?.transcripts} provider={provider} demo={demo} active={active} visible={visible} onOpenLink={runtime?openLink:undefined} onOpenLocalPath={!demo&&runtime?openLocalPath:undefined} activityRuns={activityRuns}>
       {!session.messages.length && !unsentRuns.length && <Empty title="开始对话"/>}

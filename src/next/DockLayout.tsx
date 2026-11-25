@@ -13,6 +13,7 @@ import './pane-boundaries.css';
 type CreateKind = 'map' | 'browser' | 'review' | 'events' | NonNullable<AgentSession['agentId']> | `business:${BusinessPage}` | `integration:${string}`;
 interface Props {
   state: WorkbenchState; space: Workspace;
+  windowChrome?: {title: ReactNode; actions: ReactNode};
   onChange: (update: (dock: DockState) => DockState) => void;
   onSelect: (id: string) => void; onClose: (id: string) => void;
   onCreate: (kind: CreateKind, groupId: string) => void;
@@ -76,7 +77,7 @@ export function DockLayout(props: Props) {
       const group=header?.closest<HTMLElement>('[data-group-id]');if(!header||!group)return;
       let item:DockDragItem;
       if(tab)item={kind:'tab',id:tab.dataset.dockTabId!,label:tab.querySelector('[role=tab]')?.getAttribute('aria-label')||'页签'};
-      else{if(element.closest('button')||!groups(current.current.space.dock.root).find(g=>g.id===group.dataset.groupId)?.tabs.length)return;item={kind:'group',id:group.dataset.groupId!,label:group.getAttribute('aria-label')?.replace('分区：','')||'分区'};}
+      else{if(element.closest('button')||header.classList.contains('dock-window-header')||!groups(current.current.space.dock.root).find(g=>g.id===group.dataset.groupId)?.tabs.length)return;item={kind:'group',id:group.dataset.groupId!,label:group.getAttribute('aria-label')?.replace('分区：','')||'分区'};}
       candidate.current={item,x:event.clientX,y:event.clientY,pointerId:event.pointerId,active:false};cancelled.current=null;
     }}
     onDragStart={event=>{if((event.target as Element).closest('.dock-group-header'))event.preventDefault();}}
@@ -120,13 +121,16 @@ function SplitView({node, children, onResize}: {node: Split; children: ReactNode
   </div>;
 }
 function GroupView({group, dragging, ...props}: Props & {group: TabGroup; dragging: boolean}) {
-  const {state, space, onChange, onSelect, onClose, onCreate} = props;
+  const {state, space, windowChrome, onChange, onSelect, onClose, onCreate} = props;
   const focused = space.dock.activeGroupId === group.id;
   const strip = useRef<HTMLDivElement>(null);
   useEffect(() => {strip.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({block: 'nearest', inline: 'nearest'});}, [group.activeId]);
   function focus() {if (!focused&&!dragging) onChange(dock => ({...dock, activeGroupId: group.id}));}
   return <section className={`dock-group ${focused ? 'focused' : ''}`} aria-label={`分区：${space.dock.tabs.find(t => t.id === group.activeId)?.title || '新分区'}`} data-group-id={group.id} aria-owns={group.tabs.map(id=>`dock-panel-${space.id}-${id}`).join(' ')} onPointerDownCapture={focus} onFocusCapture={focus}>
-    <header className="dock-group-header"><span className="dock-pane-handle" title="拖动整个分区" aria-hidden="true"><GripVertical size={13}/></span><div className="dock-tab-strip" role="tablist" aria-label="分区页签" ref={strip} onKeyDown={event => {
+    <header className={windowChrome ? 'dock-group-header dock-window-header workspace-title-row' : 'dock-group-header'} data-tauri-drag-region={windowChrome ? true : undefined}>
+      {windowChrome ? windowChrome.title : <span className="dock-pane-handle" title="拖动整个分区" aria-hidden="true"><GripVertical size={13}/></span>}
+      <div className="dock-tabs-area">
+      <div className="dock-tab-strip" role="tablist" aria-label="分区页签" ref={strip} onKeyDown={event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')]; const at = tabs.indexOf(document.activeElement as HTMLButtonElement); if (at < 0) return;
       event.preventDefault(); const index = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (at + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
@@ -145,7 +149,13 @@ function GroupView({group, dragging, ...props}: Props & {group: TabGroup; draggi
           </button>{tab.id !== 'workspace' && <button className="dock-tab-close" aria-label={`关闭${label}页签`} title={tab.kind === 'session' ? '关闭页签，保留会话记录' : '关闭页签'} onClick={() => onClose(id)}><X size={11}/></button>}
         </div>;
       })}
-    </div><PaneMenu integrations={state.externalIntegrations||[]} onCreate={kind => onCreate(kind, group.id)} onSplit={axis => onChange(dock => splitDockGroup(dock, group.id, axis))} onMerge={() => onChange(mergeDock)} canSplit={groups(space.dock.root).length < 8} canMerge={space.dock.root.kind === 'split'}/>{!group.tabs.length && <button className="icon-button" aria-label="关闭空分区" onClick={() => onChange(dock => closeEmptyGroup(dock, group.id))}><X size={13}/></button>}</header>
+      </div>
+      <PaneMenu integrations={state.externalIntegrations||[]} onCreate={kind => onCreate(kind, group.id)} onSplit={axis => onChange(dock => splitDockGroup(dock, group.id, axis))} onMerge={() => onChange(mergeDock)} canSplit={groups(space.dock.root).length < 8} canMerge={space.dock.root.kind === 'split'}/>
+      {!group.tabs.length && <button className="icon-button" aria-label="关闭空分区" onClick={() => onChange(dock => closeEmptyGroup(dock, group.id))}><X size={13}/></button>}
+      </div>
+      <div className="dock-header-space" aria-hidden="true" data-tauri-drag-region={windowChrome ? true : undefined}/>
+      {windowChrome?.actions}
+    </header>
     <div className="dock-group-content">
       {!group.tabs.length && <div className="tool-empty"><p>从上方“＋”打开内容</p></div>}
       {dragging && <div className="dock-drop-capture"/>}

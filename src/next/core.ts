@@ -7,6 +7,7 @@ import {boundedText} from './text';
 import {isChatQueue, type QueuedMessage} from './chat-queue';
 import {parseMaterialTarget} from './material-target';
 import {emptyGraph, validGraph, type GraphState} from './graph-state';
+import {validateWorkspaceGroups, type WorkspaceGroup} from './workspace-groups';
 export type {GraphState} from './graph-state';
 import {closeDockTab, groups, initialDock, moveDockTab, openDockTab, repairBrowserIds, selectDockTab, restoreDockWithRetiredTabs, type DockState, type DockTab} from './docking';
 
@@ -71,6 +72,7 @@ export function reviewUrl(value: string): string | null {
 }
 export interface WorkbenchState {
   version: 2; activeId: string; spaces: Workspace[];
+  workspaceGroups?: WorkspaceGroup[];
   graphCursor?: number;
   templates?: LayoutTemplate[];
   externalIntegrations?: ExternalIntegration[];
@@ -322,6 +324,7 @@ export function parseWorkbench(value: unknown): WorkbenchState {
   if(raw.externalIntegrations!==undefined){if(!Array.isArray(raw.externalIntegrations)||raw.externalIntegrations.length>30||new Set(raw.externalIntegrations.map(i=>i.id)).size!==raw.externalIntegrations.length)return fail();raw.externalIntegrations.forEach(parseIntegration);}
   const oldSpaces = raw.spaces;
   raw.spaces = parseState({version: 2, activeId: raw.activeId, spaces: raw.spaces}).spaces as Workspace[];
+  validateWorkspaceGroups(raw.workspaceGroups, raw.spaces);
   const browserIds=new Set<string>();
   const state: WorkbenchState = {...raw, version: 2, spaces: raw.spaces.map(space => {
     const activeTab = space.layout?.panes?.find(p => p.id === space.layout.activePaneId)?.activeId;
