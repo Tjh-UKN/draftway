@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/readme/workbench.webp"><img src="docs/readme/workbench.webp" width="1120" alt="Draftway showing an Atlas release map next to a Codex session with a release checklist"></a>
+  <a href="docs/readme/workbench.webp"><img src="docs/readme/workbench.webp" width="1120" alt="Draftway with workspace groups at left, the Atlas map on a mountain-and-sea background, and a Codex session beside it"></a>
   <br><sub>Browser preview with a sample project and a simulated agent session. The current interface is in Simplified Chinese.</sub>
 </p>
 
@@ -24,18 +24,18 @@
 <table>
   <tr>
     <td width="43%" valign="middle">
-      <h3>Plan on a project map</h3>
-      <p>Map your ideas, tasks, and documents. Track progress on each node and link files, web pages, or Obsidian notes.</p>
+      <h3>Organize workspaces and map projects</h3>
+      <p>Group workspaces in the sidebar and drag them into place. Use map nodes for ideas, tasks, and documents. Each map remembers its grid, starry sky, or mountain-and-sea background.</p>
       <a href="docs/mindmap-editing.md">Map controls</a> · <a href="docs/materials.md">Linked materials</a>
     </td>
     <td width="57%">
-      <a href="docs/readme/project-map.webp"><img src="docs/readme/project-map.webp" alt="The Atlas project map showing its planning and shipping branches"></a>
+      <a href="docs/readme/project-map.webp"><img src="docs/readme/project-map.webp" alt="The Atlas project map showing its planning and shipping branches on a starry sky background"></a>
     </td>
   </tr>
   <tr>
     <td width="43%" valign="middle">
       <h3>Work beside your agent</h3>
-      <p>Run Codex, Claude Code, or Pi beside your map in the Windows app. Resume a closed session from workspace history.</p>
+      <p>Open Codex, Claude Code, or Pi from a map node in the Windows app. Keep the map and conversation side by side, follow agent activity in the conversation, and reopen closed tabs from workspace session history.</p>
       <a href="docs/windows-delivery.md">Windows capabilities</a>
     </td>
     <td width="57%">
@@ -45,7 +45,7 @@
   <tr>
     <td width="43%" valign="middle">
       <h3>Keep the results</h3>
-      <p>Save agent results to the map. Retained results and workspace notes feed a searchable library alongside your HTML, drawings, and mind maps.</p>
+      <p>Find available files and links from linked sessions in Materials (素材区), then add selected items to Outputs (产出区). On a result card, choose 保留到地图 to create an artifact node. Artifact and document nodes with text join workspace notes in the searchable personal knowledge library.</p>
       <a href="docs/personal-knowledge.md">Personal knowledge library</a>
     </td>
     <td width="57%">
@@ -65,7 +65,11 @@ npm ci
 npm run dev
 ```
 
-Open [the local browser preview](http://127.0.0.1:1420/next.html). Create a workspace, add a map node with **+**, and start a conversation from the node details. The browser preview stores its own data and uses simulated agents.
+Open [the local browser preview](http://127.0.0.1:1420/next.html). It stores its own data and uses simulated agents.
+
+1. Click **+** next to **搜索** (Search) and choose **新建工作区** to create a workspace or **新建分组** to create a group. Drag a workspace into a group to organize it.
+2. Point at a map node and click its **+** to add a child. Use **背景** in the map toolbar to choose **网格** (Grid), **星空** (Starry sky), or **山海** (Mountains and sea).
+3. Click the node's info button (**查看节点详情**) and choose **新建会话** to start a conversation linked to that node.
 
 ### Windows desktop
 

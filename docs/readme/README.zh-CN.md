@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="workbench.webp"><img src="workbench.webp" width="1120" alt="Draftway 左侧显示 Atlas 项目地图，右侧显示关联节点的 Codex 会话和检查清单"></a>
+  <a href="workbench.webp"><img src="workbench.webp" width="1120" alt="Draftway 左侧是工作区分组，中间是山海背景下的 Atlas 项目地图，右侧是关联节点的 Codex 会话"></a>
   <br><sub>浏览器预览实拍，项目与会话为演示数据。</sub>
 </p>
 
@@ -24,18 +24,18 @@
 <table>
   <tr>
     <td width="43%" valign="middle">
-      <h3>在地图上拆项目</h3>
-      <p>用节点组织想法、任务和文档，直接编辑标题和跟踪进度。把相关文件、网页或 Obsidian 笔记挂在对应节点上。</p>
+      <h3>给工作区分组，在地图上拆项目</h3>
+      <p>在侧栏拖动工作区完成归组和排序，用地图节点组织想法、任务和文档。每张地图各自记住网格、星空或山海背景。</p>
       <a href="../mindmap-editing.md">地图操作</a> · <a href="../materials.md">关联材料</a>
     </td>
     <td width="57%">
-      <a href="project-map.webp"><img src="project-map.webp" alt="Atlas 项目地图的计划和发布分支"></a>
+      <a href="project-map.webp"><img src="project-map.webp" alt="星空背景下的 Atlas 项目地图及其计划和发布分支"></a>
     </td>
   </tr>
   <tr>
     <td width="43%" valign="middle">
       <h3>让会话跟着项目走</h3>
-      <p>在 Windows 版中，从节点启动 Codex、Claude Code 或 Pi。分屏并排查看地图和会话，关掉页签后，仍可从工作区的会话记录里找回。</p>
+      <p>在 Windows 版中，从节点启动 Codex、Claude Code 或 Pi。分屏并排查看地图与会话，在会话里跟进执行活动，也能从工作区的会话记录中重新打开已关闭的页签。</p>
       <a href="../windows-delivery.md">Windows 功能</a>
     </td>
     <td width="57%">
@@ -45,7 +45,7 @@
   <tr>
     <td width="43%" valign="middle">
       <h3>把做完的东西留下来</h3>
-      <p>把有用的会话产物保留到地图。随记、有正文的文档节点和留存产物会进入个人知识库，和 Markdown、HTML、画板及思维导图一起整理和搜索。</p>
+      <p>在节点的「素材区」查看关联会话中可用的文件和链接，将有用的条目加入「产出区」。在成果卡片上点「保留到地图」会生成产物节点。有正文的产物和文档节点、工作区随记会进入个人知识库。</p>
       <a href="../personal-knowledge.md">个人知识库</a>
     </td>
     <td width="57%">
@@ -65,7 +65,11 @@ npm ci
 npm run dev
 ```
 
-打开[本地浏览器预览](http://127.0.0.1:1420/next.html)。新建工作区后，点击地图节点旁的 **+** 添加子节点，再从节点详情发起会话。浏览器预览使用独立存储和模拟 Agent。
+打开[本地浏览器预览](http://127.0.0.1:1420/next.html)。浏览器预览使用独立存储和模拟 Agent。
+
+1. 点侧栏搜索旁的 **+**，选择 **新建工作区** 或 **新建分组**。拖动工作区即可归组。
+2. 把鼠标移到地图节点上，点 **+** 添加子节点。在地图工具栏点 **背景** 可选 **网格**、**星空** 或 **山海**。
+3. 点节点上的 **查看节点详情**，选择 **新建会话**，把会话关联到这个节点。
 
 ### Windows 桌面版
 
