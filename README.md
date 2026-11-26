@@ -82,6 +82,17 @@ npm run desktop:next:build
 
 Draftway uses the agent tools and credentials you have already set up locally. Run `npm run desktop:next:release` to build the Windows installer. [Windows delivery and verification](docs/windows-delivery.md)
 
+### macOS desktop
+
+Install Rust with [rustup](https://rustup.rs) and the Xcode Command Line Tools (`xcode-select --install`). Then build and launch from the same checkout.
+
+```sh
+npm run desktop:next:build
+./src-tauri/target/debug/northstar
+```
+
+Codex, Claude Code and Pi are found on your login shell's `PATH` (plus `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`). Local service detection is available only on Windows.
+
 ## Your workspace data
 
 The desktop app stores workspace state and session history locally in SQLite. You can export and restore full backups from settings. Agent requests use the provider and credentials configured in your local agent tool. [Backup and recovery](docs/backup-recovery.md)
