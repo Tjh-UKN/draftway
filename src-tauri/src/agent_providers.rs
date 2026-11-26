@@ -38,7 +38,46 @@ pub fn discover(backend: &str) -> Option<Provider> {
         }
         return Some(Provider {backend: backend.into(), program, wsl: true, prefix: vec![]});
     }
-    #[cfg(not(windows))] None
+    #[cfg(not(windows))] {
+        let name = if backend == "claude" {"claude"} else {"pi"};
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let extra = home.iter().map(|home| home.join(".local/bin"))
+            .chain(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
+        let program = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).chain(extra)
+            .map(|directory| directory.join(name)).find(|program| is_executable(program))?;
+        // npm installs Pi as a symlink to its cli.js; running it through node keeps the model-scope helper available.
+        if backend == "pi" {
+            if let Some(script) = program.canonicalize().ok().filter(|script| script.extension().is_some_and(|ext| ext == "js")) {
+                if let Some(node) = unix_program("node") {
+                    return Some(Provider {backend: backend.into(), program: node, wsl: false, prefix: vec![script.to_string_lossy().into_owned()]});
+                }
+            }
+        }
+        Some(Provider {backend: backend.into(), program, wsl: false, prefix: vec![]})
+    }
+}
+#[cfg(not(windows))]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata().is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+}
+#[cfg(not(windows))]
+fn unix_program(name: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|directory| directory.join(name)).find(|path| is_executable(path))
+}
+/// Apps opened from Finder or the Dock get launchd's minimal PATH, so agent CLIs installed by Homebrew,
+/// npm or the Claude installer are invisible. Adopt the login shell's PATH once at startup.
+#[cfg(target_os = "macos")]
+pub fn adopt_login_shell_path() {
+    let shell = std::env::var("SHELL").ok().filter(|shell| shell.starts_with('/')).unwrap_or_else(|| "/bin/zsh".into());
+    let mut command = Command::new(shell);
+    command.args(["-ilc", r#"printf '__NORTHSTAR_PATH__%s\n' "$PATH""#]);
+    let Some(output) = timed_output(command, 5) else {return;};
+    let Some(login) = String::from_utf8_lossy(&output).lines().find_map(|line| line.strip_prefix("__NORTHSTAR_PATH__").map(str::to_owned)) else {return;};
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths: Vec<PathBuf> = std::env::split_paths(&login).collect();
+    for path in std::env::split_paths(&current) {if !paths.contains(&path) {paths.push(path);}}
+    if let Ok(joined) = std::env::join_paths(paths) {std::env::set_var("PATH", joined);}
 }
 fn timed_output(command: Command, seconds: u64) -> Option<Vec<u8>> {
     timed_output_with_input(command, None, seconds)
@@ -171,7 +210,11 @@ impl Provider {
         let mut command = if self.wsl {
             let mut command = Command::new("wsl.exe");
             command.args(["--cd", &runtime_cwd, "--exec", "/usr/bin/setsid", "--wait", "/bin/bash", "-ic", r#"printf '__NORTHSTAR_PROCESS__:%s:%s:%s\n' "$WSL_DISTRO_NAME" "$(id -un)" "$$" >&2; export NORTHSTAR_SESSION_TOKEN="$1"; shift; exec "$@""#, "northstar", token.as_deref().unwrap()]).arg(&self.program).args(args); command
-        } else {let mut command = Command::new(&self.program); command.current_dir(cwd).args(&self.prefix).args(args); command};
+        } else {
+            let mut command = Command::new(&self.program); command.current_dir(cwd).args(&self.prefix).args(args);
+            #[cfg(unix)] {use std::os::unix::process::CommandExt; command.process_group(0);}
+            command
+        };
         command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         #[cfg(windows)] {use std::os::windows::process::CommandExt; command.creation_flags(0x08000000);}
         Ok((command, planned, token))

@@ -124,7 +124,9 @@ fn open_local_document(path: &std::path::Path) -> Result<()> {
     }
     #[cfg(windows)]
     { std::process::Command::new("explorer.exe").arg(format!("/select,{}", resources::display_path(path))).spawn().map(|_|()).map_err(error) }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    { std::process::Command::new("/usr/bin/open").arg("-R").arg(path).spawn().map(|_|()).map_err(error) }
+    #[cfg(not(any(windows, target_os = "macos")))]
     { open::that(path.parent().ok_or("文件目录无效")?).map_err(error) }
 }
 #[tauri::command]
@@ -283,6 +285,8 @@ fn start_services(app:tauri::AppHandle,store:Arc<Store>) {
     });
 }
 pub fn run() {
+    // Launched from Finder or the Dock (no terminal), the app only sees launchd's minimal PATH.
+    #[cfg(target_os = "macos")] if std::env::var_os("TERM").is_none() {native_agents::adopt_login_shell_path();}
     let application=tauri::Builder::default()
         .manage(knowledge::HtmlPreviews::default())
         .register_uri_scheme_protocol("knowledge",|context,request|context.app_handle().state::<knowledge::HtmlPreviews>().response(request.uri().path().trim_start_matches('/')))

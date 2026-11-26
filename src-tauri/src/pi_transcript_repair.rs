@@ -68,6 +68,10 @@ fn owned_pi_source(source: &str, owned_sources: &Path) -> Option<PathBuf> {
     if source == native || (cfg!(windows) && source.eq_ignore_ascii_case(native)) {
         return Some(file);
     }
+    // On macOS the temp and data directories can be reached through symlinks (/var -> /private/var).
+    if cfg!(not(windows)) && Path::new(source).canonicalize().is_ok_and(|resolved| resolved == file) {
+        return Some(file);
+    }
     // Existing owned Windows sessions can carry the same file name in its WSL mount form.
     if cfg!(windows) {
         let (drive, relative) = native.split_once(":\\")?;

@@ -5,6 +5,8 @@ use std::sync::{OnceLock, RwLock};
 use std::{collections::HashMap, fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Child, ChildStdin, Command}, sync::{Arc, Mutex, Weak, atomic::{AtomicBool, AtomicU64, Ordering}, mpsc}, time::{Duration, Instant}};
 #[path = "agent_providers.rs"]
 mod providers;
+#[cfg(target_os = "macos")]
+pub use providers::adopt_login_shell_path;
 #[path = "agent_process.rs"]
 mod process;
 #[path = "codex_feedback.rs"]
