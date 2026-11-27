@@ -48,7 +48,7 @@ async fn local_web_services(on_service: tauri::ipc::Channel<local_services::Loca
     })).await.map_err(error)?
 }
 fn room_view_for(root:&std::path::Path,agents:&native_agents::AgentHost)->Result<room::View>{
-    let Some(connection)=room::load(root) else {return Ok(room::View{host:room::machine_name(),..Default::default()});};
+    let Some(connection)=room::load(root) else {return Ok(room::View::default());};
     let local:Vec<room::Local>=agents.list()?.into_iter().filter(|s|s.backend=="claude").filter_map(|s|Some((s.source_id?,s.id,s.title))).collect();
     room::Client::new(connection)?.view(&local)
 }
@@ -57,29 +57,16 @@ async fn room_view(state:tauri::State<'_,AppState>,agents:tauri::State<'_,Arc<na
     let (root,agents)=(state.store.root.clone(),agents.inner().clone());tauri::async_runtime::spawn_blocking(move||room_view_for(&root,&agents)).await.map_err(error)?
 }
 #[tauri::command]
-async fn room_connect(state:tauri::State<'_,AppState>,agents:tauri::State<'_,Arc<native_agents::AgentHost>>,url:Option<String>,token:Option<String>,host:Option<String>)->Result<room::View>{
+async fn room_connect(state:tauri::State<'_,AppState>,agents:tauri::State<'_,Arc<native_agents::AgentHost>>,url:Option<String>,token:Option<String>)->Result<room::View>{
     let (root,agents)=(state.store.root.clone(),agents.inner().clone());
     tauri::async_runtime::spawn_blocking(move||{
         // Without an address, use the settings `room join` already wrote on this machine.
-        let connection=match url {Some(url)=>room::checked(&url,token.as_deref().unwrap_or_default(),host.as_deref().unwrap_or_default())?,None=>room::import_cli_config(&room::cli_config_path().ok_or("找不到用户目录")?)?};
+        let connection=match url {Some(url)=>room::checked(&url,token.as_deref().unwrap_or_default())?,None=>room::import_cli_config(&room::cli_config_path().ok_or("找不到用户目录")?)?};
         room::Client::new(connection.clone())?.view(&[])?;room::save(&root,&connection)?;room_view_for(&root,&agents)
     }).await.map_err(error)?
 }
 #[tauri::command]
-async fn room_leave(state:tauri::State<'_,AppState>)->Result<()>{
-    let root=state.store.root.clone();
-    tauri::async_runtime::spawn_blocking(move||match room::load(&root){Some(connection)=>room::Client::new(connection)?.leave(),None=>Ok(())}).await.map_err(error)?
-}
-#[tauri::command]
-async fn room_disconnect(state:tauri::State<'_,AppState>)->Result<()>{
-    let root=state.store.root.clone();
-    tauri::async_runtime::spawn_blocking(move||{if let Some(connection)=room::load(&root){let _=room::Client::new(connection).and_then(|client|client.leave());}room::forget(&root)}).await.map_err(error)?
-}
-#[tauri::command]
-async fn room_send(state:tauri::State<'_,AppState>,to:String,body:String,ask:bool,reply_to:Option<u64>)->Result<Value>{
-    let root=state.store.root.clone();
-    tauri::async_runtime::spawn_blocking(move||room::Client::new(room::load(&root).ok_or("尚未连接协作室")?)?.send(&to,&body,ask,reply_to)).await.map_err(error)?
-}
+async fn room_disconnect(state:tauri::State<'_,AppState>)->Result<()>{let root=state.store.root.clone();tauri::async_runtime::spawn_blocking(move||room::forget(&root)).await.map_err(error)?}
 #[tauri::command]
 async fn load_shell_state(state: tauri::State<'_, AppState>) -> Result<Option<Value>> {workspace_state::load(&state.store)}
 #[tauri::command]
@@ -369,7 +356,7 @@ pub fn run() {
             }
         })
         .invoke_handler({
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_plugins,change_plugins,html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,delete_knowledge,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_model_options,agent_prefetch_model_options,agent_list,agent_get,read_workspace_html,agent_rename,agent_delete,open_session_path,available_session_materials,agent_create,agent_send,agent_file_suggestions,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,local_web_services,room_view,room_connect,room_leave,room_disconnect,room_send,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![load_plugins,change_plugins,html_preview,close_html_preview,collect_knowledge,load_workspace,save_workspace_layout,save_record,check_habit,archive_record,delete_record,delete_knowledge,save_settings,list_backups,create_backup,restore_backup,export_backup,export_records,export_markdown,export_drawing_file,open_external_url,open_web_workspace,add_attachment,open_attachment,remove_attachment,open_data_folder,test_notification,quit_app,native_browser::sync_browser_views,native_browser::browser_action,native_browser::browser_history,agent_backends,agent_model_options,agent_prefetch_model_options,agent_list,agent_get,read_workspace_html,agent_rename,agent_delete,open_session_path,available_session_materials,agent_create,agent_send,agent_file_suggestions,agent_stop,agent_respond,load_shell_state,save_shell_state,background_snapshot,background_read,review_report,local_web_services,room_view,room_connect,room_disconnect,read_material,open_material,git_changed_files,git_file_diff,graph_changes];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {invoke.resolver.reject("网页不能访问 Draftway 宿主命令"); return true;}
                 if invoke.message.webview_ref().state::<AppState>().store.maintenance.load(Ordering::SeqCst)&&invoke.message.command()!="quit_app"{invoke.resolver.reject("正在恢复数据，暂时停止写入");return true;}
