@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode} from 'react';
 import {invoke} from '@tauri-apps/api/core';
-import {ArrowDown, ArrowUp, BookOpen, Bell, ChevronDown, ChevronRight, CircleAlert, FolderInput, FolderOpen, FolderPlus, Globe, LayoutGrid, MessageSquare, Pencil, Plus, Search, Settings2, Terminal, Trash2, Puzzle, X} from 'lucide-react';
+import {ArrowDown, ArrowUp, BookOpen, Bell, ChevronDown, ChevronRight, CircleAlert, FolderInput, FolderOpen, FolderPlus, Globe, LayoutGrid, MessagesSquare, MessageSquare, Pencil, Plus, Search, Settings2, Terminal, Trash2, Puzzle, X} from 'lucide-react';
 import {AppearancePicker} from '../AppearancePicker';
 import {useAppearance} from '../appearance';
 import {addSubtask, closeSessionTab, createMapNode, createSession, createWorkspace, initialWorkbench, mapGraph, openMapTab, openSession, selectWorkspaceTab, parseWorkbench, previousShellStorageKey, reviewUrl, editNodeBody, renameMapNode, sessionNodeIds, shellStorageKey, updateMapGraph, updateWorkspace, type AgentSession, type GraphState, type Notice, type Workspace, type WorkbenchState} from './core';
@@ -44,6 +44,7 @@ import {ManagementMenu, type ManagementAction} from './ManagementMenu';
 import {assertSessionsIdle, deleteSessions, deleteWorkspace, renameSession} from './session-management';
 import {DeleteDialog, RenameSessionDialog, SessionManagement} from './SessionManagement';
 import {LocalServices, type LocalService} from './LocalServices';
+import {RoomDialog} from './RoomDialog';
 import {DesktopWindowControls} from './DesktopWindowControls';
 
 type WorkbenchMenu = {x: number; y: number; keyboard?: boolean} & (
@@ -69,7 +70,7 @@ export default function Workbench() {
   const nodeClipboard=useRef<NodeClipboard|null>(null);
   const current = useRef(state); current.current = state;
   const recentSwitch = useRef<{workspaceId: string; ids: string[]; index: number} | null>(null);
-  const [dialog, setDialog] = useState<'workspace' | 'settings' | 'plugins' | 'search' | 'link' | 'customize' | 'localServices' | null>(null);
+  const [dialog, setDialog] = useState<'workspace' | 'settings' | 'plugins' | 'search' | 'link' | 'customize' | 'localServices' | 'room' | null>(null);
   const [newNodeId, setNewNodeId] = useState<string | null>(null);
   const [inbox, setInbox] = useState(false);
   const [managementMenu, setManagementMenu] = useState<WorkbenchMenu | null>(null);
@@ -373,6 +374,7 @@ export default function Workbench() {
           会话记录（{sessions.length}）<ChevronDown size={13}/>{sessions.some(s => s.unread) && <i className="unread-dot"/>}
         </button>
         {agents && <button className="text-button" aria-label="本地服务" title="本地服务" onClick={() => setDialog('localServices')}><Globe size={15}/></button>}
+        {agents && <button className="text-button" aria-label="协作室" title="协作室" onClick={() => setDialog('room')}><MessagesSquare size={15}/></button>}
       </>}
       <button className="icon-button bell-button" aria-label={`通知${unread ? `，${unread}条未读` : ''}`} title="通知" aria-expanded={inbox}
         onClick={() => setInbox(v => !v)}><Bell size={15}/>{!!unread && <span>{unread}</span>}</button>
@@ -533,6 +535,7 @@ export default function Workbench() {
 
     {dialog === 'plugins' && <PluginManagerDialog onClose={()=>setDialog(null)}/>}
     {dialog === 'localServices' && <LocalServices onOpen={openLocalService} onClose={() => setDialog(null)}/>}
+    {dialog === 'room' && <RoomDialog onOpenSession={id => {setDialog(null); openAgent(id);}} onClose={() => setDialog(null)}/>}
     {dialog === 'settings' && <Dialog title="接入与设置" onClose={() => setDialog(null)}>
       <AppearancePicker value={appearance.choice} onChange={appearance.setChoice}/>
       <p className="muted">{agents ? '使用本机已安装的执行器。会话、来源标识和执行记录由 Draftway 保存。' : '浏览器模式使用模拟器；真实 Agent 请在 Windows 版中操作。'}</p>

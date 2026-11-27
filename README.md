@@ -88,5 +88,5 @@ The desktop app stores workspace state and session history locally in SQLite. Yo
 
 ## More
 
-- [Workspace tools for agents (MCP)](docs/workspace-tools.md) · [Plugins](docs/plugins.md) · [Classic workbench guide](docs/classic-workbench.md)
+- [Workspace tools for agents (MCP)](docs/workspace-tools.md) · [Plugins](docs/plugins.md) · [Classic workbench guide](docs/classic-workbench.md) · [Room: watch Claude Code sessions across machines](docs/room.md)
 - [Report a bug or request a feature](https://github.com/Tjh-UKN/draftway/issues)
