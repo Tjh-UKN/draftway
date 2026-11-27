@@ -16,10 +16,11 @@ const MAX_RESPONSE: usize = 2_000_000;
 pub struct Connection {pub url: String, pub token: String}
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct Session {pub id: String, pub name: String, pub title: String, pub host: String, pub repo: String, pub state: String, pub status: String, pub unread: u64, pub listening: bool, pub draftway_session: Option<String>}
+pub struct Session {pub id: String, pub name: String, pub title: String, pub host: String, pub repo: String, pub version: String, pub state: String, pub status: String,
+    pub last_seen: u64, pub unread: u64, pub polling: Vec<String>, pub links: Vec<String>, pub draftway_session: Option<String>}
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct Message {pub id: u64, pub at: u64, pub from: String, pub to: String, pub link: Option<String>, pub kind: String, pub body: String, pub reply_to: Option<u64>}
+pub struct Message {pub id: u64, pub at: u64, pub sender: String, pub from: String, pub to: String, pub target: Option<String>, pub link: Option<String>, pub kind: String, pub body: String, pub reply_to: Option<u64>}
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct View {pub configured: bool, pub url: String, pub sessions: Vec<Session>, pub messages: Vec<Message>}
@@ -82,25 +83,52 @@ impl Client {
         let state = self.get("/state")?;
         let rows = state["sessions"].as_array().ok_or("协作室会话列表格式不兼容")?;
         let mut view = View {configured: true, url: self.connection.url.clone(), ..Default::default()};
+        let day_ago = now_ms().saturating_sub(86_400_000);
         for row in rows {
             let id = text(row, "id");
-            if id.is_empty() {continue;}
+            // `human:` ids are people at a terminal, which `room who` hides too.
+            if id.is_empty() || id.starts_with("human:") {continue;}
             let mine = local.iter().find(|(source, ..)| source == &id);
-            if text(row, "state") == "exited" && mine.is_none() {continue;}
+            let last_seen = (row["last_seen"].as_f64().unwrap_or(0.0) * 1000.0) as u64;
+            // Like `room who`: sessions that exited more than a day ago drop off, except Draftway's own.
+            if text(row, "state") == "exited" && last_seen < day_ago && mine.is_none() {continue;}
+            let list = |key: &str| row[key].as_array().map(|items| items.iter().filter_map(|i| i.as_str().map(String::from)).collect()).unwrap_or_default();
             // The room hooks register `claude -p` sessions without a name; label them with the Draftway title, locally only.
             view.sessions.push(Session {name: text(row, "name"), title: mine.map(|(.., title)| title.clone()).unwrap_or_default(), host: text(row, "host"), repo: text(row, "repo"),
-                state: text(row, "state"), status: text(row, "status"), unread: state["unread"][&id].as_u64().unwrap_or(0),
-                listening: row["polling"].as_array().is_some_and(|p| !p.is_empty()), draftway_session: mine.map(|(_, draftway, _)| draftway.clone()), id});
+                version: text(row, "version"), state: text(row, "state"), status: text(row, "status"), last_seen, unread: state["unread"][&id].as_u64().unwrap_or(0),
+                polling: list("polling"), links: list("links"), draftway_session: mine.map(|(_, draftway, _)| draftway.clone()), id});
         }
-        view.sessions.sort_by(|a, b| (a.state != "live", a.host.to_lowercase(), a.repo.clone(), a.name.clone()).cmp(&(b.state != "live", b.host.to_lowercase(), b.repo.clone(), b.name.clone())));
+        view.sessions.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
         let rows = state["messages"].as_array().ok_or("协作室消息格式不兼容")?;
-        for row in rows.iter().take(80).rev() {
-            let from = match (text(row, "sender_name"), text(row, "sender_host")) {(name, host) if !name.is_empty() => format!("{name}@{host}"), _ => text(row, "sender").chars().take(8).collect()};
-            view.messages.push(Message {id: row["id"].as_u64().unwrap_or(0), at: (row["ts"].as_f64().unwrap_or(0.0) * 1000.0) as u64, from, to: text(row, "to_spec"),
-                link: row["link"].as_str().map(String::from), kind: text(row, "kind"), body: text(row, "body"), reply_to: row["reply_to"].as_u64()});
+        let ids: Vec<(String, String, String)> = rows_of(&state["sessions"]);
+        let senders: std::collections::HashMap<u64, String> = rows.iter().filter_map(|m| Some((m["id"].as_u64()?, text(m, "sender")))).collect();
+        for row in rows.iter().take(200).rev() {
+            let sender = text(row, "sender");
+            let from = match (text(row, "sender_name"), text(row, "sender_host")) {(name, host) if !name.is_empty() => format!("{name}@{host}"), _ => sender.chars().take(8).collect()};
+            let to = text(row, "to_spec"); let reply_to = row["reply_to"].as_u64();
+            let target = resolve(&ids, &to).or_else(|| reply_to.and_then(|id| senders.get(&id).cloned()))
+                .or_else(|| ["repo:", "link:", "host:"].iter().any(|p| to.starts_with(p)).then(|| to.clone()).or_else(|| (to == "all").then(|| to.clone())));
+            view.messages.push(Message {id: row["id"].as_u64().unwrap_or(0), at: (row["ts"].as_f64().unwrap_or(0.0) * 1000.0) as u64, sender, from, to, target,
+                link: row["link"].as_str().map(String::from), kind: text(row, "kind"), body: text(row, "body"), reply_to});
         }
         Ok(view)
     }
+}
+fn now_ms() -> u64 {std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)}
+/// (id, name, host) of every session the server lists, most recently seen first, as the server returns them.
+fn rows_of(sessions: &Value) -> Vec<(String, String, String)> {
+    sessions.as_array().map(|rows| rows.iter().map(|r| (text(r, "id"), text(r, "name"), text(r, "host"))).collect()).unwrap_or_default()
+}
+/// The session a direct address names, the way the server resolves it: id, name@host, name, or an id prefix of 6+.
+fn resolve(ids: &[(String, String, String)], who: &str) -> Option<String> {
+    if who.is_empty() {return None;}
+    if let Some((id, ..)) = ids.iter().find(|(id, ..)| id == who) {return Some(id.clone());}
+    if let Some((name, host)) = who.rsplit_once('@').filter(|(name, _)| !name.is_empty()) {
+        if let Some((id, ..)) = ids.iter().find(|(_, n, h)| n == name && h.eq_ignore_ascii_case(host)) {return Some(id.clone());}
+    }
+    if let Some((id, ..)) = ids.iter().find(|(_, n, _)| n == who) {return Some(id.clone());}
+    let prefixed: Vec<_> = ids.iter().filter(|(id, ..)| who.len() >= 6 && id.starts_with(who)).collect();
+    (prefixed.len() == 1).then(|| prefixed[0].0.clone())
 }
 fn text(value: &Value, key: &str) -> String {value[key].as_str().unwrap_or_default().to_string()}
 
@@ -165,22 +193,31 @@ mod tests {
     }
     #[test]
     fn view_only_reads_the_room_state_and_names_draftway_sessions() {
-        let (url, log) = server(|path| (200, if path == "/state" {json!({
+        let now = now_ms() as f64 / 1000.0;
+        let (url, log) = server(move |path| (200, if path == "/state" {json!({
             "sessions":[
-                {"id":"aaaa1111","name":"api-fa","host":"RTX","repo":"api","state":"live","status":"now: tests","polling":["listen"]},
-                {"id":"claude-local","name":"","host":"Mac","repo":"draftway","state":"live","status":"","polling":[]},
-                {"id":"gone","name":"old","host":"RTX","repo":"api","state":"exited","status":"","polling":[]}],
+                {"id":"aaaa1111","name":"api-fa","host":"RTX","repo":"api","version":"0.1.7","state":"live","status":"now: tests","polling":["listen"],"links":["release"],"last_seen":now - 5.0},
+                {"id":"claude-local","name":"","host":"Mac","repo":"draftway","state":"live","status":"","polling":[],"links":[],"last_seen":now - 60.0},
+                {"id":"bbbb2222","name":"web-3c","host":"Mac","repo":"web","state":"exited","status":"","polling":[],"links":[],"last_seen":now - 3600.0},
+                {"id":"human:me@Mac","name":"","host":"Mac","repo":"","state":"live","status":"","polling":[],"links":[],"last_seen":now},
+                {"id":"gone","name":"old","host":"RTX","repo":"api","state":"exited","status":"","polling":[],"links":[],"last_seen":now - 200000.0}],
             "unread":{"aaaa1111":2},"links":[{"name":"release"}],
             "messages":[
-                {"id":2,"ts":20.0,"sender":"aaaa1111","sender_name":"api-fa","sender_host":"RTX","to_spec":"bbbb2222","kind":"reply","body":"done","reply_to":1,"link":null},
+                {"id":4,"ts":40.0,"sender":"claude-local","sender_name":"","sender_host":"Mac","to_spec":"api-fa@rtx","kind":"notify","body":"fyi","reply_to":null,"link":null},
+                {"id":3,"ts":30.0,"sender":"bbbb2222","sender_name":"web-3c","sender_host":"Mac","to_spec":"someone-gone","kind":"reply","body":"ok","reply_to":2,"link":null},
+                {"id":2,"ts":20.0,"sender":"aaaa1111","sender_name":"api-fa","sender_host":"RTX","to_spec":"bbbb22","kind":"reply","body":"done","reply_to":1,"link":null},
                 {"id":1,"ts":10.0,"sender":"bbbb2222","sender_name":"","sender_host":"Mac","to_spec":"link:release","kind":"ask","body":"shipped?","reply_to":null,"link":"release"}]})} else {json!({})}));
         let client = Client::new(checked(&url, "secret").unwrap()).unwrap();
         let view = client.view(&[("claude-local".into(), "draftway-session".into(), "修复 登录".into())]).unwrap();
-        assert_eq!(view.sessions.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["claude-local", "aaaa1111"]);
-        assert_eq!(view.sessions[0].name, ""); assert_eq!(view.sessions[0].title, "修复 登录"); assert_eq!(view.sessions[0].draftway_session.as_deref(), Some("draftway-session"));
-        assert!(view.sessions[1].listening); assert_eq!(view.sessions[1].unread, 2);
-        assert_eq!(view.messages.iter().map(|m| m.id).collect::<Vec<_>>(), vec![1, 2]);
+        // Most recently seen first; people (`human:`) and sessions that exited over a day ago are left out, as in `room who`.
+        assert_eq!(view.sessions.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["aaaa1111", "claude-local", "bbbb2222"]);
+        assert_eq!(view.sessions[1].name, ""); assert_eq!(view.sessions[1].title, "修复 登录"); assert_eq!(view.sessions[1].draftway_session.as_deref(), Some("draftway-session"));
+        let api = &view.sessions[0]; assert_eq!((api.polling.clone(), api.links.clone(), api.version.as_str(), api.unread), (vec!["listen".to_string()], vec!["release".to_string()], "0.1.7", 2));
+        assert_eq!(view.messages.iter().map(|m| m.id).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
         assert_eq!(view.messages[0].from, "bbbb2222"); assert_eq!(view.messages[1].from, "api-fa@RTX"); assert_eq!(view.messages[1].reply_to, Some(1)); assert_eq!(view.messages[1].at, 20000);
+        // Who each message went to, for the conversation map: a link, an id prefix, a reply's original sender, name@host in any case.
+        let targets: Vec<_> = view.messages.iter().map(|m| m.target.as_deref()).collect();
+        assert_eq!(targets, vec![Some("link:release"), Some("bbbb2222"), Some("aaaa1111"), Some("aaaa1111")]);
         let log = log.lock().unwrap();
         assert_eq!(log.iter().map(|(method, path, auth)| (method.as_str(), path.as_str(), auth.as_str())).collect::<Vec<_>>(), vec![("GET", "/state", "Bearer secret")]);
     }
