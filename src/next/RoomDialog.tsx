@@ -5,7 +5,7 @@ import {Dialog} from './ui';
 import './room-dialog.css';
 
 // A switchboard room (pip package `switchboard-room`): Claude Code sessions on several machines share one mailbox.
-export interface RoomSession {id: string; name: string; host: string; repo: string; state: string; status: string; unread: number; listening: boolean; draftwaySession: string | null}
+export interface RoomSession {id: string; name: string; title: string; host: string; repo: string; state: string; status: string; unread: number; listening: boolean; draftwaySession: string | null}
 export interface RoomMessage {id: number; at: number; from: string; to: string; link: string | null; kind: string; body: string; replyTo: number | null; mine: boolean; toMe: boolean}
 export interface RoomView {configured: boolean; url: string; host: string; me: string; sessions: RoomSession[]; messages: RoomMessage[]; links: string[]}
 
@@ -32,6 +32,8 @@ export function RoomDialog({onOpenSession, onClose}: {onOpenSession: (id: string
     void refresh();
     return () => {active = false; clearTimeout(timer);};
   }, [configured]);
+  // Leave the room when the window closes, so `room who` does not list Draftway as live for hours.
+  useEffect(() => configured ? () => {void invoke('room_leave').catch(() => {});} : undefined, [configured]);
   const lastMessage = view?.messages.at(-1)?.id;
   useEffect(() => {thread.current?.lastElementChild?.scrollIntoView({block: 'end'});}, [lastMessage]);
 
@@ -57,7 +59,7 @@ export function RoomDialog({onOpenSession, onClose}: {onOpenSession: (id: string
   if (!view) return <Dialog title="协作室" onClose={onClose}><p className="quiet-note" role="status">{error || '正在连接…'}</p></Dialog>;
   if (!view.configured) return <Dialog title="协作室" onClose={onClose}>
     <form className="room-setup" onSubmit={event => void connect(event)}>
-      <p className="quiet-note">协作室由 switchboard room 服务提供，局域网内多台机器上的 Claude Code 会话在这里互发消息。连接后可查看各会话的状态，并以 draftway@{form.host || '本机'} 的身份发消息。</p>
+      <p className="quiet-note">协作室由 switchboard room 服务提供，局域网内多台机器上的 Claude Code 会话在这里互发消息。连接后可查看各会话的状态，并以 draftway@{form.host || '本机'} 的身份发消息。关闭窗口即离开协作室。</p>
       <label className="field">服务地址<input required value={form.url} placeholder="http://192.168.1.20:8766" onChange={e => setForm({...form, url: e.target.value})}/></label>
       <label className="field">令牌<input required type="password" autoComplete="off" value={form.token} onChange={e => setForm({...form, token: e.target.value})}/></label>
       <label className="field">本机名称<input required maxLength={40} value={form.host} onChange={e => setForm({...form, host: e.target.value})}/></label>
@@ -72,7 +74,7 @@ export function RoomDialog({onOpenSession, onClose}: {onOpenSession: (id: string
   const replying = view.messages.find(m => m.id === draft.replyTo);
   return <Dialog title="协作室" onClose={onClose}>
     <div className="room-dialog">
-      <header className="room-identity"><span>{view.me.replace(/^human:/, '')} · {view.url}</span><button type="button" className="text-button" onClick={() => void disconnect()}>断开</button></header>
+      <header className="room-identity"><span>{view.me.replace(/^draftway:/, 'draftway@')} · {view.url}</span><button type="button" className="text-button" onClick={() => void disconnect()}>断开</button></header>
       <section aria-label="会话">
         <div className="section-label">会话（{live.length}）</div>
         {!live.length && <p className="quiet-note">协作室里暂时没有在线会话。</p>}
@@ -80,7 +82,7 @@ export function RoomDialog({onOpenSession, onClose}: {onOpenSession: (id: string
           <div key={session.id} className={`room-session ${draft.to === roomAddress(session) ? 'selected' : ''}`}>
             <button type="button" title={`发给 ${roomAddress(session)}`} onClick={() => setDraft(d => ({...d, to: roomAddress(session), replyTo: null}))}>
               <i className={`room-state ${session.state}`} aria-label={session.state === 'live' ? '在线' : '静默'}/>
-              <strong>{session.name || session.id.slice(0, 8)}</strong><small>{session.repo || '—'}</small>
+              <strong>{session.title || session.name || session.id.slice(0, 8)}</strong><small>{session.repo || '—'}</small>
               {session.status && <small className="room-status">{session.status}</small>}
               {session.listening && <small className="room-badge">待命</small>}{!!session.unread && <small className="room-badge">✉{session.unread}</small>}
             </button>

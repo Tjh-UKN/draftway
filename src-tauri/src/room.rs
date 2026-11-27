@@ -1,7 +1,7 @@
 //! Client for a switchboard room server (`pip install switchboard-room`): a mailbox that Claude Code sessions on
-//! several machines share over the LAN. Draftway joins as a person (`draftway@<host>`), lists the sessions in the room,
-//! shows the recent thread and sends messages. Claude Code sessions that Draftway starts are already room members
-//! when the room hooks are installed on this machine; Draftway only gives them a readable name.
+//! several machines share over the LAN. Draftway joins with one stable id per machine (`draftway:<host>`, shown as
+//! `draftway@<host>`), lists the sessions in the room, shows the recent thread and sends messages. Claude Code sessions
+//! that Draftway starts join through the room hooks when those are installed; Draftway never writes their records.
 use crate::store::{error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -16,11 +16,11 @@ const MAX_BODY: usize = 4000;
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Connection {pub url: String, pub token: String, pub host: String}
 impl Connection {
-    pub fn me(&self) -> String {format!("human:draftway@{}", self.host)}
+    pub fn me(&self) -> String {format!("draftway:{}", self.host)}
 }
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct Session {pub id: String, pub name: String, pub host: String, pub repo: String, pub state: String, pub status: String, pub unread: u64, pub listening: bool, pub draftway_session: Option<String>}
+pub struct Session {pub id: String, pub name: String, pub title: String, pub host: String, pub repo: String, pub state: String, pub status: String, pub unread: u64, pub listening: bool, pub draftway_session: Option<String>}
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {pub id: u64, pub at: u64, pub from: String, pub to: String, pub link: Option<String>, pub kind: String, pub body: String, pub reply_to: Option<u64>, pub mine: bool, pub to_me: bool}
@@ -101,12 +101,13 @@ impl Client {
         if !status.is_success() {return Err(value["error"].as_str().map(|e| format!("协作室拒绝了请求：{e}")).unwrap_or_else(|| format!("协作室请求失败（{status}）")));}
         Ok(value)
     }
-    /// Registers Draftway as a person in the room. Only called while the room window is open.
-    fn announce(&self) -> Result<()> {
-        self.call("POST", "/seen", Some(json!({"session":self.connection.me(),"host":self.connection.host,"name":"draftway","version":concat!("draftway-", env!("CARGO_PKG_VERSION"))}))).map(|_| ())
+    /// Registers Draftway in the room while its window is open; `leave` marks it ended when the window closes.
+    fn announce(&self, ended: bool) -> Result<()> {
+        self.call("POST", "/seen", Some(json!({"session":self.connection.me(),"host":self.connection.host,"name":"draftway","ended":ended,"version":concat!("draftway-", env!("CARGO_PKG_VERSION"))}))).map(|_| ())
     }
+    pub fn leave(&self) -> Result<()> {self.announce(true)}
     pub fn view(&self, local: &[Local]) -> Result<View> {
-        self.announce()?;
+        self.announce(false)?;
         let state = self.call("GET", "/state", None)?;
         let me = self.connection.me();
         // Reading the room window counts as reading Draftway's messages, so `room who` stops showing them as unread.
@@ -116,15 +117,13 @@ impl Client {
         for row in rows {
             let id = text(row, "id");
             if id.is_empty() || id == me {continue;}
-            let mut session = Session {name: text(row, "name"), host: text(row, "host"), repo: text(row, "repo"), state: text(row, "state"), status: text(row, "status"),
+            let mut session = Session {name: text(row, "name"), title: String::new(), host: text(row, "host"), repo: text(row, "repo"), state: text(row, "state"), status: text(row, "status"),
                 unread: state["unread"][&id].as_u64().unwrap_or(0), listening: row["polling"].as_array().is_some_and(|p| !p.is_empty()),
                 draftway_session: local.iter().find(|(source, ..)| source == &id).map(|(_, draftway, _)| draftway.clone()), id, };
             if session.state == "exited" && session.draftway_session.is_none() {continue;}
-            if let Some((.., title)) = local.iter().find(|(source, ..)| source == &session.id).filter(|_| session.name.is_empty() && session.state == "live") {
-                // The room hooks register `claude -p` sessions without a name; give them the Draftway session title.
-                let name = session_name(title);
-                if self.call("POST", "/seen", Some(json!({"session":session.id,"name":name}))).is_ok() {session.name = name;}
-            }
+            // The room hooks register `claude -p` sessions without a name. Label them with the Draftway title here only:
+            // the hooks own those records, and a second writer would make them flap.
+            if let Some((.., title)) = local.iter().find(|(source, ..)| source == &session.id) {session.title = title.clone();}
             view.sessions.push(session);
         }
         view.sessions.sort_by(|a, b| (a.state != "live", a.host.to_lowercase(), a.repo.clone(), a.name.clone()).cmp(&(b.state != "live", b.host.to_lowercase(), b.repo.clone(), b.name.clone())));
@@ -147,24 +146,20 @@ impl Client {
         if to.is_empty() || to.len() > 200 || to.chars().any(char::is_control) {return Err("请选择收件人".into());}
         if body.is_empty() {return Err("消息不能为空".into());}
         if body.chars().count() > MAX_BODY {return Err(format!("消息最多 {MAX_BODY} 个字符"));}
-        self.announce()?;
+        self.announce(false)?;
         let kind = if reply_to.is_some() {"reply"} else if ask {"ask"} else {"notify"};
         self.call("POST", "/send", Some(json!({"session":self.connection.me(),"to":to,"body":body,"kind":kind,"reply_to":reply_to})))
     }
 }
 fn text(value: &Value, key: &str) -> String {value[key].as_str().unwrap_or_default().to_string()}
 fn encode(value: &str) -> String {url::form_urlencoded::byte_serialize(value.as_bytes()).collect()}
-pub fn session_name(title: &str) -> String {
-    let words: String = title.split_whitespace().collect::<Vec<_>>().join("-").chars().filter(|c| !c.is_control() && *c != '@').take(32).collect();
-    format!("draftway-{}", if words.is_empty() {"会话".into()} else {words})
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{io::{BufRead, BufReader, Write}, net::TcpListener, sync::{Arc, Mutex}};
     #[test]
-    #[ignore = "requires a switchboard room server: ROOM_TEST_URL and ROOM_TEST_TOKEN; registers draftway@DraftwayTest there"]
+    #[ignore = "requires a switchboard room server: ROOM_TEST_URL and ROOM_TEST_TOKEN; registers draftway:DraftwayTest there"]
     fn live_room_server_round_trip() {
         let connection = checked(&std::env::var("ROOM_TEST_URL").unwrap(), &std::env::var("ROOM_TEST_TOKEN").unwrap(), "DraftwayTest").unwrap();
         let client = Client::new(connection).unwrap();
@@ -173,16 +168,19 @@ mod tests {
         let local = [("live-claude-session".to_string(), "draftway-id".to_string(), "整理 发布说明".to_string())];
         let view = client.view(&local).unwrap();
         let session = view.sessions.iter().find(|s| s.id == "live-claude-session").unwrap();
-        assert_eq!(session.name, "draftway-整理-发布说明"); assert_eq!(session.draftway_session.as_deref(), Some("draftway-id"));
-        let sent = client.send("draftway-整理-发布说明@DraftwayTest", "进度如何？", true, None).unwrap();
+        assert_eq!(session.title, "整理 发布说明"); assert_eq!(session.draftway_session.as_deref(), Some("draftway-id"));
+        let sent = client.send("live-claude-session", "进度如何？", true, None).unwrap();
         assert_eq!(sent["recipients"], json!(["live-claude-session"]));
         let id = sent["id"].as_u64().unwrap();
         // The session answers the way `room send --re` does; Draftway sees the reply as addressed to it.
-        client.call("POST", "/send", Some(json!({"session":"live-claude-session","to":"human:draftway@DraftwayTest","body":"完成一半","kind":"reply","reply_to":id}))).unwrap();
+        client.call("POST", "/send", Some(json!({"session":"live-claude-session","to":"draftway@DraftwayTest","body":"完成一半","kind":"reply","reply_to":id}))).unwrap();
         let view = client.view(&local).unwrap();
         let reply = view.messages.iter().find(|m| m.reply_to == Some(id)).unwrap();
-        assert!(reply.to_me && !reply.mine); assert_eq!(reply.from, "draftway-整理-发布说明@DraftwayTest");
+        assert!(reply.to_me && !reply.mine); assert_eq!(reply.from, "live-cla");
         assert!(view.messages.iter().any(|m| m.id == id && m.mine && m.kind == "ask"));
+        // Visible in `room who` (not a hidden human: id) while the window is open, and ended once it closes.
+        let me = |client: &Client| client.call("GET", "/sessions", None).unwrap().as_array().unwrap().iter().find(|s| s["id"] == "draftway:DraftwayTest").cloned().unwrap();
+        assert_eq!(me(&client)["state"], "live"); client.leave().unwrap(); assert_eq!(me(&client)["state"], "exited");
     }
     #[test]
     fn addresses_hosts_and_tokens_are_validated_before_saving() {
@@ -191,14 +189,13 @@ mod tests {
         for url in ["ftp://host/", "http://user:pw@host:8766", "http://host:8766/api", "http://host:8766/?token=x", "file:///etc/passwd", "room"] {assert!(server_url(url).is_err(), "{url}");}
         for host in ["", "two words", "a@b", &"x".repeat(41)] {assert!(host_label(host).is_err());}
         assert!(checked("http://h:1", " ", "Mac").is_err());
-        assert_eq!(session_name("修复 登录\n问题"), "draftway-修复-登录-问题"); assert_eq!(session_name("  "), "draftway-会话"); assert!(!session_name("a@b").contains('@'));
     }
     #[test]
     fn connection_lives_outside_the_database_and_imports_the_room_cli_config() {
         let root = std::env::temp_dir().join(format!("draftway-room-{}", uuid::Uuid::new_v4())); std::fs::create_dir_all(&root).unwrap();
         assert!(load(&root).is_none());
         let cli = root.join("room.json"); std::fs::write(&cli, r#"{"url":"http://10.0.0.5:8766","token":"secret","host":"Studio"}"#).unwrap();
-        let connection = import_cli_config(&cli).unwrap(); assert_eq!(connection.me(), "human:draftway@Studio");
+        let connection = import_cli_config(&cli).unwrap(); assert_eq!(connection.me(), "draftway:Studio");
         save(&root, &connection).unwrap(); assert_eq!(load(&root), Some(connection));
         #[cfg(unix)] {use std::os::unix::fs::PermissionsExt; assert_eq!(std::fs::metadata(root.join(FILE)).unwrap().permissions().mode() & 0o777, 0o600);}
         forget(&root).unwrap(); forget(&root).unwrap(); assert!(load(&root).is_none());
@@ -226,27 +223,30 @@ mod tests {
     fn view_lists_room_sessions_names_draftway_sessions_and_flags_replies() {
         let (url, log) = server(|_, path| (200, if path == "/state" {json!({
             "sessions":[
-                {"id":"human:draftway@Mac","name":"draftway","host":"Mac","repo":"","state":"live","status":"","polling":[]},
+                {"id":"draftway:Mac","name":"draftway","host":"Mac","repo":"","state":"live","status":"","polling":[]},
                 {"id":"aaaa1111","name":"api-fa","host":"RTX","repo":"api","state":"live","status":"now: tests","polling":["listen"]},
                 {"id":"claude-local","name":"","host":"Mac","repo":"draftway","state":"live","status":"","polling":[]},
                 {"id":"gone","name":"old","host":"RTX","repo":"api","state":"exited","status":"","polling":[]}],
             "unread":{"aaaa1111":2},"links":[{"name":"release"}],
             "messages":[
                 {"id":3,"ts":30.0,"sender":"aaaa1111","sender_name":"api-fa","sender_host":"RTX","to_spec":"aaaa1111","kind":"reply","body":"done","reply_to":2,"link":null},
-                {"id":2,"ts":20.0,"sender":"human:draftway@Mac","sender_name":"draftway","sender_host":"Mac","to_spec":"api-fa@RTX","kind":"ask","body":"status?","reply_to":null,"link":null},
+                {"id":2,"ts":20.0,"sender":"draftway:Mac","sender_name":"draftway","sender_host":"Mac","to_spec":"api-fa@RTX","kind":"ask","body":"status?","reply_to":null,"link":null},
                 {"id":1,"ts":10.0,"sender":"aaaa1111","sender_name":"api-fa","sender_host":"RTX","to_spec":"link:release","kind":"notify","body":"shipped","reply_to":null,"link":"release"}]})} else {json!({})}));
         let client = Client::new(checked(&url, "secret", "Mac").unwrap()).unwrap();
         let view = client.view(&[("claude-local".into(), "draftway-session".into(), "修复 登录".into())]).unwrap();
         assert_eq!(view.sessions.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["claude-local", "aaaa1111"]);
-        assert_eq!(view.sessions[0].name, "draftway-修复-登录"); assert_eq!(view.sessions[0].draftway_session.as_deref(), Some("draftway-session"));
+        assert_eq!(view.sessions[0].name, ""); assert_eq!(view.sessions[0].title, "修复 登录"); assert_eq!(view.sessions[0].draftway_session.as_deref(), Some("draftway-session"));
         assert!(view.sessions[1].listening); assert_eq!(view.sessions[1].unread, 2); assert_eq!(view.links, vec!["release"]);
         assert_eq!(view.messages.iter().map(|m| m.id).collect::<Vec<_>>(), vec![1, 2, 3]);
         assert!(view.messages[1].mine && !view.messages[1].to_me); assert!(view.messages[2].to_me); assert!(!view.messages[0].to_me); assert_eq!(view.messages[2].at, 30000);
-        let log = log.lock().unwrap();
-        assert!(log.iter().all(|(_, _, auth, _)| auth == "Bearer secret"));
-        assert_eq!(log[0].1, "/seen"); assert_eq!(log[0].3["session"], "human:draftway@Mac");
-        assert!(log.iter().any(|(_, path, ..)| path == "/inbox?session=human%3Adraftway%40Mac"));
-        assert!(log.iter().any(|(_, path, _, body)| path == "/seen" && body["session"] == "claude-local" && body["name"] == "draftway-修复-登录" && body.get("host").is_none()));
+        {
+            let log = log.lock().unwrap();
+            assert!(log.iter().all(|(_, _, auth, _)| auth == "Bearer secret"));
+            assert_eq!(log[0].1, "/seen"); assert_eq!(log[0].3["session"], "draftway:Mac"); assert_eq!(log[0].3["ended"], false);
+            assert!(log.iter().any(|(_, path, ..)| path == "/inbox?session=draftway%3AMac"));
+            assert!(!log.iter().any(|(_, path, _, body)| path == "/seen" && body["session"] == "claude-local"), "the hooks own Draftway's Claude sessions");
+        }
+        client.leave().unwrap(); assert_eq!(log.lock().unwrap().last().unwrap().3["ended"], true);
     }
     #[test]
     fn send_uses_room_message_kinds_and_reports_server_errors() {

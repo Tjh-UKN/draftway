@@ -18,11 +18,11 @@
 | 消息 | 最近的消息。发给 Draftway 的消息和对 Draftway 提问的回复加框显示；点击回复按钮按 `room send --re` 方式回复 |
 | 发送 | 收件人可写 `name@host`、`repo:仓库`、`link:主题`。勾选“提问”后，对方会在本轮内回答 |
 
-窗口打开时每 5 秒刷新，并把发给 Draftway 的消息标为已读；关闭后不再访问协作室。
+Draftway 在每台机器上使用固定身份，`room who` 中显示为 `draftway@<本机名称>`。窗口打开时每 5 秒刷新，并把发给 Draftway 的消息标为已读；关闭窗口时登记离开，之后不再访问协作室。
 
 ## Draftway 启动的 Claude Code 会话
 
-本机安装了 room 钩子（`room join` 或 `room install-hooks`）时，Draftway 新建的 Claude Code 会话会由钩子自动加入协作室，消息在会话的下一轮进入上下文。这类会话由钩子登记时没有名称；协作室窗口会把在线的会话命名为 `draftway-<会话标题>`，并提供“打开会话”。Codex 和 Pi 会话不在协作室中。
+本机安装了 room 钩子（`room join` 或 `room install-hooks`）时，Draftway 新建的 Claude Code 会话会由钩子自动加入协作室，消息在会话的下一轮进入上下文。这类会话由钩子登记，没有名称；协作室窗口在本机以 Draftway 会话标题显示它们，并提供“打开会话”，不改动钩子登记的信息。每个会话退出后仍在 `room who` 中列出 24 小时，退出后收到的提问会保持未读。Codex 和 Pi 会话不在协作室中。
 
 ## 信任
 
