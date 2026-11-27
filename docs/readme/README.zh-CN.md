@@ -88,5 +88,5 @@ Draftway 使用本机已配置的 Agent 和登录凭据。运行 `npm run deskto
 
 ## 更多
 
-- [Agent 工作区工具（MCP）](../workspace-tools.md) · [插件](../plugins.md) · [经典工作台使用手册](../classic-workbench.md)
+- [Agent 工作区工具（MCP）](../workspace-tools.md) · [插件](../plugins.md) · [经典工作台使用手册](../classic-workbench.md) · [协作室：跨机器的 Claude Code 会话消息](../room.md)
 - [反馈问题或提功能建议](https://github.com/Tjh-UKN/draftway/issues)
